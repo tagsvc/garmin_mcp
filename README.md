@@ -22,10 +22,11 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 - Advanced cycling analytics: power zones, FIT file analysis, DI2 electronic shift intelligence
 - Training load trend (CTL/ATL/TSB), HRV trend, VO2 max trend, respiration rate trend
 - Power Duration Curve, climb detection with VAM, cardiac drift (aerobic decoupling), W/kg calculations
+- Historical health analytics: personal rolling baselines, wellness anomaly detection, lagged metric correlations, weekly reviews, and custom multi-metric reports
 
 ### Tool Coverage
 
-This MCP server implements **110+ tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.2):
+This MCP server implements **130+ tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.2):
 
 - ✅ Activity Management (15 tools)
 - ✅ Health & Wellness (31 tools) - includes custom lightweight summary tools
@@ -41,6 +42,8 @@ This MCP server implements **110+ tools** covering ~90% of the [python-garmincon
 - ✅ High-Level Workout Builders (4 tools) - create and schedule workouts without writing JSON
 - ✅ Courses (3 tools) - list / upload GPX as course / delete course
 - ✅ Activity Analysis (2 tools) - FIT file parsing, Power Duration Curve; requires power meter and/or Di2
+- ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
+- ✅ Interactive Auth (2 tools, stdio mode) - `check_garmin_auth` / `login_to_garmin` to authenticate without restarting the client
 
 > **Note:** Activity Analysis tools require a compatible power meter (e.g., Garmin Rally, Favero Assioma, PowerTap P1) and/or Shimano Di2 / SRAM eTap electronic shifting. The `fitparse` dependency is installed automatically.
 
@@ -58,7 +61,26 @@ Some endpoints are not implemented due to performance or complexity consideratio
 - `delete_activity()`, `delete_blood_pressure()` - Destructive operations require careful consideration.
 - Internal/Auth methods: `login()`, `resume_login()`, `connectapi()`, `download()` - Handled automatically by the library.
 
-If you need any of these endpoints, please [open an issue](https://github.com/Taxuspt/garmin_mcp/issues).
+If you need any of these endpoints, please [open an issue](https://github.com/tagsvc/garmin_mcp/issues).
+
+## Deployment Modes
+
+This server runs in one of two modes:
+
+- **stdio (local, single-user)** — runs on your machine for Claude Desktop / CLI clients. You authenticate once with `garmin-mcp-auth`. See [Setup](#setup).
+- **Remote (multi-user, HTTP + OAuth2)** — a hosted server that clients like **claude.ai / Claude iOS** connect to over HTTPS, with per-user Garmin sessions, an email allowlist, and 2FA. See [Remote Mode](#remote-mode-multi-user-http--oauth2).
+
+### Quickstart: deploy remote on Railway
+
+The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploys the HTTP server straight from git.
+
+1. Create a Railway service from this repo (branch `main`); `railway.json` selects the Dockerfile automatically.
+2. **Settings → Networking → Generate Domain** (the server binds to Railway's injected `PORT`).
+3. Add a **volume mounted at `/data`** (persists the SQLite DB + Garmin session tokens across redeploys).
+4. Set the required env vars — at minimum `GARMIN_MCP_SERVER_URL` (your generated domain) and `GARMIN_ALLOWED_EMAILS`; set `GARMIN_IMPORT_SECRET` to enable token import. Full table in [Configuration](#configuration-environment-variables).
+5. Point your client at `https://<your-domain>/mcp`.
+
+> Garmin rate-limits its OAuth token-mint endpoint from datacenter IPs, so the first browser login may be 429'd. See [Token import / refresh](#token-import--refresh-datacenter-ip-429-workaround) for the residential-IP workaround.
 
 ## Tool Filtering
 
@@ -171,7 +193,7 @@ The easiest way to add this server to Claude Desktop is via the `.dxt` Desktop E
 
 ### Download and install
 
-1. Download the latest `garmin-mcp.dxt` from the [Releases page](https://github.com/Taxuspt/garmin_mcp/releases).
+1. Download the latest `garmin-mcp.dxt` from the upstream [Releases page](https://github.com/Taxuspt/garmin_mcp/releases) (this fork does not publish a `.dxt`).
 2. Drag the `.dxt` file into the Claude Desktop window, **or** double-click it, **or** go to **Settings → Extensions → Install Extension** and select the file.
 3. Claude Desktop will prompt you for optional configuration (token path, email, password).
 
@@ -180,7 +202,7 @@ The easiest way to add this server to Claude Desktop is via the `.dxt` Desktop E
 The extension installs and runs the server automatically, but you must authenticate with Garmin once before data can be fetched:
 
 ```bash
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
+uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
 ```
 
 This saves OAuth tokens to `~/.garminconnect`. After that the server works without any credentials in the config.
@@ -214,7 +236,7 @@ Before adding the server to your MCP client, authenticate once in your terminal:
 ```bash
 
 # Install and run authentication tool
-uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp-auth
+uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
 
 # You'll be prompted for:
 # - Email (or set GARMIN_EMAIL env var)
@@ -252,7 +274,7 @@ Add to your Claude Desktop MCP settings **WITHOUT** credentials:
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
+        "git+https://github.com/tagsvc/garmin_mcp",
         "garmin-mcp"
       ]
     }
@@ -315,7 +337,7 @@ For Claude Desktop, add `GARMIN_IS_CN` to the `env` section:
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
+        "git+https://github.com/tagsvc/garmin_mcp",
         "garmin-mcp"
       ],
       "env": {
@@ -362,7 +384,7 @@ You have two options to run the MCP locally with Claude.
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
+        "git+https://github.com/tagsvc/garmin_mcp",
         "garmin-mcp"
       ],
       "env": {
@@ -407,7 +429,7 @@ Codex uses TOML for MCP server configuration. Add one of the following entries t
 You can also ask your MCP-capable client to set this up for you. For example:
 
 ```text
-Install the Garmin MCP server from https://github.com/Taxuspt/garmin_mcp, authenticate with garmin-mcp-auth, and add it to my MCP configuration without storing my Garmin email or password.
+Install the Garmin MCP server from https://github.com/tagsvc/garmin_mcp, authenticate with garmin-mcp-auth, and add it to my MCP configuration without storing my Garmin email or password.
 ```
 
 #### Directly from GitHub without cloning the repo
@@ -419,7 +441,7 @@ args = [
   "--python",
   "3.12",
   "--from",
-  "git+https://github.com/Taxuspt/garmin_mcp",
+  "git+https://github.com/tagsvc/garmin_mcp",
   "garmin-mcp"
 ]
 ```
@@ -597,7 +619,7 @@ which uvx
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
+        "git+https://github.com/tagsvc/garmin_mcp",
         "garmin-mcp"
       ]
     }
@@ -664,7 +686,7 @@ chmod 600 ~/.garmin_email ~/.garmin_password
 
 # Run server interactively to authenticate
 GARMIN_EMAIL_FILE=~/.garmin_email GARMIN_PASSWORD_FILE=~/.garmin_password \
-  uvx --python 3.12 --from git+https://github.com/Taxuspt/garmin_mcp garmin-mcp
+  uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp
 
 # Enter MFA code when prompted
 # Tokens will be saved automatically
@@ -682,7 +704,7 @@ After initial authentication, configure Claude Desktop **without** credentials (
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
+        "git+https://github.com/tagsvc/garmin_mcp",
         "garmin-mcp"
       ]
     }
@@ -744,9 +766,11 @@ Client → 401 → OAuth2 discovery
 
 ### Security
 
-- Garmin credentials are **never stored** — only garth OAuth tokens are persisted on disk
-- The 2FA client state is held in memory only, with a 5-minute TTL and single-use (`pop`)
-- Users are identified by their Garmin email (upserted on login)
+- **Email allowlist** (`GARMIN_ALLOWED_EMAILS`): only Garmin accounts on this list may authenticate. Fail-closed — if unset, every login is rejected.
+- **Token import gating** (`GARMIN_IMPORT_SECRET`): importing a pre-minted token (login page or `POST /import-token`) requires this shared secret in addition to the allowlist, so knowing an allowlisted email alone cannot overwrite a user's session. Fail-closed — unset disables import.
+- Garmin credentials are **never stored** — only the resulting session tokens are persisted on disk (per user, in garminconnect's native format).
+- The 2FA client state is held in memory only, with a 5-minute TTL and single-use (`pop`).
+- Users are identified by their Garmin email (upserted on login).
 
 ### Running the Remote Server
 
@@ -822,9 +846,6 @@ Then import it via either:
 - **Endpoint (`POST /import-token`):** header `X-Import-Secret`, JSON body
   `{"email": "...", "token": "..."}`.
 
-The bundled `refresh-garmin-token` skill (`.claude/skills/`) walks through the
-whole process.
-
 > **Security note:** the remote server gates authentication on `GARMIN_ALLOWED_EMAILS`.
 > Only the Garmin Connect accounts whose login email is on this list can authenticate.
 > Matching is case-insensitive. Because the default is fail-closed, you must set this
@@ -869,3 +890,10 @@ If you are working from a local checkout or fork:
 ```bash
 uv tool install --python 3.12 --force C:\Users\aresd\Desktop\programacion\garmin_mcp
 ```
+
+## Credits
+
+Built on [Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp), accessing Garmin
+via [cyberjunky/python-garminconnect](https://github.com/cyberjunky/python-garminconnect).
+The historical analytics and interactive auth tools were adapted from
+[coloboxp/garmin_mcp](https://github.com/coloboxp/garmin_mcp) (PR #121).
