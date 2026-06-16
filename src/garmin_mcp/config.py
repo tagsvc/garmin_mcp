@@ -10,7 +10,9 @@ class RemoteConfig:
 
     def __init__(self):
         self.host = os.getenv("GARMIN_MCP_HOST", "0.0.0.0")
-        self.port = int(os.getenv("GARMIN_MCP_PORT", "8000"))
+        # Honor an explicit GARMIN_MCP_PORT, otherwise fall back to the PORT
+        # injected by platforms like Railway, then to 8000 for local use.
+        self.port = int(os.getenv("GARMIN_MCP_PORT") or os.getenv("PORT") or "8000")
         self.path = os.getenv("GARMIN_MCP_PATH", "/mcp")
         self.server_url = os.getenv("GARMIN_MCP_SERVER_URL", "")
         self.scope = os.getenv("MCP_SCOPE", "garmin")
