@@ -38,6 +38,21 @@ logger = logging.getLogger(__name__)
 # TTL for pending MFA state (seconds)
 _MFA_TTL = 300  # 5 minutes
 
+# Retry status codes for the Garmin login client. garth's default also retries
+# on 429, which multiplies requests against Garmin's rate-limited OAuth endpoints
+# and makes throttling worse. We keep retries for genuinely transient errors but
+# drop 429 so a rate-limited login fails fast (one request) instead of ~4.
+_LOGIN_RETRY_STATUS_FORCELIST = (408, 500, 502, 503, 504)
+
+
+def _new_login_client():
+    """Build a garth HTTP client that fails fast on HTTP 429 (rate limiting)."""
+    from garth import http as garth_http
+
+    client = garth_http.Client()
+    client.configure(status_forcelist=_LOGIN_RETRY_STATUS_FORCELIST)
+    return client
+
 
 @dataclass
 class _PendingMfa:
@@ -641,10 +656,21 @@ class GarminOAuthProvider(
         try:
             from garth import sso as garth_sso
 
+            # Use a client that fails fast on 429 so a rate-limited login (and
+            # the later token exchange in resume_login, which reuses this client)
+            # hits Garmin once instead of retrying and deepening the throttle.
+            login_client = _new_login_client()
+
             loop = asyncio.get_running_loop()
             result = await loop.run_in_executor(
                 None,
-                partial(garth_sso.login, email, password, return_on_mfa=True),
+                partial(
+                    garth_sso.login,
+                    email,
+                    password,
+                    client=login_client,
+                    return_on_mfa=True,
+                ),
             )
         except Exception as e:
             logger.warning("Garmin login failed for %s: %s", email, e)
