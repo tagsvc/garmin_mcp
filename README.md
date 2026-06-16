@@ -796,6 +796,23 @@ to set `GARMIN_MCP_PORT`.
 | `DB_PATH` | `/data/garmin_mcp.db` | SQLite database path |
 | `SESSION_STORAGE_PATH` | `/data/garmin_sessions` | Garth token storage |
 | `GARMIN_ALLOWED_EMAILS` | *(required)* | Comma-separated allowlist of Garmin Connect emails permitted to log in. **Fail-closed:** if unset or empty, every login is rejected. |
+| `GARMIN_IMPORT_SECRET` | *(optional)* | Shared secret enabling the `POST /import-token` endpoint for programmatic token refresh. If unset, the endpoint is disabled (404). See "Refreshing tokens" below. |
+
+### Token import / refresh (datacenter-IP 429 workaround)
+
+Garmin rate-limits (HTTP 429) its OAuth token-mint endpoint from datacenter/cloud
+IPs, so the remote server often cannot complete a Garmin login itself even though
+the same flow works from a residential IP. Two escape hatches exist:
+
+- **Login page import:** the Garmin login page has an "Advanced: import an
+  existing Garmin token" option. Mint a token on a trusted machine
+  (`python -c "from garminconnect import Garmin; g=Garmin(); g.login('~/.garminconnect'); print(g.client.dumps())"`)
+  and paste it; the server stores it without performing SSO.
+- **Programmatic refresh (`POST /import-token`):** set `GARMIN_IMPORT_SECRET` and
+  use the bundled `refresh-garmin-token` skill (`.claude/skills/`) from **local**
+  Claude Code on your machine. It mints a fresh token locally and pushes it to the
+  server. Request: header `X-Import-Secret`, JSON body `{"email": "...", "token": "..."}`.
+  Both the secret and the email allowlist are enforced.
 
 > **Security note:** the remote server gates authentication on `GARMIN_ALLOWED_EMAILS`.
 > Only the Garmin Connect accounts whose login email is on this list can authenticate.

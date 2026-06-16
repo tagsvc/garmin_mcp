@@ -123,3 +123,98 @@ async def test_login_callback_requires_password_or_token(provider):
     response = await provider.handle_login_callback(request)
     assert response.status_code == 200
     assert b"password" in response.body.lower()
+
+
+# ─── /import-token endpoint ───────────────────────────────────────────────
+
+
+class _FakeJsonRequest:
+    def __init__(self, body, headers=None):
+        self._body = body
+        self.headers = headers or {}
+
+    async def json(self):
+        if isinstance(self._body, Exception):
+            raise self._body
+        return self._body
+
+
+@pytest.fixture
+def secret_provider(tmp_path):
+    sm = SessionManager(str(tmp_path / "sessions"))
+    return GarminOAuthProvider(
+        db_path=str(tmp_path / "test.db"),
+        server_url="https://example.com",
+        session_manager=sm,
+        allowed_emails={"allowed@example.com"},
+        import_secret="s3cr3t",
+    )
+
+
+@pytest.mark.asyncio
+async def test_import_endpoint_disabled_without_secret(tmp_path):
+    sm = SessionManager(str(tmp_path / "sessions"))
+    provider = GarminOAuthProvider(
+        db_path=str(tmp_path / "test.db"),
+        server_url="https://example.com",
+        session_manager=sm,
+        allowed_emails={"allowed@example.com"},
+        import_secret="",
+    )
+    req = _FakeJsonRequest(
+        {"email": "allowed@example.com", "token": VALID_BLOB},
+        {"X-Import-Secret": "anything"},
+    )
+    resp = await provider.handle_import_token(req)
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_import_endpoint_rejects_bad_secret(secret_provider):
+    req = _FakeJsonRequest(
+        {"email": "allowed@example.com", "token": VALID_BLOB},
+        {"X-Import-Secret": "wrong"},
+    )
+    resp = await secret_provider.handle_import_token(req)
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_import_endpoint_rejects_non_allowlisted(secret_provider):
+    req = _FakeJsonRequest(
+        {"email": "blocked@example.com", "token": VALID_BLOB},
+        {"X-Import-Secret": "s3cr3t"},
+    )
+    resp = await secret_provider.handle_import_token(req)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_import_endpoint_requires_fields(secret_provider):
+    req = _FakeJsonRequest(
+        {"email": "allowed@example.com"}, {"X-Import-Secret": "s3cr3t"}
+    )
+    resp = await secret_provider.handle_import_token(req)
+    assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_import_endpoint_success(secret_provider):
+    req = _FakeJsonRequest(
+        {"email": "allowed@example.com", "token": VALID_BLOB},
+        {"X-Import-Secret": "s3cr3t"},
+    )
+    resp = await secret_provider.handle_import_token(req)
+    assert resp.status_code == 200
+    user_id = secret_provider._get_or_create_user("allowed@example.com")
+    assert secret_provider.session_manager.has_session(user_id)
+
+
+@pytest.mark.asyncio
+async def test_import_endpoint_rejects_invalid_token(secret_provider):
+    req = _FakeJsonRequest(
+        {"email": "allowed@example.com", "token": "garbage"},
+        {"X-Import-Secret": "s3cr3t"},
+    )
+    resp = await secret_provider.handle_import_token(req)
+    assert resp.status_code == 400
