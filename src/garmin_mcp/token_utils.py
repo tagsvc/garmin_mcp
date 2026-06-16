@@ -1,10 +1,58 @@
 """Token management utilities for Garmin MCP authentication."""
 
 import os
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Tuple
 
 from garminconnect import Garmin, GarminConnectConnectionError
+
+
+def _clean_config_value(value: str | None, default: str) -> str:
+    """Return a usable config value, ignoring blank or unresolved DXT placeholders."""
+    if value is None:
+        return default
+    cleaned = value.strip()
+    if not cleaned or cleaned.startswith("${user_config."):
+        return default
+    return cleaned
+
+
+def resolve_path(path: str | None, default: str | None = None) -> str:
+    """Expand user/env variables and return an absolute filesystem path."""
+    fallback = default or "~/.garminconnect"
+    cleaned = _clean_config_value(path, fallback)
+    return os.path.abspath(os.path.expandvars(os.path.expanduser(cleaned)))
+
+
+def ensure_token_directory(token_path: str | None = None) -> str:
+    """Create the token directory, replacing an empty placeholder file if needed."""
+    resolved_token_path = resolve_path(token_path or get_token_path())
+    path = Path(resolved_token_path)
+    if path.exists() and path.is_file():
+        if path.stat().st_size == 0:
+            path.unlink()
+        else:
+            raise ValueError(
+                f"Token path must be a directory, but a file exists: {resolved_token_path}"
+            )
+    path.mkdir(parents=True, exist_ok=True)
+    return resolved_token_path
+
+
+@contextmanager
+def without_token_env() -> Iterator[None]:
+    """Temporarily remove token env vars so credential login does not load tokens."""
+    old_tokens = os.environ.pop("GARMINTOKENS", None)
+    old_tokens_base64 = os.environ.pop("GARMINTOKENS_BASE64", None)
+    try:
+        yield
+    finally:
+        if old_tokens is not None:
+            os.environ["GARMINTOKENS"] = old_tokens
+        if old_tokens_base64 is not None:
+            os.environ["GARMINTOKENS_BASE64"] = old_tokens_base64
 
 
 def get_token_path() -> str:

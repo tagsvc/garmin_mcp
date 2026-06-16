@@ -778,6 +778,13 @@ uv run garmin-mcp-remote
 | `GARMIN_MCP_PATH` | `/mcp` | MCP endpoint path |
 | `DB_PATH` | `/data/garmin_mcp.db` | SQLite database path |
 | `SESSION_STORAGE_PATH` | `/data/garmin_sessions` | Garth token storage |
+| `GARMIN_ALLOWED_EMAILS` | *(required)* | Comma-separated allowlist of Garmin Connect emails permitted to log in. **Fail-closed:** if unset or empty, every login is rejected. |
+
+> **Security note:** the remote server gates authentication on `GARMIN_ALLOWED_EMAILS`.
+> Only the Garmin Connect accounts whose login email is on this list can authenticate.
+> Matching is case-insensitive. Because the default is fail-closed, you must set this
+> variable (e.g. `GARMIN_ALLOWED_EMAILS=you@example.com,partner@example.com`) before any
+> user can connect.
 
 ### Testing with MCP Inspector
 

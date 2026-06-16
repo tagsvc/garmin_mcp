@@ -42,6 +42,7 @@ from garmin_mcp import nutrition
 from garmin_mcp import courses
 from garmin_mcp import workout_builders
 from garmin_mcp import activity_analysis
+from garmin_mcp import analytics
 
 
 def main():
@@ -74,11 +75,25 @@ def main():
     session_manager = SessionManager(config.session_storage_path)
     set_session_manager(session_manager)
 
+    # Email allowlist (fail-closed). An empty allowlist rejects every login.
+    if config.allowed_emails:
+        print(
+            f"  Allowlist: {len(config.allowed_emails)} email(s) permitted",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "  WARNING: GARMIN_ALLOWED_EMAILS is not set — ALL logins will be "
+            "rejected (fail-closed). Set it to a comma-separated email list.",
+            file=sys.stderr,
+        )
+
     # Initialize OAuth provider
     oauth_provider = GarminOAuthProvider(
         db_path=config.db_path,
         server_url=config.server_url,
         session_manager=session_manager,
+        allowed_emails=config.allowed_emails,
     )
 
     # Pre-register clients that skip dynamic registration (e.g. Claude.ai,
@@ -162,6 +177,7 @@ def main():
     app = courses.register_tools(app)
     app = workout_builders.register_tools(app)
     app = activity_analysis.register_tools(app)
+    app = analytics.register_tools(app)
 
     # Register resources (workout templates)
     app = workout_templates.register_resources(app)

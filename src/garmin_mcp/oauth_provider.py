@@ -56,13 +56,35 @@ class GarminOAuthProvider(
 ):
     """OAuth2 provider backed by SQLite for the Garmin MCP server."""
 
-    def __init__(self, db_path: str, server_url: str, session_manager=None):
+    def __init__(
+        self,
+        db_path: str,
+        server_url: str,
+        session_manager=None,
+        allowed_emails=None,
+    ):
         self.db_path = db_path
         self.server_url = server_url.rstrip("/")
         self.session_manager = session_manager
+        # Normalized email allowlist. Fail-closed: an empty/None allowlist
+        # rejects every login attempt.
+        self.allowed_emails = frozenset(
+            (email or "").strip().lower()
+            for email in (allowed_emails or ())
+            if (email or "").strip()
+        )
         self._pending_mfa: dict[str, _PendingMfa] = {}
         self._mfa_lock = threading.Lock()
         self._init_db()
+
+    def _is_email_allowed(self, email: str) -> bool:
+        """Return True only if ``email`` is on the configured allowlist.
+
+        Fail-closed: an empty allowlist rejects everyone.
+        """
+        if not self.allowed_emails:
+            return False
+        return (email or "").strip().lower() in self.allowed_emails
 
     # ─── Database ────────────────────────────────────────────────────
 
@@ -607,6 +629,14 @@ class GarminOAuthProvider(
 
         if not state or not email or not password:
             return await self.get_login_page(state, "All fields are required.")
+
+        # Enforce the email allowlist before contacting Garmin. Fail-closed:
+        # if no allowlist is configured, every login is rejected.
+        if not self._is_email_allowed(email):
+            logger.warning("Rejected login for non-allowlisted email: %s", email)
+            return await self.get_login_page(
+                state, "This account is not authorized to use this server."
+            )
 
         try:
             from garth import sso as garth_sso
