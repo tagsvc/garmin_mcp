@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import os
 import secrets
@@ -31,7 +32,12 @@ from mcp.server.auth.provider import (
 )
 from mcp.shared.auth import OAuthClientInformationFull
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +83,13 @@ class GarminOAuthProvider(
         server_url: str,
         session_manager=None,
         allowed_emails=None,
+        import_secret: str = "",
     ):
         self.db_path = db_path
         self.server_url = server_url.rstrip("/")
         self.session_manager = session_manager
+        # Shared secret for programmatic token import. Empty = endpoint disabled.
+        self.import_secret = (import_secret or "").strip()
         # Normalized email allowlist. Fail-closed: an empty/None allowlist
         # rejects every login attempt.
         self.allowed_emails = frozenset(
@@ -100,6 +109,58 @@ class GarminOAuthProvider(
         if not self.allowed_emails:
             return False
         return (email or "").strip().lower() in self.allowed_emails
+
+    async def handle_import_token(self, request: Request) -> Response:
+        """Programmatically import a pre-minted Garmin token for a user.
+
+        Lets a trusted client (e.g. a local Claude Code skill on a residential
+        IP) refresh the server's stored Garmin session without the browser
+        login flow. Guarded by a shared secret (``GARMIN_IMPORT_SECRET``) and
+        the email allowlist. Fail-closed: disabled entirely when no secret is set.
+
+        Request: ``POST /import-token`` with header ``X-Import-Secret`` and JSON
+        body ``{"email": "...", "token": "<garmin_tokens.json contents or base64>"}``.
+        """
+        if not self.import_secret:
+            return JSONResponse({"error": "Token import is disabled."}, status_code=404)
+
+        provided = request.headers.get("X-Import-Secret", "")
+        if not hmac.compare_digest(provided, self.import_secret):
+            logger.warning("Rejected /import-token with bad or missing secret")
+            return JSONResponse({"error": "Unauthorized."}, status_code=401)
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Invalid JSON body."}, status_code=400)
+
+        email = str(body.get("email", "")).strip()
+        token = str(body.get("token", "")).strip()
+        if not email or not token:
+            return JSONResponse(
+                {"error": "Both 'email' and 'token' are required."}, status_code=400
+            )
+
+        if not self._is_email_allowed(email):
+            logger.warning("Rejected /import-token for non-allowlisted email: %s", email)
+            return JSONResponse(
+                {"error": "This email is not authorized."}, status_code=403
+            )
+
+        if not self.session_manager:
+            return JSONResponse(
+                {"error": "Sessions are unavailable on this server."}, status_code=503
+            )
+
+        user_id = self._get_or_create_user(email)
+        try:
+            self.session_manager.create_session_from_token_blob(user_id, token)
+        except Exception as e:
+            logger.warning("Token import via endpoint failed for %s: %s", email, e)
+            return JSONResponse({"error": f"Invalid token: {e}"}, status_code=400)
+
+        logger.info("Imported Garmin token via endpoint for %s", email)
+        return JSONResponse({"status": "ok", "email": email})
 
     # ─── Database ────────────────────────────────────────────────────
 

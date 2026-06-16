@@ -26,6 +26,9 @@ class RemoteConfig:
         self.allowed_emails = self._parse_allowed_emails(
             os.getenv("GARMIN_ALLOWED_EMAILS")
         )
+        # Shared secret for the /import-token endpoint (programmatic token
+        # refresh). Fail-closed: if unset/empty, the endpoint is disabled.
+        self.import_secret = os.getenv("GARMIN_IMPORT_SECRET", "").strip()
 
     @staticmethod
     def _parse_allowed_emails(value: str | None) -> frozenset[str]:

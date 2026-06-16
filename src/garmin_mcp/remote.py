@@ -88,12 +88,21 @@ def main():
             file=sys.stderr,
         )
 
+    if config.import_secret:
+        print("  Token import endpoint: enabled (/import-token)", file=sys.stderr)
+    else:
+        print(
+            "  Token import endpoint: disabled (set GARMIN_IMPORT_SECRET to enable)",
+            file=sys.stderr,
+        )
+
     # Initialize OAuth provider
     oauth_provider = GarminOAuthProvider(
         db_path=config.db_path,
         server_url=config.server_url,
         session_manager=session_manager,
         allowed_emails=config.allowed_emails,
+        import_secret=config.import_secret,
     )
 
     # Pre-register clients that skip dynamic registration (e.g. Claude.ai,
@@ -160,6 +169,10 @@ def main():
     @app.custom_route("/login/mfa/callback", methods=["POST"])
     async def mfa_callback(request: Request) -> Response:
         return await oauth_provider.handle_mfa_callback(request)
+
+    @app.custom_route("/import-token", methods=["POST"])
+    async def import_token(request: Request) -> Response:
+        return await oauth_provider.handle_import_token(request)
 
     # Register tools from all modules
     app = activity_management.register_tools(app)
