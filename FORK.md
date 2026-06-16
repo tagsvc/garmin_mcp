@@ -34,6 +34,54 @@ coverage.
 - **`config.port` honors `$PORT`** (then `GARMIN_MCP_PORT`, then 8000) for Railway.
 - **`/data` persistence**: SQLite DB (`DB_PATH`) and per-user sessions (`SESSION_STORAGE_PATH`).
 
+## Updating from upstream (sync procedure)
+
+You are never obligated to sync. Pull upstream only when you want a specific fix
+or feature. Each sync is a deliberate, tested operation — never a blind merge.
+
+**Fastest path:** open a Claude Code session in this repo and say *"sync upstream
+and preserve our changes."* `CLAUDE.md` routes it here; it will do the steps below,
+resolve conflicts in favor of these invariants, run the tests, and only land it if green.
+
+**Manual procedure:**
+
+One-time — wire the upstream remote:
+
+```bash
+git remote add upstream https://github.com/Taxuspt/garmin_mcp.git
+```
+
+Each sync:
+
+```bash
+git fetch upstream
+git log --oneline main..upstream/main      # what's new upstream since last sync
+git diff main...upstream/main              # full upstream diff
+
+git switch -c sync-upstream-$(date +%Y%m%d)
+git merge upstream/main                     # or: git rebase upstream/main
+# resolve conflicts, preserving the invariants above
+
+uv run pytest -m "not e2e"                  # MUST pass before going further
+# review the result, then merge to main and push; Railway redeploys on push to main
+```
+
+**Conflict-prone files** (this fork customized them, so upstream edits here often
+collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
+`config.py`, `token_utils.py`, `session_manager.py`, `pyproject.toml`,
+`Dockerfile.remote`.
+
+**Watch items during conflict resolution:**
+
+- `pyproject.toml` — keep `garminconnect==0.3.2` unless you re-verify token import.
+- `__init__.py` / `remote.py` — ensure `analytics` stays registered in both,
+  `auth_tools` stays registered in `__init__.py` **only**, and the `/import-token`
+  route survives.
+- `Dockerfile.remote` — ensure no `VOLUME` instruction was reintroduced.
+- `config.py` — keep the `$PORT` fallback, the allowlist, and the import secret.
+
+**Definition of done:** suite green, invariants intact, tool counts stdio 134 / remote 132.
+
 ## Expected state after a clean build
 
 - Full suite: `uv run pytest -m "not e2e"` → all pass (354+ at time of writing).
