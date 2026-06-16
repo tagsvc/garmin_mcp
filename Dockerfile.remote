@@ -26,8 +26,9 @@ RUN mkdir -p /data/garmin_sessions
 # Expose the HTTP port
 EXPOSE 8000
 
-# Data volume for SQLite DB and Garmin session tokens
-VOLUME /data
+# Persistence for the SQLite DB and Garmin session tokens (/data) is provided by
+# attaching a Railway Volume at /data. Railway's builder rejects the Docker
+# VOLUME instruction, so it is intentionally omitted here.
 
 # Health check - verify the server is responding. Uses PORT (injected by
 # Railway) when present, falling back to 8000 for local runs.
