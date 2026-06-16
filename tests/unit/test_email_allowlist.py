@@ -96,7 +96,7 @@ async def test_login_callback_allows_listed_email_to_proceed(provider, monkeypat
 
     called = {}
 
-    def _fake_login(email, password, return_on_mfa=True):
+    def _fake_login(email, password, client=None, return_on_mfa=True):
         called["email"] = email
         return ("oauth1", "oauth2")
 
