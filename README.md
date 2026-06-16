@@ -802,17 +802,28 @@ to set `GARMIN_MCP_PORT`.
 
 Garmin rate-limits (HTTP 429) its OAuth token-mint endpoint from datacenter/cloud
 IPs, so the remote server often cannot complete a Garmin login itself even though
-the same flow works from a residential IP. Two escape hatches exist:
+the same flow works from a residential IP. Mint a token on a trusted machine and
+import it. **Both import paths require `GARMIN_IMPORT_SECRET`** (a long random
+value you set) in addition to the email allowlist — writing a session is a
+state-changing action and an email is not a secret, so the secret prevents anyone
+who merely knows an allowlisted email from overwriting a user's session.
 
-- **Login page import:** the Garmin login page has an "Advanced: import an
-  existing Garmin token" option. Mint a token on a trusted machine
-  (`python -c "from garminconnect import Garmin; g=Garmin(); g.login('~/.garminconnect'); print(g.client.dumps())"`)
-  and paste it; the server stores it without performing SSO.
-- **Programmatic refresh (`POST /import-token`):** set `GARMIN_IMPORT_SECRET` and
-  use the bundled `refresh-garmin-token` skill (`.claude/skills/`) from **local**
-  Claude Code on your machine. It mints a fresh token locally and pushes it to the
-  server. Request: header `X-Import-Secret`, JSON body `{"email": "...", "token": "..."}`.
-  Both the secret and the email allowlist are enforced.
+Mint a token on a trusted (residential-IP) machine:
+
+```bash
+python -c "from garminconnect import Garmin; g=Garmin(); g.login('~/.garminconnect'); print(g.client.dumps())"
+```
+
+Then import it via either:
+
+- **Login page:** expand "Advanced: import an existing Garmin token" on the
+  Garmin login page, paste the blob, enter your allowlisted email and the import
+  secret, leave password blank. The server stores it without performing SSO.
+- **Endpoint (`POST /import-token`):** header `X-Import-Secret`, JSON body
+  `{"email": "...", "token": "..."}`.
+
+The bundled `refresh-garmin-token` skill (`.claude/skills/`) walks through the
+whole process.
 
 > **Security note:** the remote server gates authentication on `GARMIN_ALLOWED_EMAILS`.
 > Only the Garmin Connect accounts whose login email is on this list can authenticate.

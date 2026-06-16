@@ -697,6 +697,9 @@ class GarminOAuthProvider(
                 <textarea id="garmin_token" name="garmin_token" rows="4"
                           style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.8rem;"
                           placeholder='{{"di_token": "...", "di_refresh_token": "...", "di_client_id": "..."}}'></textarea>
+                <label for="import_secret" style="margin-top:0.5rem;">Import secret</label>
+                <input type="password" id="import_secret" name="import_secret"
+                       placeholder="Required to import a token">
             </details>
             <button type="submit">Sign In with Garmin</button>
         </form>
@@ -716,6 +719,7 @@ class GarminOAuthProvider(
         email = str(form.get("email", ""))
         password = str(form.get("password", ""))
         garmin_token = str(form.get("garmin_token", "")).strip()
+        import_secret = str(form.get("import_secret", ""))
 
         if not state or not email:
             return await self.get_login_page(state, "Email is required.")
@@ -736,10 +740,26 @@ class GarminOAuthProvider(
         # them. The server persists them directly and performs NO Garmin SSO /
         # token-mint call, avoiding 429 rate-limiting of those endpoints from
         # datacenter IPs.
+        #
+        # Gated by a shared secret in addition to the email allowlist: writing a
+        # session is a state-changing action, and an email is not a secret, so
+        # without this gate anyone who knew an allowlisted email could overwrite
+        # that user's session with a bogus token (denial of service). Requiring
+        # the secret means only the operator can import. Fail-closed: if no
+        # secret is configured, token import is disabled entirely.
         if garmin_token:
             if not self.session_manager:
                 return await self.get_login_page(
                     state, "Token import is unavailable on this server."
+                )
+            if not self.import_secret:
+                return await self.get_login_page(
+                    state, "Token import is disabled on this server."
+                )
+            if not hmac.compare_digest(import_secret, self.import_secret):
+                logger.warning("Rejected token import with bad/missing secret for %s", email)
+                return await self.get_login_page(
+                    state, "Invalid import secret."
                 )
             user_id = self._get_or_create_user(email)
             try:

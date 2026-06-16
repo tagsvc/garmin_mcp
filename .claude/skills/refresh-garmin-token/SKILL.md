@@ -1,80 +1,83 @@
 ---
 name: refresh-garmin-token
 description: >-
-  Refresh the Garmin Connect token used by the remote Garmin MCP server (the
-  one connected to claude.ai / iOS, hosted on Railway). Use when the Garmin
-  tools on that connector start failing with "session expired" or
+  Walk the user through refreshing the Garmin Connect token used by the remote
+  Garmin MCP server (the connector on claude.ai / iOS, hosted on Railway). Use
+  when the Garmin tools on that connector start failing with "session expired" /
   "re-authenticate", or when the user asks to refresh / re-mint / renew their
-  Garmin token. MUST run in local Claude Code on the user's own machine
-  (residential IP): Garmin rate-limits (HTTP 429) token minting from
-  datacenter/cloud IPs, so this cannot be done from a cloud/remote agent.
+  Garmin token. This is a GUIDE: the user runs the local mint command themselves
+  and pastes the result into the server's login page. Token minting must happen
+  on the user's own machine (residential IP) — Garmin rate-limits (HTTP 429) the
+  token-mint endpoint from datacenter/cloud IPs.
 ---
 
-# Refresh Garmin token
+# Refresh Garmin token (guided)
 
-Re-mints a Garmin Connect token from the user's own machine and pushes it to the
-remote MCP server's `/import-token` endpoint. The server never logs in to Garmin
-itself (its datacenter IP is rate-limited), so this local refresh is the
-supported way to renew access.
+Garmin rate-limits its OAuth token-mint endpoint from datacenter IPs, so the
+Railway server can't log in to Garmin itself. The user mints a fresh token on
+their own machine and imports it through the server's login page, which is gated
+by the email allowlist **and** a shared import secret.
 
-## Preconditions — STOP if these aren't met
+Walk the user through the steps below. Do **not** ask them to share their Garmin
+password, MFA code, the minted token, or the import secret with you — those are
+entered locally or on the server's login page only.
 
-1. **You must be running locally on the user's machine** (their Mac), not in a
-   cloud/remote environment. If you are a remote agent, do not run the mint — the
-   login will be 429'd from the datacenter IP. Tell the user to run this skill in
-   local Claude Code instead.
-2. **`uvx` must be available** (`which uvx`). It ships with `uv`. If missing,
-   install `uv` first (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+## One-time setup (skip if already done)
 
-## Configuration
-
-The mint script needs three values. Prefer reading them from the environment;
-ask the user only for whatever is missing:
-
-- `GARMIN_MCP_SERVER_URL` — public URL of the deployed server
-  (e.g. `https://garminmcp-production-d119.up.railway.app`).
-- `GARMIN_IMPORT_SECRET` — the shared secret set as an env var on the server.
-- `GARMIN_EMAIL` — the user's allowlisted Garmin Connect email.
-
-The user's **password and MFA code are entered interactively** during the mint.
-Do NOT ask the user to paste their password or MFA code to you, and do not put
-them in commands you run — they go straight into the interactive prompt.
-
-## Steps
-
-1. Confirm the preconditions above.
-2. Make sure `GARMIN_MCP_SERVER_URL`, `GARMIN_IMPORT_SECRET`, and `GARMIN_EMAIL`
-   are set (in the env or provided by the user). If any are missing, the script
-   will prompt for them too.
-3. **Have the user run the mint command in their own terminal** so they can type
-   their password and MFA code privately (the interactive prompts won't work
-   reliably if you run it for them, and credentials should not pass through you):
-
+1. **Generate a long import secret** on their machine:
    ```bash
-   uvx --python 3.12 --with garminconnect python3 \
-     "$CLAUDE_SKILL_DIR/scripts/refresh_token.py"
+   openssl rand -hex 32
    ```
+   They save it in a password manager. It must never be committed or pasted into chat.
+2. **Set it on the server**: in Railway → the service → Variables, add
+   `GARMIN_IMPORT_SECRET` = that value. Railway redeploys automatically.
 
-   (Substitute the real path to `scripts/refresh_token.py` inside this skill
-   directory if `$CLAUDE_SKILL_DIR` is not set.)
+## Refresh steps
 
-   The script logs in to Garmin locally, mints a fresh token, and POSTs it to
-   `<server>/import-token` with the secret. On success it prints
-   `Garmin token refreshed on the server.`
+1. **Mint a fresh token locally.** Have the user run, in their own terminal
+   (residential IP, so no 429):
+   ```bash
+   python3 -c "from garminconnect import Garmin; g=Garmin(); g.login('~/.garminconnect'); print(g.client.dumps())"
+   ```
+   - If `garminconnect` isn't installed in their default Python, use `uvx`:
+     ```bash
+     uvx --python 3.12 --with garminconnect python3 -c "from garminconnect import Garmin; g=Garmin(); g.login('~/.garminconnect'); print(g.client.dumps())"
+     ```
+   - If their local tokens have also expired, they re-authenticate first:
+     ```bash
+     uvx --python 3.12 --with garminconnect python3 -c "from garminconnect import Garmin; import getpass; g=Garmin(input('email: '), getpass.getpass('password: '), prompt_mfa=lambda: input('MFA code: ')); g.login(); print(g.client.dumps())"
+     ```
+   The command prints a one-line JSON blob:
+   `{"di_token": "...", "di_refresh_token": "...", "di_client_id": "..."}`.
 
-4. If the server returns an error:
-   - `401 Unauthorized` → the `GARMIN_IMPORT_SECRET` doesn't match the server's.
-   - `403` → the email isn't on the server's `GARMIN_ALLOWED_EMAILS` allowlist.
-   - `404` → the server has no `GARMIN_IMPORT_SECRET` set (endpoint disabled).
-   - `400 Invalid token` → the mint produced an unexpected blob; re-run.
+2. **Import it on the server.** Open the connector's login page (reconnect /
+   re-authenticate the Garmin connector in claude.ai, which lands on the Garmin
+   login page) and:
+   - Expand **"Advanced: import an existing Garmin token instead."**
+   - Paste the JSON blob into the token box.
+   - Enter the **allowlisted email** in the email field.
+   - Enter the **import secret** in the "Import secret" field.
+   - Leave **password blank**.
+   - Click **Sign In with Garmin**.
 
-5. **Verify** by exercising a Garmin tool on the remote connector (e.g. ask for
-   today's health status). If it returns data, the refresh worked.
+3. **Verify.** Ask the remote connector for something real (e.g. today's health
+   status). If it returns data, the refresh worked.
+
+## Troubleshooting (messages shown on the login page)
+
+- **"Invalid import secret."** → the secret entered doesn't match
+  `GARMIN_IMPORT_SECRET` on the server.
+- **"Token import is disabled on this server."** → `GARMIN_IMPORT_SECRET` isn't
+  set on Railway (do the one-time setup).
+- **"This account is not authorized..."** → the email isn't in
+  `GARMIN_ALLOWED_EMAILS`.
+- **"Could not import token..."** → the pasted blob isn't valid token JSON;
+  re-run the mint command and copy the whole single line.
 
 ## Notes
 
-- This only needs to be done when the server's stored refresh token has actually
+- This is only needed when the server's stored refresh token has actually
   expired or been invalidated (Garmin password change, sign-out-all-devices,
-  long inactivity) — typically weeks to months apart, not routine.
-- The refreshed token is persisted on the server's `/data` volume, so it
-  survives redeploys.
+  long inactivity) — typically weeks to months apart.
+- The imported token is persisted on the server's `/data` volume, so it survives
+  redeploys.
