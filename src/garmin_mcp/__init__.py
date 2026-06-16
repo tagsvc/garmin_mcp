@@ -28,6 +28,8 @@ from garmin_mcp import nutrition
 from garmin_mcp import workout_builders
 from garmin_mcp import courses
 from garmin_mcp import activity_analysis
+from garmin_mcp import analytics
+from garmin_mcp import auth_tools
 from garmin_mcp.client_resolver import set_global_client
 
 
@@ -279,18 +281,22 @@ def init_api(email, password):
 def main():
     """Initialize the MCP server and register all tools"""
 
-    # Initialize Garmin client
+    # Initialize Garmin client. This may return None when no valid tokens exist
+    # yet; in that case we still start the server so the user can authenticate at
+    # runtime with the login_to_garmin tool (from auth_tools).
     garmin_client = init_api(email, password)
-    if not garmin_client:
-        print("Failed to initialize Garmin Connect client. Exiting.", file=sys.stderr)
-        return
+    if garmin_client:
+        print("Garmin Connect client initialized successfully.", file=sys.stderr)
+        # Set global client for client_resolver (used by tool functions)
+        set_global_client(garmin_client)
+    else:
+        print(
+            "Garmin Connect client not initialized (no valid tokens). "
+            "Use the login_to_garmin tool to authenticate.",
+            file=sys.stderr,
+        )
 
-    print("Garmin Connect client initialized successfully.", file=sys.stderr)
-
-    # Set global client for client_resolver (used by tool functions)
-    set_global_client(garmin_client)
-
-    # Configure all modules with the Garmin client
+    # Configure all modules with the Garmin client (may be None until login)
     activity_management.configure(garmin_client)
     health_wellness.configure(garmin_client)
     user_profile.configure(garmin_client)
@@ -306,6 +312,9 @@ def main():
     workout_builders.configure(garmin_client)
     courses.configure(garmin_client)
     activity_analysis.configure(garmin_client)
+    analytics.configure(garmin_client)
+    # auth_tools activates the live client after a successful runtime login.
+    auth_tools.configure(set_global_client)
 
     # Create the MCP app, wrapped so the env-var filter can drop tools
     app = _ToolFilter(FastMCP("Garmin Connect v1.0"), enabled_tools, disabled_tools)
@@ -330,6 +339,8 @@ def main():
     app = workout_builders.register_tools(app)
     app = courses.register_tools(app)
     app = activity_analysis.register_tools(app)
+    app = analytics.register_tools(app)
+    app = auth_tools.register_tools(app)
 
     # Register resources (workout templates)
     app = workout_templates.register_resources(app)

@@ -768,16 +768,40 @@ export GARMIN_MCP_SERVER_URL=http://localhost:8000
 uv run garmin-mcp-remote
 ```
 
+#### On Railway (deploy from git)
+
+The repo ships a `railway.json` that pins the build to `Dockerfile.remote`
+(the HTTP/OAuth server), so Railway deploys the right image straight from git —
+the bare `Dockerfile` runs the stdio server and must **not** be used for the
+remote deployment.
+
+1. Create a Railway service from this repo. The `railway.json` selects the
+   Dockerfile builder automatically; no build config needed in the dashboard.
+2. Add a **volume mounted at `/data`** (persists the SQLite DB and Garmin
+   session tokens across redeploys — without it, every redeploy logs users out).
+3. Set the required environment variables (see table below). At minimum:
+   `GARMIN_MCP_SERVER_URL` (your public Railway URL) and `GARMIN_ALLOWED_EMAILS`.
+
+The server binds to Railway's injected `PORT` automatically, so you do not need
+to set `GARMIN_MCP_PORT`.
+
 ### Configuration (Environment Variables)
 
 | Variable | Default | Description |
 |---|---|---|
 | `GARMIN_MCP_SERVER_URL` | *(required)* | Public URL of the server |
 | `GARMIN_MCP_HOST` | `0.0.0.0` | Listen address |
-| `GARMIN_MCP_PORT` | `8000` | Listen port |
+| `GARMIN_MCP_PORT` | `$PORT` or `8000` | Listen port. Falls back to the platform-injected `PORT` (e.g. Railway), then `8000`. |
 | `GARMIN_MCP_PATH` | `/mcp` | MCP endpoint path |
 | `DB_PATH` | `/data/garmin_mcp.db` | SQLite database path |
 | `SESSION_STORAGE_PATH` | `/data/garmin_sessions` | Garth token storage |
+| `GARMIN_ALLOWED_EMAILS` | *(required)* | Comma-separated allowlist of Garmin Connect emails permitted to log in. **Fail-closed:** if unset or empty, every login is rejected. |
+
+> **Security note:** the remote server gates authentication on `GARMIN_ALLOWED_EMAILS`.
+> Only the Garmin Connect accounts whose login email is on this list can authenticate.
+> Matching is case-insensitive. Because the default is fail-closed, you must set this
+> variable (e.g. `GARMIN_ALLOWED_EMAILS=you@example.com,partner@example.com`) before any
+> user can connect.
 
 ### Testing with MCP Inspector
 
