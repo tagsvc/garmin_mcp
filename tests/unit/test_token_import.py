@@ -62,6 +62,9 @@ class _FakeRequest:
         return self._data
 
 
+BROWSER_SECRET = "browser-import-s3cr3t"
+
+
 @pytest.fixture
 def provider(tmp_path):
     sm = SessionManager(str(tmp_path / "sessions"))
@@ -70,12 +73,13 @@ def provider(tmp_path):
         server_url="https://example.com",
         session_manager=sm,
         allowed_emails={"allowed@example.com"},
+        import_secret=BROWSER_SECRET,
     )
 
 
 @pytest.mark.asyncio
 async def test_login_callback_token_import_skips_sso(provider, monkeypatch):
-    """Pasting a token must persist a session WITHOUT any Garmin SSO call."""
+    """A correct email + secret + token must persist a session, no Garmin SSO."""
     import garth
 
     def _boom(*args, **kwargs):  # pragma: no cover - must never be called
@@ -90,6 +94,7 @@ async def test_login_callback_token_import_skips_sso(provider, monkeypatch):
             "email": "allowed@example.com",
             "password": "",
             "garmin_token": VALID_BLOB,
+            "import_secret": BROWSER_SECRET,
         }
     )
     result = await provider.handle_login_callback(request)
@@ -98,6 +103,68 @@ async def test_login_callback_token_import_skips_sso(provider, monkeypatch):
     # A session was persisted for the user mapped to the email.
     user_id = provider._get_or_create_user("allowed@example.com")
     assert provider.session_manager.has_session(user_id)
+
+
+@pytest.mark.asyncio
+async def test_login_callback_token_import_rejects_wrong_secret(provider):
+    """An allowlisted email but wrong secret must NOT overwrite the session."""
+    request = _FakeRequest(
+        {
+            "state": "abc",
+            "email": "allowed@example.com",
+            "password": "",
+            "garmin_token": VALID_BLOB,
+            "import_secret": "wrong",
+        }
+    )
+    response = await provider.handle_login_callback(request)
+    assert response.status_code == 200
+    assert b"Invalid import secret" in response.body
+    user_id = provider._get_or_create_user("allowed@example.com")
+    assert not provider.session_manager.has_session(user_id)
+
+
+@pytest.mark.asyncio
+async def test_login_callback_token_import_requires_secret(provider):
+    """Omitting the secret entirely must be rejected (no session written)."""
+    request = _FakeRequest(
+        {
+            "state": "abc",
+            "email": "allowed@example.com",
+            "password": "",
+            "garmin_token": VALID_BLOB,
+        }
+    )
+    response = await provider.handle_login_callback(request)
+    assert response.status_code == 200
+    assert b"Invalid import secret" in response.body
+    user_id = provider._get_or_create_user("allowed@example.com")
+    assert not provider.session_manager.has_session(user_id)
+
+
+@pytest.mark.asyncio
+async def test_login_callback_token_import_disabled_without_server_secret(tmp_path):
+    """If the server has no import secret, browser token import is disabled."""
+    sm = SessionManager(str(tmp_path / "sessions"))
+    prov = GarminOAuthProvider(
+        db_path=str(tmp_path / "test.db"),
+        server_url="https://example.com",
+        session_manager=sm,
+        allowed_emails={"allowed@example.com"},
+        import_secret="",
+    )
+    request = _FakeRequest(
+        {
+            "state": "abc",
+            "email": "allowed@example.com",
+            "password": "",
+            "garmin_token": VALID_BLOB,
+            "import_secret": "anything",
+        }
+    )
+    response = await prov.handle_login_callback(request)
+    assert response.status_code == 200
+    assert b"disabled" in response.body.lower()
 
 
 @pytest.mark.asyncio
