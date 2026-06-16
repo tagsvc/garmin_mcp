@@ -153,6 +153,58 @@ class SessionManager:
         with self._lock:
             self._cache.pop(user_id, None)
 
+    def create_session_from_token_blob(self, user_id: str, blob: str) -> None:
+        """Persist a Garmin session from a pre-minted token blob.
+
+        Lets a user authenticate Garmin from a trusted (e.g. residential) IP and
+        import the resulting tokens here, so the server never performs the SSO /
+        OAuth token-mint handshake itself. This sidesteps Garmin rate-limiting
+        (HTTP 429) of those endpoints from datacenter/cloud IPs.
+
+        Accepts either the raw contents of garminconnect's ``garmin_tokens.json``
+        (a JSON object with ``di_token`` / ``di_refresh_token`` / ``di_client_id``)
+        or a base64 encoding of it.
+
+        Args:
+            user_id: The user identifier.
+            blob: The token JSON (or base64 thereof).
+
+        Raises:
+            ValueError: If the blob is empty or not valid Garmin token JSON.
+        """
+        import base64
+        import json
+
+        text = (blob or "").strip()
+        if not text:
+            raise ValueError("Token is empty.")
+
+        # Normalize to the raw JSON string garminconnect expects.
+        try:
+            json.loads(text)
+            token_json = text
+        except Exception:
+            try:
+                token_json = base64.b64decode(text, validate=False).decode("utf-8")
+                json.loads(token_json)
+            except Exception as e:
+                raise ValueError(f"Token is not valid JSON or base64 JSON: {e}") from e
+
+        # Validate the tokens are structurally complete before persisting.
+        garmin = Garmin()
+        try:
+            garmin.client.loads(token_json)
+        except Exception as e:
+            raise ValueError(f"Token is missing required fields: {e}") from e
+
+        token_dir = self._user_token_dir(user_id)
+        os.makedirs(token_dir, exist_ok=True)
+        garmin.client.dump(token_dir)  # writes garmin_tokens.json
+
+        # Invalidate cache so next get_client() reloads from disk
+        with self._lock:
+            self._cache.pop(user_id, None)
+
     def remove_session(self, user_id: str) -> bool:
         """Remove a user's Garmin session and tokens.
 

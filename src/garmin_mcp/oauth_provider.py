@@ -622,8 +622,21 @@ class GarminOAuthProvider(
             <input type="email" id="email" name="email" required autofocus
                    placeholder="you@example.com">
             <label for="password">Password</label>
-            <input type="password" id="password" name="password" required
+            <input type="password" id="password" name="password"
                    placeholder="Your Garmin password">
+            <details style="margin-top:0.75rem;">
+                <summary style="cursor:pointer; font-size:0.85rem; color:#0369a1;">
+                    Advanced: import an existing Garmin token instead
+                </summary>
+                <p style="font-size:0.8rem; color:#6b7280; margin:0.5rem 0;">
+                    If sign-in fails with a rate-limit error, paste the contents of your
+                    locally generated <code>garmin_tokens.json</code> here. Leave the
+                    password blank when using a token.
+                </p>
+                <textarea id="garmin_token" name="garmin_token" rows="4"
+                          style="width:100%; box-sizing:border-box; font-family:monospace; font-size:0.8rem;"
+                          placeholder='{{"di_token": "...", "di_refresh_token": "...", "di_client_id": "..."}}'></textarea>
+            </details>
             <button type="submit">Sign In with Garmin</button>
         </form>
         <div class="privacy">
@@ -641,9 +654,14 @@ class GarminOAuthProvider(
         state = str(form.get("state", ""))
         email = str(form.get("email", ""))
         password = str(form.get("password", ""))
+        garmin_token = str(form.get("garmin_token", "")).strip()
 
-        if not state or not email or not password:
-            return await self.get_login_page(state, "All fields are required.")
+        if not state or not email:
+            return await self.get_login_page(state, "Email is required.")
+        if not password and not garmin_token:
+            return await self.get_login_page(
+                state, "Enter your password, or paste an existing Garmin token."
+            )
 
         # Enforce the email allowlist before contacting Garmin. Fail-closed:
         # if no allowlist is configured, every login is rejected.
@@ -652,6 +670,27 @@ class GarminOAuthProvider(
             return await self.get_login_page(
                 state, "This account is not authorized to use this server."
             )
+
+        # Token-import path: the user minted tokens from a trusted IP and pasted
+        # them. The server persists them directly and performs NO Garmin SSO /
+        # token-mint call, avoiding 429 rate-limiting of those endpoints from
+        # datacenter IPs.
+        if garmin_token:
+            if not self.session_manager:
+                return await self.get_login_page(
+                    state, "Token import is unavailable on this server."
+                )
+            user_id = self._get_or_create_user(email)
+            try:
+                self.session_manager.create_session_from_token_blob(
+                    user_id, garmin_token
+                )
+            except Exception as e:
+                logger.warning("Token import failed for %s: %s", email, e)
+                return await self.get_login_page(
+                    state, f"Could not import token: {e}"
+                )
+            return self._complete_auth_flow(state, user_id)
 
         try:
             from garth import sso as garth_sso
