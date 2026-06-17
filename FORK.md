@@ -34,6 +34,69 @@ coverage.
 - **`config.port` honors `$PORT`** (then `GARMIN_MCP_PORT`, then 8000) for Railway.
 - **`/data` persistence**: SQLite DB (`DB_PATH`) and per-user sessions (`SESSION_STORAGE_PATH`).
 
+## Why these changes (decision log)
+
+Read this before reconciling an upstream merge — it explains the *intent* behind
+each divergence so a merge doesn't silently undo a deliberate decision.
+
+- **Pin `garminconnect==0.3.2`.** Why: the stored-token format and session restore
+  (`session_manager`, token import) depend on this version's client API
+  (`garmin.client.dumps/loads/dump`, di-token fields). PR #121 used 0.2.38, which
+  is incompatible. _On merge:_ if upstream bumps it, re-verify token import +
+  session restore before accepting; don't take the bump blindly.
+
+- **`auth_tools` is stdio-only.** Why: in remote mode, authentication happens
+  through the OAuth login page; `login_to_garmin` exists so the *stdio* server can
+  start without tokens and authenticate at runtime. Registering it in `remote.py`
+  would expose a redundant, confusing second auth path. _On merge:_ keep it out of
+  `remote.py`.
+
+- **Email allowlist, fail-closed.** Why: the remote server is publicly reachable
+  (claude.ai); without a gate, anyone who completes a Garmin login could attach an
+  account. Fail-closed means a misconfiguration (unset var) denies access rather
+  than opening it. _On merge:_ don't change the default to fail-open.
+
+- **429 fail-fast login client.** Why: garth retries on HTTP 429, turning one login
+  into ~4 hits on Garmin's rate-limited OAuth endpoint and deepening the throttle
+  ("too many 429 error responses"). Failing fast hits Garmin once. The alternative
+  (more retries/backoff) was rejected because it amplifies the limit. _On merge:_
+  keep 429 out of the client's retry `status_forcelist`.
+
+- **Token import (login-page paste + `POST /import-token`).** Why: Garmin
+  rate-limits its OAuth token-mint endpoint from datacenter IPs, so the server
+  often can't complete a login even with a correct MFA code. Minting on a
+  residential IP and importing sidesteps this entirely. _On merge:_ preserve both
+  import paths.
+
+- **No live-Garmin validation of imported tokens.** Why: validating a pasted token
+  against Garmin would (a) make the endpoint a good/bad token *oracle* and (b)
+  re-introduce the datacenter-IP 429 surface (server calling Garmin). We gate with
+  a secret instead. _On merge:_ keep validation structural-only.
+
+- **Import-secret gating, fail-closed, on both paths.** Why: the browser import was
+  originally email-only, but an email is not a secret — anyone who knew an
+  allowlisted email could overwrite that user's session with a bogus token (a DoS).
+  The shared secret is the proof-of-authorization. _On merge:_ keep both paths
+  gated with a constant-time compare; unset secret disables import.
+
+- **Remove `VOLUME` from `Dockerfile.remote`.** Why: Railway's builder rejects the
+  Docker `VOLUME` instruction; persistence is a Railway volume mounted at `/data`.
+  _On merge:_ don't reintroduce `VOLUME`.
+
+- **`$PORT` fallback in `config.py`.** Why: Railway injects a random `PORT` and
+  routes external traffic to it; the app must bind there. Precedence is
+  `GARMIN_MCP_PORT` > `PORT` > `8000` so an explicit override still wins. _On
+  merge:_ keep the fallback.
+
+- **`railway.json` pins `Dockerfile.remote`.** Why: the bare `Dockerfile` runs the
+  *stdio* server (no HTTP port); without the pin, Railway auto-detects it and
+  deploys a container that can't serve traffic. _On merge:_ keep the pin.
+
+- **Refresh skill kept out of the repo.** Why: by preference, the token-refresh
+  procedure lives as a personal chat script, not a committed skill; the
+  `/import-token` endpoint remains for automation. _On merge:_ don't re-add a
+  committed skill unless intended.
+
 ## Updating from upstream (sync procedure)
 
 You are never obligated to sync. Pull upstream only when you want a specific fix
