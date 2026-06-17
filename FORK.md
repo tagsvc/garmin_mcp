@@ -102,9 +102,25 @@ each divergence so a merge doesn't silently undo a deliberate decision.
 You are never obligated to sync. Pull upstream only when you want a specific fix
 or feature. Each sync is a deliberate, tested operation — never a blind merge.
 
-**Fastest path:** open a Claude Code session in this repo and say *"sync upstream
-and preserve our changes."* `CLAUDE.md` routes it here; it will do the steps below,
-resolve conflicts in favor of these invariants, run the tests, and only land it if green.
+**Fastest path:** open a Claude Code session in this repo and say something like
+*"the upstream we forked from has updated — show me what's new and how we'd bring
+it in."* `CLAUDE.md` routes here; the session follows the steps below.
+
+**What an "update from upstream" request should produce — BEFORE merging anything:**
+
+1. Fetch upstream and list what's new since the last sync (`git log main..upstream/main`).
+2. **Triage each upstream change into three buckets and report them to the user:**
+   - *Safe to take* — doesn't touch this fork's customized files/areas.
+   - *Overlaps our work* — touches a conflict-prone file (below); reconcile using
+     the decision log above so our intent is preserved.
+   - *Conflicts with an invariant* — would regress something in "Invariants" /
+     "Why these changes"; flag it explicitly and ask the user before proceeding.
+3. Present the integration plan (what we take as-is, what we reconcile and how,
+   what we drop or flag) and get the user's go-ahead.
+4. Only then merge on a branch, resolve conflicts per that plan, run the full
+   suite, and land it if green.
+
+Do not silently merge — the value is the review, not the merge.
 
 **Manual procedure:**
 
