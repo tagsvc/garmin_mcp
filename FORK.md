@@ -89,5 +89,6 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## History
 
-Integrated via PRs #1–#6 on this fork. See `README.md` (Remote Mode, Security,
+Integrated via PRs #1–#6 on this fork. See `CHANGELOG.md` for a categorized list
+of every change relative to upstream, and `README.md` (Remote Mode, Security,
 Token import / refresh) for operational detail.
