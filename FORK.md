@@ -1,7 +1,16 @@
 # Fork notes — what this fork adds and what must be preserved
 
 This repository is a fork of [Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp).
-It carries custom work on top of upstream. **When merging upstream changes, the
+It carries custom work on top of upstream.
+
+> **Upstream identity (important):** GitHub lists this fork's parent as
+> `Tomas2D/garmin_mcp`, but our real upstream is **`Taxuspt/garmin_mcp`** (the
+> original project; Tomas2D is itself a fork). Always sync from Taxuspt using the
+> procedure below — do **not** click GitHub's "Sync fork" button or trust its
+> "N commits behind" banner, which both compare against `Tomas2D` and fight our
+> divergence.
+
+**When merging upstream changes, the
 features and invariants below must not regress.** After any upstream merge, run
 the full test suite (`uv run pytest -m "not e2e"`) — every item here has test
 coverage.
@@ -156,10 +165,17 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 - `__init__.py` / `remote.py` — ensure `analytics` stays registered in both,
   `auth_tools` stays registered in `__init__.py` **only**, and the `/import-token`
   route survives.
-- `Dockerfile.remote` — ensure no `VOLUME` instruction was reintroduced.
+- `Dockerfile.remote` — ensure no `VOLUME` instruction was reintroduced, and it
+  still installs from `uv.lock` (reproducible deploys), not a fresh resolve.
 - `config.py` — keep the `$PORT` fallback, the allowlist, and the import secret.
+- **New upstream tools must use `get_client(ctx)`, not the module-global
+  `garmin_client`.** Upstream is stdio-only, so its new tools call the global
+  directly — which is `None` in our remote (multi-user) mode and crashes. After a
+  sync, grep `src/garmin_mcp` for `garmin_client.` and migrate any tool hit to
+  `get_client(ctx)` (add a `ctx: Context` param). This is how we adapted
+  `create_manual_activity`, `download_activity_file`, and `unschedule_workout(s)`.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 134 / remote 132.
+**Definition of done:** suite green, invariants intact, tool counts stdio 139 / remote 137.
 
 ## Expected state after a clean build
 
