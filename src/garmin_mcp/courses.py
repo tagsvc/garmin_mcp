@@ -20,6 +20,7 @@ import io
 import json
 import math
 import os
+import pathlib
 from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import Context
@@ -224,6 +225,10 @@ def register_tools(app):
             description: Optional description shown on the course detail page.
         """
         try:
+            _p = pathlib.Path(gpx_path)
+            if _p.suffix.lower() != ".gpx":
+                return f"Error: only .gpx files are allowed, got: {_p.suffix or '(no extension)'}"
+            gpx_path = str(_p.resolve())
             if not os.path.isfile(gpx_path):
                 return f"Error: GPX file not found: {gpx_path}"
 
