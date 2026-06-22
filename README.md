@@ -98,7 +98,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers 110+ tools by default, which can be a lot of context for
+This server registers 130+ tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 two optional environment variables:
 
