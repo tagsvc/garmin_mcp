@@ -5,6 +5,28 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Upstream sync — 2026-06-17
+
+Merged `Taxuspt/garmin_mcp` (upstream PRs #140/#141/#142, Issues #137/#138/#139).
+
+**Taken from upstream:**
+- Security: workout target-type/end-condition validation; date + GPX-path
+  injection validation.
+- New tools (now `get_client(ctx)`-migrated so they work in remote mode):
+  `create_manual_activity`, `download_activity_file`, `set_fit_download_dir`,
+  `unschedule_workout`, `unschedule_workouts`.
+- `_GarminProxy` (friendly runtime error messages); `GARMIN_MCP_TRANSPORT`
+  plumbing (stdio default) + `/healthz`; dependency bumps (starlette 0.52→1.3.1,
+  pyjwt, cryptography, python-multipart). `garminconnect` stays `0.3.2`.
+
+**Reconciled / not taken:**
+- Kept our per-user `get_client(ctx)` pattern, no-token startup, and stdio-only
+  `auth_tools`. Migrated upstream's new tools off the module global.
+- Did **not** adopt PR #141's unauthenticated HTTP transport as the public
+  server — our OAuth2 remote (allowlist + import-secret + per-user sessions) stands.
+
+Result: full suite 421 passed; tool counts stdio 139 / remote 137.
+
 ## Fork divergence
 
 ### Added

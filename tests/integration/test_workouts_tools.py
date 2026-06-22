@@ -32,6 +32,32 @@ def app_with_workouts(mock_garmin_client):
     return app
 
 
+def _running_workout_with_steps(steps, name="Validation Workout"):
+    return {
+        "workoutName": name,
+        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+            "workoutSteps": steps,
+        }],
+    }
+
+
+def _timed_interval_step(target_type):
+    return {
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+        "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+        "endConditionValue": 300,
+        "targetType": target_type,
+        "targetValueOne": 143,
+        "targetValueTwo": 157,
+    }
+
+
+
 @pytest.mark.asyncio
 async def test_get_workouts_tool(app_with_workouts, mock_garmin_client):
     """Test get_workouts tool returns all workouts"""
@@ -386,6 +412,269 @@ async def test_upload_workout_fixes_hr_zone_in_repeat_group(app_with_workouts, m
 
     result_data = json_module.loads(result[0][0].text)
     assert result_data["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_mismatched_end_condition_id(
+    app_with_workouts, mock_garmin_client
+):
+    """Reject payloads Garmin would reinterpret using conditionTypeId."""
+    workout_data = _running_workout_with_steps([{
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+        "endCondition": {"conditionTypeId": 4, "conditionTypeKey": "heart.rate"},
+        "endConditionValue": 145.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+    }])
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert result is not None
+    message = result[0][0].text
+    assert "Error uploading workout" in message
+    assert "conditionTypeKey 'heart.rate' requires conditionTypeId 6" in message
+    assert "got 4 (calories)" in message
+    mock_garmin_client.upload_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_target_type_mismatch(app_with_workouts, mock_garmin_client):
+    """Reject targetType IDs that Garmin would reinterpret as another target."""
+    workout_data = _running_workout_with_steps(
+        [_timed_interval_step({"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"})],
+        name="Bad HR Target",
+    )
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert "targetType mismatch" in result[0][0].text
+    assert "workoutTargetTypeId 6 is 'pace.zone', not 'heart.rate'" in result[0][0].text
+    mock_garmin_client.upload_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_accepts_heart_rate_end_condition_id(
+    app_with_workouts, mock_garmin_client
+):
+    """Accept the canonical Garmin id/key pair for heart-rate end conditions."""
+    workout_data = _running_workout_with_steps([{
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+        "endCondition": {"conditionTypeId": 6, "conditionTypeKey": "heart.rate"},
+        "endConditionValue": 145.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+    }])
+    mock_garmin_client.upload_workout.return_value = {
+        "workoutId": 123460,
+        "workoutName": "Validation Workout",
+    }
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert result is not None
+    mock_garmin_client.upload_workout.assert_called_once_with(workout_data)
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_accepts_custom_hr_range(app_with_workouts, mock_garmin_client):
+    """Custom HR bpm ranges use heart.rate.zone with targetValueOne/targetValueTwo."""
+    import json as json_module
+
+    mock_garmin_client.upload_workout.return_value = {
+        "workoutId": 123460,
+        "workoutName": "Custom HR Range",
+    }
+    workout_data = _running_workout_with_steps(
+        [_timed_interval_step({"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"})],
+        name="Custom HR Range",
+    )
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    called_data = mock_garmin_client.upload_workout.call_args[0][0]
+    step = called_data["workoutSegments"][0]["workoutSteps"][0]
+    assert step["targetValueOne"] == 143
+    assert step["targetValueTwo"] == 157
+    assert "zoneNumber" not in step
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_nested_end_condition_mismatch(
+    app_with_workouts, mock_garmin_client
+):
+    """Validate nested RepeatGroupDTO workout steps before upload."""
+    workout_data = _running_workout_with_steps([{
+        "type": "RepeatGroupDTO",
+        "stepOrder": 1,
+        "numberOfIterations": 2,
+        "endCondition": {"conditionTypeId": 7, "conditionTypeKey": "iterations"},
+        "workoutSteps": [{
+            "type": "ExecutableStepDTO",
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+            "endCondition": {"conditionTypeId": 4, "conditionTypeKey": "heart.rate"},
+            "endConditionValue": 145.0,
+            "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+        }],
+    }])
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert result is not None
+    message = result[0][0].text
+    assert "workoutSegments[0].workoutSteps[0].workoutSteps[0]" in message
+    assert "conditionTypeKey 'heart.rate' requires conditionTypeId 6" in message
+    mock_garmin_client.upload_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_nested_target_type_mismatch(app_with_workouts, mock_garmin_client):
+    """Reject mismatched targetType blocks inside RepeatGroupDTO steps."""
+    bad_step = _timed_interval_step({"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"})
+    workout_data = _running_workout_with_steps(
+        [{
+            "type": "RepeatGroupDTO",
+            "stepOrder": 1,
+            "numberOfIterations": 2,
+            "workoutSteps": [bad_step],
+        }],
+        name="Nested Bad HR Target",
+    )
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert "workoutSegments[0].workoutSteps[0].workoutSteps[0].targetType mismatch" in result[0][0].text
+    mock_garmin_client.upload_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_missing_end_condition_id(
+    app_with_workouts, mock_garmin_client
+):
+    """Return a local validation error instead of Garmin's id=0 API error."""
+    workout_data = _running_workout_with_steps([{
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+        "endCondition": {"conditionTypeKey": "heart.rate"},
+        "endConditionValue": 145.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+    }])
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert result is not None
+    message = result[0][0].text
+    assert "conditionTypeKey 'heart.rate' requires conditionTypeId 6" in message
+    mock_garmin_client.upload_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_secondary_target_type_mismatch(app_with_workouts, mock_garmin_client):
+    """Reject mismatched secondaryTargetType blocks before Garmin reinterprets them."""
+    step = _timed_interval_step(None)
+    step["secondaryTargetType"] = {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"}
+    step["secondaryTargetValueOne"] = 143
+    step["secondaryTargetValueTwo"] = 157
+    workout_data = _running_workout_with_steps(
+        [step],
+        name="Bad Secondary HR Target",
+    )
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert "secondaryTargetType mismatch" in result[0][0].text
+    assert "workoutTargetTypeId 6 is 'pace.zone', not 'heart.rate'" in result[0][0].text
+    mock_garmin_client.upload_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_accepts_secondary_target_type_with_null_primary(
+    app_with_workouts, mock_garmin_client
+):
+    """Swim-style secondary targets may use targetType null."""
+    import json as json_module
+
+    mock_garmin_client.upload_workout.return_value = {
+        "workoutId": 123461,
+        "workoutName": "Secondary Pace Target",
+    }
+    step = _timed_interval_step(None)
+    step["secondaryTargetType"] = {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "pace.zone"}
+    step["secondaryTargetValueOne"] = 0.45
+    step["secondaryTargetValueTwo"] = 0.6916667
+    workout_data = _running_workout_with_steps([step], name="Secondary Pace Target")
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    called_data = mock_garmin_client.upload_workout.call_args[0][0]
+    called_step = called_data["workoutSegments"][0]["workoutSteps"][0]
+    assert called_step["targetType"] is None
+    assert called_step["secondaryTargetType"]["workoutTargetTypeKey"] == "pace.zone"
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_rejects_nested_secondary_target_type_mismatch(
+    app_with_workouts, mock_garmin_client
+):
+    """Reject mismatched secondaryTargetType blocks inside RepeatGroupDTO steps."""
+    bad_step = _timed_interval_step(None)
+    bad_step["secondaryTargetType"] = {"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"}
+    workout_data = _running_workout_with_steps(
+        [{
+            "type": "RepeatGroupDTO",
+            "stepOrder": 1,
+            "numberOfIterations": 2,
+            "workoutSteps": [bad_step],
+        }],
+        name="Nested Bad Secondary HR Target",
+    )
+
+    result = await app_with_workouts.call_tool(
+        "upload_workout",
+        {"workout_data": workout_data}
+    )
+
+    assert (
+        "workoutSegments[0].workoutSteps[0].workoutSteps[0].secondaryTargetType mismatch"
+        in result[0][0].text
+    )
+    mock_garmin_client.upload_workout.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -767,6 +1056,85 @@ async def test_upload_workouts_partial_failure(app_with_workouts, mock_garmin_cl
     assert result_data["results"][1]["name"] == "Bad Workout"
 
 
+@pytest.mark.asyncio
+async def test_upload_workouts_reports_end_condition_validation_error(
+    app_with_workouts, mock_garmin_client
+):
+    """Batch uploads reject only the invalid workout and keep valid uploads."""
+    import json as json_module
+
+    mock_garmin_client.upload_workout.return_value = {
+        "workoutId": 111,
+        "workoutName": "Valid HR Workout",
+    }
+
+    valid = _running_workout_with_steps([{
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+        "endCondition": {"conditionTypeId": 6, "conditionTypeKey": "heart.rate"},
+        "endConditionValue": 145.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+    }], name="Valid HR Workout")
+    invalid = _running_workout_with_steps([{
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+        "endCondition": {"conditionTypeId": 4, "conditionTypeKey": "heart.rate"},
+        "endConditionValue": 145.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+    }], name="Invalid HR Workout")
+
+    result = await app_with_workouts.call_tool(
+        "upload_workouts",
+        {"workouts": [valid, invalid]}
+    )
+
+    assert result is not None
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 2
+    assert result_data["succeeded"] == 1
+    assert result_data["failed"] == 1
+    assert result_data["results"][0]["status"] == "success"
+    assert result_data["results"][1]["status"] == "error"
+    assert result_data["results"][1]["name"] == "Invalid HR Workout"
+    assert "conditionTypeKey 'heart.rate' requires conditionTypeId 6" in result_data["results"][1]["message"]
+    mock_garmin_client.upload_workout.assert_called_once_with(valid)
+
+
+@pytest.mark.asyncio
+async def test_upload_workouts_rejects_target_type_mismatch(app_with_workouts, mock_garmin_client):
+    """Batch uploads reject malformed targetType blocks before calling Garmin."""
+    import json as json_module
+
+    good_workout = _running_workout_with_steps(
+        [_timed_interval_step({"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"})],
+        name="Good HR Range",
+    )
+    bad_workout = _running_workout_with_steps(
+        [_timed_interval_step({"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"})],
+        name="Bad HR Target",
+    )
+    mock_garmin_client.upload_workout.return_value = {
+        "workoutId": 111,
+        "workoutName": "Good HR Range",
+    }
+
+    result = await app_with_workouts.call_tool(
+        "upload_workouts",
+        {"workouts": [good_workout, bad_workout]},
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 2
+    assert result_data["succeeded"] == 1
+    assert result_data["failed"] == 1
+    assert result_data["results"][0]["status"] == "success"
+    assert result_data["results"][1]["status"] == "error"
+    assert "targetType mismatch" in result_data["results"][1]["message"]
+    mock_garmin_client.upload_workout.assert_called_once_with(good_workout)
+
+
 # schedule_workouts tests
 @pytest.mark.asyncio
 async def test_schedule_workouts_single(app_with_workouts, mock_garmin_client):
@@ -972,6 +1340,63 @@ async def test_schedule_workouts_inline_upload(app_with_workouts, mock_garmin_cl
 
 
 @pytest.mark.asyncio
+async def test_schedule_workouts_inline_upload_rejects_end_condition_mismatch(
+    app_with_workouts, mock_garmin_client
+):
+    """Inline workout_data follows the same validation as upload_workout."""
+    import json as json_module
+
+    inline_data = _running_workout_with_steps([{
+        "type": "ExecutableStepDTO",
+        "stepOrder": 1,
+        "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+        "endCondition": {"conditionTypeId": 4, "conditionTypeKey": "heart.rate"},
+        "endConditionValue": 145.0,
+        "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"},
+    }], name="Invalid Inline HR Workout")
+
+    result = await app_with_workouts.call_tool(
+        "schedule_workouts",
+        {"schedules": [{"workout_data": inline_data, "calendar_date": "2024-02-01"}]}
+    )
+
+    assert result is not None
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 1
+    assert result_data["succeeded"] == 0
+    assert result_data["failed"] == 1
+    assert result_data["results"][0]["status"] == "error"
+    assert "conditionTypeKey 'heart.rate' requires conditionTypeId 6" in result_data["results"][0]["message"]
+    mock_garmin_client.upload_workout.assert_not_called()
+    mock_garmin_client.client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedule_workouts_rejects_inline_target_type_mismatch(app_with_workouts, mock_garmin_client):
+    """Inline workout_data uses the same targetType validation as upload_workout."""
+    import json as json_module
+
+    inline_data = _running_workout_with_steps(
+        [_timed_interval_step({"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"})],
+        name="Bad Inline HR Target",
+    )
+
+    result = await app_with_workouts.call_tool(
+        "schedule_workouts",
+        {"schedules": [{"workout_data": inline_data, "calendar_date": "2024-02-01"}]},
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 1
+    assert result_data["succeeded"] == 0
+    assert result_data["failed"] == 1
+    assert result_data["results"][0]["status"] == "error"
+    assert "targetType mismatch" in result_data["results"][0]["message"]
+    mock_garmin_client.upload_workout.assert_not_called()
+    mock_garmin_client.client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_schedule_workouts_mixed_inline_and_id(app_with_workouts, mock_garmin_client):
     """Test schedule_workouts mixing inline workout_data and existing workout_id"""
     import json as json_module
@@ -1113,3 +1538,125 @@ def test_fix_repeat_group_recurses_into_nested_repeat_groups():
     }
     _fix_repeat_group_step(outer)
     assert inner["endCondition"]["conditionTypeId"] == 7
+
+
+# unschedule_workout tests
+@pytest.mark.asyncio
+async def test_unschedule_workout_success(app_with_workouts, mock_garmin_client):
+    """Test unschedule_workout tool when the library call succeeds"""
+    import json as json_module
+
+    # The SDK's unschedule_workout returns {} (a dict), not a Response;
+    # success is signalled by the absence of an exception.
+    mock_garmin_client.unschedule_workout.return_value = {}
+
+    scheduled_workout_id = 1677275789
+    result = await app_with_workouts.call_tool(
+        "unschedule_workout",
+        {"scheduled_workout_id": scheduled_workout_id}
+    )
+
+    assert result is not None
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "success"
+    assert result_data["scheduled_workout_id"] == scheduled_workout_id
+    assert "removed from calendar" in result_data["message"]
+    mock_garmin_client.unschedule_workout.assert_called_once_with(scheduled_workout_id)
+
+
+@pytest.mark.asyncio
+async def test_unschedule_workout_error(app_with_workouts, mock_garmin_client):
+    """Test unschedule_workout tool surfaces failures from the library"""
+    import json as json_module
+
+    mock_garmin_client.unschedule_workout.side_effect = Exception("Network error")
+
+    result = await app_with_workouts.call_tool(
+        "unschedule_workout",
+        {"scheduled_workout_id": 999}
+    )
+
+    assert result is not None
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "failed"
+    assert result_data["scheduled_workout_id"] == 999
+    assert "Network error" in result_data["message"]
+
+
+# unschedule_workouts (batch) tests
+@pytest.mark.asyncio
+async def test_unschedule_workouts_multiple(app_with_workouts, mock_garmin_client):
+    """Test unschedule_workouts batch tool with multiple ids"""
+    import json as json_module
+
+    mock_garmin_client.unschedule_workout.return_value = {}
+
+    result = await app_with_workouts.call_tool(
+        "unschedule_workouts",
+        {"scheduled_workout_ids": [111, 222, 333]}
+    )
+
+    assert result is not None
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 3
+    assert result_data["succeeded"] == 3
+    assert result_data["failed"] == 0
+    assert mock_garmin_client.unschedule_workout.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_unschedule_workouts_partial_failure(app_with_workouts, mock_garmin_client):
+    """Test unschedule_workouts batch tool when some calls fail"""
+    import json as json_module
+
+    mock_garmin_client.unschedule_workout.side_effect = [
+        {},
+        Exception("API Error 404"),
+    ]
+
+    result = await app_with_workouts.call_tool(
+        "unschedule_workouts",
+        {"scheduled_workout_ids": [111, 999]}
+    )
+
+    assert result is not None
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 2
+    assert result_data["succeeded"] == 1
+    assert result_data["failed"] == 1
+    assert result_data["results"][0]["status"] == "success"
+    assert result_data["results"][1]["status"] == "error"
+    assert "404" in result_data["results"][1]["message"]
+
+
+@pytest.mark.asyncio
+async def test_get_scheduled_workouts_exposes_scheduled_id(app_with_workouts, mock_garmin_client):
+    """get_scheduled_workouts surfaces the calendar-entry id for unscheduling"""
+    import json as json_module
+
+    graphql_response = {
+        "data": {
+            "workoutScheduleSummariesScalar": [
+                {
+                    "scheduledWorkoutId": 555,
+                    "workoutUuid": None,
+                    "workoutId": 123456,
+                    "workoutName": "5K Tempo Run",
+                    "workoutType": "running",
+                    "scheduleDate": "2024-01-15",
+                    "associatedActivityId": None,
+                }
+            ]
+        }
+    }
+    mock_garmin_client.query_garmin_graphql.return_value = graphql_response
+
+    result = await app_with_workouts.call_tool(
+        "get_scheduled_workouts",
+        {"start_date": "2024-01-08", "end_date": "2024-01-15"}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    workout = result_data["scheduled_workouts"][0]
+    assert workout["scheduled_workout_id"] == 555
+    assert workout["workout_id"] == 123456

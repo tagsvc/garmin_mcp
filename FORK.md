@@ -163,11 +163,12 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (354+ at time of writing).
-- Tool counts: **stdio 134**, **remote 132** (auth tools are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (421+ at time of writing).
+- Tool counts: **stdio 139**, **remote 137** (auth tools are stdio-only).
 
 ## History
 
-Integrated via PRs #1–#6 on this fork. See `CHANGELOG.md` for a categorized list
-of every change relative to upstream, and `README.md` (Remote Mode, Security,
-Token import / refresh) for operational detail.
+Integrated via PRs #1–#6 on this fork, then synced with upstream on 2026-06-17
+(upstream PRs #140/#141/#142, Issues #137/#138/#139). See `CHANGELOG.md` for a
+categorized list of every change relative to upstream, and `README.md` (Remote
+Mode, Security, Token import / refresh) for operational detail.

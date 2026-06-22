@@ -106,6 +106,64 @@ enabled_tools = _parse_tool_set(os.getenv("GARMIN_ENABLED_TOOLS"))
 disabled_tools = _parse_tool_set(os.getenv("GARMIN_DISABLED_TOOLS"))
 
 
+_VALID_TRANSPORTS = ("stdio", "streamable-http", "sse")
+
+
+class _GarminProxy:
+    """Wraps the Garmin client to translate known runtime exceptions into clear messages.
+
+    Without this, token expiry or rate-limiting during a tool call surfaces raw
+    library tracebacks to the MCP client. The proxy intercepts each attribute
+    access and, if the result is callable, wraps the call so that known Garmin
+    exceptions become user-friendly strings rather than server errors.
+    """
+
+    _MESSAGES = {
+        GarminConnectAuthenticationError: (
+            "Garmin authentication expired. "
+            "Re-run 'garmin-mcp-auth' to refresh your tokens and restart the server."
+        ),
+        GarminConnectTooManyRequestsError: (
+            "Garmin rate limit hit. Wait a few minutes before retrying."
+        ),
+        GarminConnectConnectionError: (
+            "Garmin Connect is unreachable. Check your network connection or try again later."
+        ),
+    }
+
+    def __init__(self, client):
+        self._client = client
+
+    def __getattr__(self, name):
+        attr = getattr(self._client, name)
+        if not callable(attr):
+            return attr
+
+        def _call(*args, **kwargs):
+            try:
+                return attr(*args, **kwargs)
+            except tuple(self._MESSAGES) as exc:
+                for exc_type, msg in self._MESSAGES.items():
+                    if isinstance(exc, exc_type):
+                        raise type(exc)(msg) from None
+                raise
+
+        return _call
+
+
+def _parse_transport_config() -> tuple[str, str, int]:
+    """Read and validate HTTP transport env vars. Raises ValueError on bad input."""
+    transport = os.getenv("GARMIN_MCP_TRANSPORT", "stdio").strip().lower()
+    if transport not in _VALID_TRANSPORTS:
+        raise ValueError(
+            f"Invalid GARMIN_MCP_TRANSPORT {transport!r}; "
+            f"expected one of {', '.join(_VALID_TRANSPORTS)}"
+        )
+    http_host = os.getenv("GARMIN_MCP_HOST", "0.0.0.0")
+    http_port = int(os.getenv("GARMIN_MCP_PORT", "8000"))
+    return transport, http_host, http_port
+
+
 class _ToolFilter:
     """Wraps a FastMCP app to conditionally register tools by function name.
 
@@ -281,12 +339,26 @@ def init_api(email, password):
 def main():
     """Initialize the MCP server and register all tools"""
 
+    # --- Transport configuration --------------------------------------------
+    # By default the server speaks stdio (Claude Desktop, MCP Inspector, etc.).
+    # Set GARMIN_MCP_TRANSPORT=streamable-http (or sse) to serve over HTTP.
+    #   GARMIN_MCP_TRANSPORT - stdio (default) | streamable-http | sse
+    #   GARMIN_MCP_HOST      - bind address for HTTP transports (default 0.0.0.0)
+    #   GARMIN_MCP_PORT      - bind port for HTTP transports (default 8000)
+    try:
+        transport, http_host, http_port = _parse_transport_config()
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
+
     # Initialize Garmin client. This may return None when no valid tokens exist
     # yet; in that case we still start the server so the user can authenticate at
     # runtime with the login_to_garmin tool (from auth_tools).
     garmin_client = init_api(email, password)
     if garmin_client:
         print("Garmin Connect client initialized successfully.", file=sys.stderr)
+        # Wrap so runtime auth/rate-limit errors surface as clear messages.
+        garmin_client = _GarminProxy(garmin_client)
         # Set global client for client_resolver (used by tool functions)
         set_global_client(garmin_client)
     else:
@@ -313,11 +385,14 @@ def main():
     courses.configure(garmin_client)
     activity_analysis.configure(garmin_client)
     analytics.configure(garmin_client)
-    # auth_tools activates the live client after a successful runtime login.
-    auth_tools.configure(set_global_client)
+    # auth_tools activates the live client after a successful runtime login;
+    # wrap it the same way so runtime-login clients get friendly error messages.
+    auth_tools.configure(lambda c: set_global_client(_GarminProxy(c)))
 
-    # Create the MCP app, wrapped so the env-var filter can drop tools
-    app = _ToolFilter(FastMCP("Garmin Connect v1.0"), enabled_tools, disabled_tools)
+    # Create the MCP app, wrapped so the env-var filter can drop tools.
+    # host/port only matter for the HTTP transports; stdio ignores them.
+    fastmcp = FastMCP("Garmin Connect v1.0", host=http_host, port=http_port)
+    app = _ToolFilter(fastmcp, enabled_tools, disabled_tools)
     if enabled_tools:
         print(f"Tool filter: allowlist of {len(enabled_tools)} tool(s).", file=sys.stderr)
     elif disabled_tools:
@@ -353,8 +428,23 @@ def main():
             file=sys.stderr,
         )
 
+    # When serving over HTTP, expose a plain health endpoint for k8s probes.
+    # The MCP endpoint itself requires a handshake and isn't probe-friendly.
+    if transport != "stdio":
+        from starlette.requests import Request
+        from starlette.responses import PlainTextResponse
+
+        @fastmcp.custom_route("/healthz", methods=["GET"])
+        async def healthz(_request: "Request") -> "PlainTextResponse":
+            return PlainTextResponse("ok")
+
+        print(
+            f"Serving MCP over {transport} on {http_host}:{http_port}",
+            file=sys.stderr,
+        )
+
     # Run the MCP server
-    app.run()
+    app.run(transport=transport)
 
 
 if __name__ == "__main__":
