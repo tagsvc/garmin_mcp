@@ -21,4 +21,4 @@ allowlist, secret-gated token import, and a Railway remote deployment).
 2. Confirm the invariants in `FORK.md` still hold (allowlist fail-closed,
    import-secret gating, `garminconnect==0.3.2` pin, `auth_tools` stdio-only,
    no `VOLUME` in `Dockerfile.remote`, `$PORT` handling).
-3. Re-enumerate tool counts if registration changed (expect stdio 134 / remote 132).
+3. Re-enumerate tool counts if registration changed (expect stdio 139 / remote 137).
