@@ -23,6 +23,10 @@ Merged `Taxuspt/garmin_mcp` (PRs #147–#162, Issues #128/#155).
   `_update_activity_summary` helpers. None leak `ctx`.
 - Kept upstream's nutrition fixes (UUID-aware delete, dict-shaped customFood
   responses) with our `get_client(ctx)` calls.
+- Migrated `training.py`'s `_get_activity_type_mapping` helper off the module
+  global too — the codebase now has **zero** module-global client usages, so every
+  tool is remote-safe (activity-type names no longer degrade to "unknown" in
+  remote mode).
 
 Result: full suite 451 passed; tool counts stdio 146 / remote 144.
 

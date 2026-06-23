@@ -23,14 +23,19 @@ def configure(client):
     _activity_type_cache = None  # Reset cache when client changes
 
 
-def _get_activity_type_mapping() -> Dict[int, str]:
-    """Get or build a cached mapping of activity type IDs to names"""
+def _get_activity_type_mapping(client) -> Dict[int, str]:
+    """Get or build a cached mapping of activity type IDs to names.
+
+    Takes the resolved client (rather than the module global) so it works in
+    remote multi-user mode. The mapping is Garmin's static type list, so the
+    cache is shared across users.
+    """
     global _activity_type_cache
     if _activity_type_cache is not None:
         return _activity_type_cache
 
     try:
-        activity_types = garmin_client.get_activity_types()
+        activity_types = client.get_activity_types()
         _activity_type_cache = {
             at.get("typeId"): at.get("typeKey", "unknown")
             for at in activity_types
@@ -202,7 +207,7 @@ def register_tools(app):
                 return f"No endurance score data found between {start_date} and {end_date}."
 
             # Get activity type mapping for human-readable names
-            activity_type_mapping = _get_activity_type_mapping()
+            activity_type_mapping = _get_activity_type_mapping(get_client(ctx))
 
             # Extract the current endurance score DTO
             score_dto = endurance_data.get("enduranceScoreDTO", {})
