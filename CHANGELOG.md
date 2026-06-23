@@ -5,6 +5,31 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Upstream sync — 2026-06-18
+
+Merged `Taxuspt/garmin_mcp` (PRs #147–#162, Issues #128/#155).
+
+**Taken from upstream:**
+- New tools: `set_activity_type`, `set_activity_description`, `set_activity_event_type`,
+  `set_perceived_effort`, `set_activity_feel`, `delete_custom_food`, `create_run_workout`;
+  `delete_food_log` reworked (UUID + `meal_date`); custom-food brand/micros fields;
+  cycling VO2 max in training status; `get_activity` surfaces description/event type.
+- Fixes: `power.between` cycling target-type (#155); nutrition write-tool crashes;
+  Windows stdio newline handling (#128).
+
+**Reconciled (remote multi-user):**
+- Migrated every new tool off the stdio-only `garmin_client` global to
+  `get_client(ctx)`, and threaded the client through the `_put_activity_update` /
+  `_update_activity_summary` helpers. None leak `ctx`.
+- Kept upstream's nutrition fixes (UUID-aware delete, dict-shaped customFood
+  responses) with our `get_client(ctx)` calls.
+- Migrated `training.py`'s `_get_activity_type_mapping` helper off the module
+  global too — the codebase now has **zero** module-global client usages, so every
+  tool is remote-safe (activity-type names no longer degrade to "unknown" in
+  remote mode).
+
+Result: full suite 451 passed; tool counts stdio 146 / remote 144.
+
 ## Upstream sync — 2026-06-17
 
 Merged `Taxuspt/garmin_mcp` (upstream PRs #140/#141/#142, Issues #137/#138/#139).
