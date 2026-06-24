@@ -5,6 +5,22 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Security hardening — 2026-06-18
+
+Phase-1 self-review of the auth surface (`oauth_provider.py`) and its fixes:
+- **Reflected XSS fixed** — HTML-escape `state` and `error` on the login and MFA
+  pages, which reflected the raw `?state=` query param into the credential form.
+- **Rate limiting added** — `/login` (per email), MFA callback (per pending state),
+  and `/import-token` (per IP). Slows credential-stuffing / MFA brute-force and
+  avoids re-hammering Garmin SSO.
+- **Tokens hashed at rest** — access/refresh tokens stored as SHA-256; lookups hash
+  the incoming token. A one-time, idempotent migration hashes any pre-existing
+  plaintext rows, so live sessions are **not** disrupted on deploy.
+
+Review confirmed clean: parameterized SQL (no injection), constant-time secret
+compare, single-use auth codes, per-user isolation, no eval/pickle/path-traversal.
+Full suite: 460 passed.
+
 ## Upstream sync — 2026-06-18
 
 Merged `Taxuspt/garmin_mcp` (PRs #147–#162, Issues #128/#155).
