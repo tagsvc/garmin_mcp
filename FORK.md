@@ -42,6 +42,11 @@ coverage.
   persistence is a Railway volume mounted at `/data`.
 - **`config.port` honors `$PORT`** (then `GARMIN_MCP_PORT`, then 8000) for Railway.
 - **`/data` persistence**: SQLite DB (`DB_PATH`) and per-user sessions (`SESSION_STORAGE_PATH`).
+- **Login/MFA pages must HTML-escape reflected `state`/`error`** (anti reflected-XSS;
+  the pages collect Garmin credentials). Use `_html_escape`, not raw f-string interpolation.
+- **Access/refresh tokens are stored hashed at rest** (SHA-256 in SQLite); lookups
+  hash the incoming token. Don't revert to storing/looking-up plaintext.
+- **Auth endpoints are rate-limited** (`/login`, MFA callback, `/import-token`) via `_RateLimiter`.
 
 ## Why these changes (decision log)
 
@@ -179,7 +184,7 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (451+ at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (460+ at time of writing).
 - Tool counts: **stdio 146**, **remote 144** (auth tools are stdio-only).
 
 ## History

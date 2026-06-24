@@ -41,6 +41,10 @@ from starlette.responses import (
 
 logger = logging.getLogger(__name__)
 
+# Imported as a function (not the `html` module) because the page builders use a
+# local variable named `html` for the rendered markup.
+from html import escape as _html_escape  # noqa: E402
+
 # TTL for pending MFA state (seconds)
 _MFA_TTL = 300  # 5 minutes
 
@@ -51,6 +55,16 @@ _MFA_TTL = 300  # 5 minutes
 _LOGIN_RETRY_STATUS_FORCELIST = (408, 500, 502, 503, 504)
 
 
+def _hash_token(token: str) -> str:
+    """SHA-256 of a bearer token, for storage at rest.
+
+    Access/refresh tokens are stored hashed so a read of the SQLite DB (or the
+    /data volume) does not yield usable bearer tokens. The plaintext is only ever
+    held in memory and returned to the client; lookups hash the incoming token.
+    """
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def _new_login_client():
     """Build a garth HTTP client that fails fast on HTTP 429 (rate limiting)."""
     from garth import http as garth_http
@@ -58,6 +72,50 @@ def _new_login_client():
     client = garth_http.Client()
     client.configure(status_forcelist=_LOGIN_RETRY_STATUS_FORCELIST)
     return client
+
+
+class _RateLimiter:
+    """Simple in-memory fixed-window rate limiter, keyed by an arbitrary string.
+
+    Defense-in-depth for the auth endpoints (login / MFA / token import): caps
+    repeated attempts to slow credential-stuffing and MFA brute-force, and to
+    avoid hammering Garmin's own rate-limited SSO. In-memory and per-process —
+    adequate for the single-replica deployment; not a distributed limiter.
+    """
+
+    def __init__(self, max_attempts: int, window_seconds: int):
+        self._max = max_attempts
+        self._window = window_seconds
+        self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        """Record an attempt for ``key``; return False if it exceeds the limit."""
+        now = time.time()
+        with self._lock:
+            recent = [t for t in self._hits.get(key, []) if now - t < self._window]
+            if len(recent) >= self._max:
+                self._hits[key] = recent  # keep pruned window; do not record
+                return False
+            recent.append(now)
+            self._hits[key] = recent
+            # Opportunistic cleanup so stale keys don't accumulate unbounded.
+            if len(self._hits) > 2048:
+                self._hits = {
+                    k: [t for t in v if now - t < self._window]
+                    for k, v in self._hits.items()
+                    if any(now - t < self._window for t in v)
+                }
+            return True
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for rate-limiting (honors X-Forwarded-For)."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    client = getattr(request, "client", None)
+    return getattr(client, "host", "") or "unknown"
 
 
 @dataclass
@@ -99,6 +157,10 @@ class GarminOAuthProvider(
         )
         self._pending_mfa: dict[str, _PendingMfa] = {}
         self._mfa_lock = threading.Lock()
+        # Defense-in-depth rate limiters for the auth endpoints.
+        self._login_limiter = _RateLimiter(max_attempts=8, window_seconds=300)
+        self._mfa_limiter = _RateLimiter(max_attempts=8, window_seconds=300)
+        self._import_limiter = _RateLimiter(max_attempts=10, window_seconds=300)
         self._init_db()
 
     def _is_email_allowed(self, email: str) -> bool:
@@ -123,6 +185,10 @@ class GarminOAuthProvider(
         """
         if not self.import_secret:
             return JSONResponse({"error": "Token import is disabled."}, status_code=404)
+
+        if not self._import_limiter.allow(_client_ip(request)):
+            logger.warning("Rate-limited /import-token from %s", _client_ip(request))
+            return JSONResponse({"error": "Too many requests."}, status_code=429)
 
         provided = request.headers.get("X-Import-Secret", "")
         if not hmac.compare_digest(provided, self.import_secret):
@@ -232,6 +298,25 @@ class GarminOAuthProvider(
                 );
                 """
             )
+
+            # One-time migration for the at-rest token hashing rollout: hash any
+            # pre-existing PLAINTEXT access/refresh tokens so live sessions keep
+            # working after deploy (no forced re-link). A stored value that is
+            # already a 64-char lowercase-hex SHA-256 digest is left as-is, so
+            # this is idempotent across restarts.
+            def _is_hashed(value: str) -> bool:
+                return len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+            for table in ("access_tokens", "refresh_tokens"):
+                rows = conn.execute(f"SELECT token FROM {table}").fetchall()
+                for row in rows:
+                    tok = row["token"]
+                    if not _is_hashed(tok):
+                        conn.execute(
+                            f"UPDATE {table} SET token = ? WHERE token = ?",
+                            (_hash_token(tok), tok),
+                        )
+
             conn.commit()
         finally:
             conn.close()
@@ -467,7 +552,7 @@ class GarminOAuthProvider(
                 """INSERT INTO access_tokens (token, client_id, user_id, scopes, expires_at)
                    VALUES (?, ?, ?, ?, ?)""",
                 (
-                    access_token_str,
+                    _hash_token(access_token_str),
                     client.client_id,
                     user_id,
                     ",".join(authorization_code.scopes),
@@ -478,7 +563,7 @@ class GarminOAuthProvider(
                 """INSERT INTO refresh_tokens (token, client_id, user_id, scopes, expires_at)
                    VALUES (?, ?, ?, ?, ?)""",
                 (
-                    refresh_token_str,
+                    _hash_token(refresh_token_str),
                     client.client_id,
                     user_id,
                     ",".join(authorization_code.scopes),
@@ -504,7 +589,7 @@ class GarminOAuthProvider(
         conn = self._get_conn()
         try:
             row = conn.execute(
-                "SELECT * FROM access_tokens WHERE token = ?", (token,)
+                "SELECT * FROM access_tokens WHERE token = ?", (_hash_token(token),)
             ).fetchone()
             if not row or row["expires_at"] < time.time():
                 return None
@@ -513,7 +598,7 @@ class GarminOAuthProvider(
                 self.session_manager.set_token_user_mapping(token, row["user_id"])
 
             return AccessToken(
-                token=row["token"],
+                token=token,
                 client_id=row["client_id"],
                 scopes=row["scopes"].split(",") if row["scopes"] else [],
                 expires_at=int(row["expires_at"]),
@@ -528,14 +613,14 @@ class GarminOAuthProvider(
         try:
             row = conn.execute(
                 "SELECT * FROM refresh_tokens WHERE token = ? AND client_id = ?",
-                (refresh_token, client.client_id),
+                (_hash_token(refresh_token), client.client_id),
             ).fetchone()
             if not row:
                 return None
             if row["expires_at"] and row["expires_at"] < time.time():
                 return None
             return RefreshToken(
-                token=row["token"],
+                token=refresh_token,
                 client_id=row["client_id"],
                 scopes=row["scopes"].split(",") if row["scopes"] else [],
                 expires_at=int(row["expires_at"]) if row["expires_at"] else None,
@@ -553,12 +638,13 @@ class GarminOAuthProvider(
         try:
             row = conn.execute(
                 "SELECT user_id FROM refresh_tokens WHERE token = ?",
-                (refresh_token.token,),
+                (_hash_token(refresh_token.token),),
             ).fetchone()
             user_id = row["user_id"] if row else None
 
             conn.execute(
-                "DELETE FROM refresh_tokens WHERE token = ?", (refresh_token.token,)
+                "DELETE FROM refresh_tokens WHERE token = ?",
+                (_hash_token(refresh_token.token),),
             )
 
             new_access = secrets.token_urlsafe(48)
@@ -572,12 +658,12 @@ class GarminOAuthProvider(
             conn.execute(
                 """INSERT INTO access_tokens (token, client_id, user_id, scopes, expires_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (new_access, client.client_id, user_id, scopes_str, access_expires),
+                (_hash_token(new_access), client.client_id, user_id, scopes_str, access_expires),
             )
             conn.execute(
                 """INSERT INTO refresh_tokens (token, client_id, user_id, scopes, expires_at)
                    VALUES (?, ?, ?, ?, ?)""",
-                (new_refresh, client.client_id, user_id, scopes_str, refresh_expires),
+                (_hash_token(new_refresh), client.client_id, user_id, scopes_str, refresh_expires),
             )
             conn.commit()
         finally:
@@ -599,8 +685,9 @@ class GarminOAuthProvider(
     ) -> None:
         conn = self._get_conn()
         try:
-            conn.execute("DELETE FROM access_tokens WHERE token = ?", (token.token,))
-            conn.execute("DELETE FROM refresh_tokens WHERE token = ?", (token.token,))
+            h = _hash_token(token.token)
+            conn.execute("DELETE FROM access_tokens WHERE token = ?", (h,))
+            conn.execute("DELETE FROM refresh_tokens WHERE token = ?", (h,))
             conn.commit()
         finally:
             conn.close()
@@ -661,7 +748,7 @@ class GarminOAuthProvider(
 
     async def get_login_page(self, state: str, error: str = "") -> Response:
         """Render the Garmin Connect login form."""
-        error_html = f'<div class="error">{error}</div>' if error else ""
+        error_html = f'<div class="error">{_html_escape(error)}</div>' if error else ""
 
         html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -678,7 +765,7 @@ class GarminOAuthProvider(
         <p class="subtitle">Sign in with your Garmin Connect account to grant access to your fitness data.</p>
         {error_html}
         <form method="POST" action="/login/callback">
-            <input type="hidden" name="state" value="{state}">
+            <input type="hidden" name="state" value="{_html_escape(state, quote=True)}">
             <label for="email">Garmin Connect Email</label>
             <input type="email" id="email" name="email" required autofocus
                    placeholder="you@example.com">
@@ -726,6 +813,14 @@ class GarminOAuthProvider(
         if not password and not garmin_token:
             return await self.get_login_page(
                 state, "Enter your password, or paste an existing Garmin token."
+            )
+
+        # Throttle repeated attempts per account (slows credential-stuffing and
+        # avoids hammering Garmin's own rate-limited SSO).
+        if not self._login_limiter.allow(f"login:{email.strip().lower()}"):
+            logger.warning("Rate-limited login attempts for %s", email)
+            return await self.get_login_page(
+                state, "Too many attempts. Please wait a few minutes and try again."
             )
 
         # Enforce the email allowlist before contacting Garmin. Fail-closed:
@@ -834,7 +929,7 @@ class GarminOAuthProvider(
                     status_code=400,
                 )
 
-        error_html = f'<div class="error">{error}</div>' if error else ""
+        error_html = f'<div class="error">{_html_escape(error)}</div>' if error else ""
 
         html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -855,7 +950,7 @@ class GarminOAuthProvider(
         </div>
         {error_html}
         <form method="POST" action="/login/mfa/callback">
-            <input type="hidden" name="state" value="{state}">
+            <input type="hidden" name="state" value="{_html_escape(state, quote=True)}">
             <label for="mfa_code">Verification Code</label>
             <input type="text" id="mfa_code" name="mfa_code"
                    inputmode="numeric" pattern="[0-9]*" maxlength="7"
@@ -881,6 +976,14 @@ class GarminOAuthProvider(
 
         if not state or not mfa_code:
             return await self.get_mfa_page(state, "Verification code is required.")
+
+        # Throttle MFA code attempts per pending login to cap brute-force of the
+        # ~6-digit code (Garmin also limits server-side; this is defense-in-depth).
+        if not self._mfa_limiter.allow(f"mfa:{state}"):
+            logger.warning("Rate-limited MFA attempts for state %s", state[:8])
+            return await self.get_mfa_page(
+                state, "Too many attempts. Please wait a few minutes and try again."
+            )
 
         # Pop pending MFA (single use)
         with self._mfa_lock:
