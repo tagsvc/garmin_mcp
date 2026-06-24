@@ -3,6 +3,12 @@
 This repository is a fork of [Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp).
 It carries custom work on top of upstream.
 
+**Provenance (see README "Credits" for links):** the OAuth2 remote server is from
+**Tomas2D/garmin_mcp PR #124**; the historical-analytics and interactive-auth tools
+are from **coloboxp/garmin_mcp PR #121**; the original project / sync upstream is
+**Taxuspt/garmin_mcp**. This fork's own additions are the allowlist, secret-gated
+token import, 429 fail-fast, Railway deploy, and the security hardening.
+
 > **Upstream identity (important):** GitHub lists this fork's parent as
 > `Tomas2D/garmin_mcp`, but our real upstream is **`Taxuspt/garmin_mcp`** (the
 > original project; Tomas2D is itself a fork). Always sync from Taxuspt using the
