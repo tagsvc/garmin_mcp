@@ -1061,7 +1061,18 @@ uv tool install --python 3.12 --force C:\Users\aresd\Desktop\programacion\garmin
 
 ## Credits
 
-Built on [Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp), accessing Garmin
-via [cyberjunky/python-garminconnect](https://github.com/cyberjunky/python-garminconnect).
-The historical analytics and interactive auth tools were adapted from
-[coloboxp/garmin_mcp](https://github.com/coloboxp/garmin_mcp) (PR #121).
+This fork stands on work from several projects:
+
+- **[Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp)** — the original
+  Garmin MCP server and our upstream (we sync new tools and fixes from here).
+- **[Tomas2D/garmin_mcp](https://github.com/Tomas2D/garmin_mcp)** — the OAuth2
+  remote server (PR #124, RFC 9728 / claude.ai compatible) that this fork's
+  remote mode is built on.
+- **[coloboxp/garmin_mcp](https://github.com/coloboxp/garmin_mcp)** — the
+  historical analytics and interactive auth tools (PR #121).
+- **[cyberjunky/python-garminconnect](https://github.com/cyberjunky/python-garminconnect)**
+  — the underlying library used to access the Garmin Connect API.
+
+This fork adds the email allowlist, secret-gated token import, 429 fail-fast
+login, Railway deployment, and the security hardening (rate limiting, token-at-rest
+hashing, response security headers). See `CHANGELOG.md` for the full divergence.

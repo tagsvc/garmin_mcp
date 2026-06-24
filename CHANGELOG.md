@@ -97,6 +97,12 @@ Result: full suite 421 passed; tool counts stdio 139 / remote 137.
   compare, on both token-import paths in addition to the allowlist; fail-closed
   (unset disables import). Closes a session-overwrite (DoS) vector on the
   browser import path. (PR #4, #5)
+- **Reflected-XSS fix**: HTML-escape `state`/`error` on the login & MFA pages. (PR #9)
+- **Rate limiting** on `/login`, MFA callback, and `/import-token` (`_RateLimiter`). (PR #9)
+- **Token-at-rest hashing**: access/refresh tokens stored as SHA-256, with an
+  idempotent migration for existing rows. (PR #9)
+- **Response security headers** (HSTS, nosniff, X-Frame-Options, CSP,
+  Referrer-Policy) via `_SecurityHeadersMiddleware`. (PR #10)
 
 ### Fixed
 - **429 fail-fast login client** (`oauth_provider._new_login_client`): excludes
