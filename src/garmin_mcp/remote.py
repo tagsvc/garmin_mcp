@@ -19,6 +19,51 @@ from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, Re
 from starlette.requests import Request
 from starlette.responses import Response
 
+# Defense-in-depth response headers, applied to every response by an ASGI
+# middleware. Most relevant to the browser-rendered login/MFA pages (which
+# collect Garmin credentials): the CSP blocks script execution (belt-and-braces
+# over the output escaping), X-Frame-Options/frame-ancestors stop clickjacking,
+# and Referrer-Policy keeps the `state` token out of the Referer header.
+_SECURITY_HEADERS = [
+    (b"x-content-type-options", b"nosniff"),
+    (b"x-frame-options", b"DENY"),
+    (b"referrer-policy", b"no-referrer"),
+    (
+        b"content-security-policy",
+        b"default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+        b"form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    ),
+    (b"strict-transport-security", b"max-age=31536000"),
+]
+
+
+class _SecurityHeadersMiddleware:
+    """Pure-ASGI middleware that adds security headers to HTTP responses.
+
+    Pure ASGI (not Starlette BaseHTTPMiddleware) so it is robust across Starlette
+    versions and transparently passes through lifespan and streaming messages.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = message.setdefault("headers", [])
+                present = {k.lower() for k, _ in headers}
+                for key, value in _SECURITY_HEADERS:
+                    if key not in present:
+                        headers.append((key, value))
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
+
+
 from garmin_mcp.config import get_config
 from garmin_mcp import oauth_claude
 from garmin_mcp.oauth_provider import GarminOAuthProvider
@@ -197,8 +242,19 @@ def main():
 
     print("Server ready.", file=sys.stderr)
 
-    # Run the server with streamable HTTP transport
-    app.run(transport="streamable-http")
+    # Build the streamable-HTTP app, wrap it with the security-headers middleware,
+    # and serve it ourselves (FastMCP.run() offers no middleware hook). This
+    # mirrors FastMCP.run_streamable_http_async() but adds the wrapper.
+    import uvicorn
+
+    starlette_app = app.streamable_http_app()
+    wrapped = _SecurityHeadersMiddleware(starlette_app)
+    uvicorn.run(
+        wrapped,
+        host=config.host,
+        port=config.port,
+        log_level=log_level.lower(),
+    )
 
 
 if __name__ == "__main__":

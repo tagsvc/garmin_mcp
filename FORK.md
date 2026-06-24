@@ -47,6 +47,10 @@ coverage.
 - **Access/refresh tokens are stored hashed at rest** (SHA-256 in SQLite); lookups
   hash the incoming token. Don't revert to storing/looking-up plaintext.
 - **Auth endpoints are rate-limited** (`/login`, MFA callback, `/import-token`) via `_RateLimiter`.
+- **Remote responses carry security headers** via `_SecurityHeadersMiddleware`
+  in `remote.py` (HSTS, nosniff, `X-Frame-Options: DENY`, strict CSP,
+  `Referrer-Policy: no-referrer`). The remote server is served through this
+  wrapper, not bare `FastMCP.run()` — keep the wrapper on the run path.
 
 ## Why these changes (decision log)
 
@@ -184,7 +188,7 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (460+ at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (464+ at time of writing).
 - Tool counts: **stdio 146**, **remote 144** (auth tools are stdio-only).
 
 ## History

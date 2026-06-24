@@ -16,10 +16,15 @@ Phase-1 self-review of the auth surface (`oauth_provider.py`) and its fixes:
 - **Tokens hashed at rest** — access/refresh tokens stored as SHA-256; lookups hash
   the incoming token. A one-time, idempotent migration hashes any pre-existing
   plaintext rows, so live sessions are **not** disrupted on deploy.
+- **Security response headers** (Phase-2 finding) — a pure-ASGI middleware adds
+  HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a strict CSP
+  (`default-src 'none'` — blocks scripts), and `Referrer-Policy: no-referrer` to
+  every response. Verified live: Phase-2 probe was 10/10 pass with only these
+  headers flagged; now added.
 
 Review confirmed clean: parameterized SQL (no injection), constant-time secret
 compare, single-use auth codes, per-user isolation, no eval/pickle/path-traversal.
-Full suite: 460 passed.
+Full suite: 464 passed.
 
 ## Upstream sync — 2026-06-18
 
