@@ -190,12 +190,12 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
   `get_client(ctx)` (add a `ctx: Context` param). This is how we adapted
   `create_manual_activity`, `download_activity_file`, and `unschedule_workout(s)`.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 146 / remote 144.
+**Definition of done:** suite green, invariants intact, tool counts stdio 148 / remote 146.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (464+ at time of writing).
-- Tool counts: **stdio 146**, **remote 144** (auth tools are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (484+ at time of writing).
+- Tool counts: **stdio 148**, **remote 146** (auth tools are stdio-only).
 
 ## History
 

@@ -80,7 +80,9 @@ def register_tools(app):
                               filter for races with event_type == "race" rather
                               than excluding "training", since many non-race
                               activities appear as "uncategorized" not "training"
-          - field omitted   — activity pre-dates event type support in the API
+          - field absent    — API returned no eventType for this activity; not
+                              observed in practice in any activity back to 2012
+                              (oldest activities sampled on this account)
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -659,7 +661,16 @@ def register_tools(app):
 
     @app.tool()
     async def get_activity_weather(ctx: Context, activity_id: Union[int, str]) -> str:
-        """Get weather data for an activity
+        """Get weather data for an activity.
+
+        The temperature and dew_point values are in the unit matching the
+        account's measurement system (Fahrenheit for statute_us / imperial
+        accounts, Celsius for metric). The temperature_unit field ("F" or "C")
+        reflects whichever unit the API returned; do not assume Celsius.
+
+        Wind speed unit also follows the measurement system (mph for imperial,
+        km/h for metric), but no wind_speed_unit field is included because the
+        Garmin API does not document the wind speed unit explicitly.
 
         Args:
             activity_id: ID of the activity to retrieve weather data for
@@ -670,17 +681,32 @@ def register_tools(app):
             if not weather:
                 return f"No weather data found for activity with ID {activity_id}"
 
-            # Curate weather data
+            # Determine temperature unit from the account's measurement system.
+            # Garmin's weather endpoint returns temp in the account's display
+            # unit (no unit indicator in the payload itself).
+            try:
+                unit_system = get_client(ctx).get_unit_system()
+                temp_unit = "F" if unit_system == "statute_us" else "C"
+            except Exception:
+                temp_unit = None
+
+            weather_type_dto = weather.get('weatherTypeDTO') or {}
+            station_dto = weather.get('weatherStationDTO') or {}
+
             curated = {
                 "activity_id": activity_id,
-                "temperature_celsius": weather.get('temp'),
-                "apparent_temperature_celsius": weather.get('apparentTemp'),
+                "temperature": weather.get('temp'),
+                "temperature_unit": temp_unit,
+                "apparent_temperature": weather.get('apparentTemp'),
+                "dew_point": weather.get('dewPoint'),
                 "humidity_percent": weather.get('relativeHumidity'),
-                "wind_speed_mps": weather.get('windSpeed'),
+                "wind_speed": weather.get('windSpeed'),
                 "wind_direction_degrees": weather.get('windDirection'),
-                "weather_type": weather.get('weatherTypeDTO', {}).get('weatherTypeName'),
-                "weather_description": weather.get('weatherTypeDTO', {}).get('weatherTypeDesc'),
-                "location": weather.get('issueLocation'),
+                "wind_direction_compass": weather.get('windDirectionCompassPoint'),
+                "wind_gust": weather.get('windGust'),
+                "weather_description": weather_type_dto.get('desc'),
+                "station_id": station_dto.get('id'),
+                "station_name": station_dto.get('name'),
                 "issue_time": weather.get('issueDate'),
             }
 
