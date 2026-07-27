@@ -322,7 +322,18 @@ def _curate_workout_step(step: dict) -> dict:
         zone_field='secondaryZoneNumber',
         prefix='secondary_',
     )
-
+    # Swim stroke / equipment / drill info (Garmin returns these as nested dicts;
+    # previously dropped entirely -- strokeType/equipmentType/drillType are real
+    # fields Garmin provides for swim steps, unrelated to secondaryTargetValueOne).
+    stroke_type = step.get('strokeType')
+    if isinstance(stroke_type, dict) and stroke_type.get('strokeTypeKey'):
+        curated['stroke_type'] = stroke_type.get('strokeTypeKey')
+    equipment_type = step.get('equipmentType')
+    if isinstance(equipment_type, dict) and equipment_type.get('equipmentTypeKey'):
+        curated['equipment_type'] = equipment_type.get('equipmentTypeKey')
+    drill_type = step.get('drillType')
+    if isinstance(drill_type, dict) and drill_type.get('drillTypeKey'):
+        curated['drill_type'] = drill_type.get('drillTypeKey')
     # Strength training exercise info
     if step.get('category'):
         curated['category'] = step.get('category')
@@ -970,6 +981,16 @@ def register_tools(app):
             calendar_date: Date to schedule the workout in YYYY-MM-DD format
         """
         try:
+            _validate_date(calendar_date, "calendar_date")
+        except ValueError as e:
+            return json.dumps({
+                "status": "failed",
+                "workout_id": workout_id,
+                "scheduled_date": calendar_date,
+                "message": str(e),
+            }, indent=2)
+
+        try:
             if _is_already_scheduled(get_client(ctx), workout_id, calendar_date):
                 return json.dumps({
                     "status": "success",
@@ -1040,6 +1061,17 @@ def register_tools(app):
                     "workout_id": workout_id,
                     "scheduled_date": calendar_date,
                     "message": "Missing required field: calendar_date"
+                })
+                continue
+
+            try:
+                _validate_date(calendar_date, "calendar_date")
+            except ValueError as e:
+                results.append({
+                    "status": "failed",
+                    "workout_id": workout_id,
+                    "scheduled_date": calendar_date,
+                    "message": str(e),
                 })
                 continue
 
