@@ -26,6 +26,25 @@ Review confirmed clean: parameterized SQL (no injection), constant-time secret
 compare, single-use auth codes, per-user isolation, no eval/pickle/path-traversal.
 Full suite: 464 passed.
 
+## Upstream sync — 2026-06-19
+
+Merged `Taxuspt/garmin_mcp` (PRs #201 batch, #205/#206, #163/#165).
+
+**Taken from upstream:**
+- New tools: `set_nutrition_daily_settings`, `get_training_load_balance`.
+- Fixes: weather °C/°F label for imperial accounts; suppress stdout during login
+  to prevent MCP stdio corruption; `token_utils.secure_token_dir()` (owner-only perms).
+- **Dependency bump: `mcp` 1.26.0 → 1.28.1** (validated against the OAuth provider,
+  RFC 9728 patches, and security-headers middleware). `garminconnect` stays `0.3.2`.
+
+**Reconciled (remote multi-user):**
+- Migrated the new tools + the weather fix's `get_unit_system()` call to
+  `get_client(ctx)`. None leak `ctx`.
+- Adapted upstream's new courses tests to our pattern (`set_global_client` fixture;
+  mock the top-level `Garmin.connectapi` error-handling wrapper).
+
+Result: full suite 484 passed; tool counts stdio 148 / remote 146.
+
 ## Upstream sync — 2026-06-18
 
 Merged `Taxuspt/garmin_mcp` (PRs #147–#162, Issues #128/#155).
