@@ -26,6 +26,32 @@ Review confirmed clean: parameterized SQL (no injection), constant-time secret
 compare, single-use auth codes, per-user isolation, no eval/pickle/path-traversal.
 Full suite: 464 passed.
 
+## Upstream sync — 2026-06-20
+
+Merged `Taxuspt/garmin_mcp` (12 commits, PRs #219–#243).
+
+**Taken from upstream:**
+- **`mcp` capped `<2`** (#227) — mcp 2.x renames `mcp.server.fastmcp` →
+  `mcp.server.mcpserver` (`FastMCP` → `MCPServer`). Without the cap a fresh
+  dependency resolve could pull 2.x and break the server. Recorded as an invariant.
+- New tools: `search_foods` (catalog search + source routing for `log_custom_food`),
+  `get_garmin_coach_workouts` (with `get_training_plan_workouts` as a compat alias).
+- Fixes: weather temperature conversion + wind label (#223); nested workout target
+  bounds moved to step level (#221); invalid category on strength steps (#222);
+  custom bpm HR range in `create_run_workout` (#224); virtual challenge field
+  mapping (#212); DXT `${HOME}` token path (#204); VO2 max profile fallback (#240).
+- Dependency: `cryptography` 48.0.1 → 50.0.0 (validated). Hatch wheel packaging.
+
+**Reconciled (remote multi-user):**
+- Migrated every new/rewritten path to `get_client(ctx)`: `search_foods`, the
+  Garmin Coach helper (now takes the resolved client), and upstream's rewritten
+  VO2 trend loop (`_get_max_metrics_range` + profile fallback). None leak `ctx`.
+- `token_utils`: kept our path helpers **and** upstream's `resolve_token_path`.
+- `training.py`: kept our client-passing `_get_activity_type_mapping` alongside
+  upstream's new VO2 helpers.
+
+Result: full suite 573 passed; tool counts stdio 150 / remote 148.
+
 ## Upstream sync — 2026-06-19
 
 Merged `Taxuspt/garmin_mcp` (PRs #201 batch, #205/#206, #163/#165).
