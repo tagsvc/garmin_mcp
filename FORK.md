@@ -35,6 +35,9 @@ coverage.
 
 ## Invariants that must NOT regress
 
+- **`mcp` stays capped `<2`.** mcp 2.x renames `mcp.server.fastmcp` -> `mcp.server.mcpserver`
+  (`FastMCP` -> `MCPServer`); the server is not ported. Don't remove the upper bound
+  until that port is done.
 - **`garminconnect==0.3.2` stays pinned** (`pyproject.toml`). The stored-token format
   (di_token / di_refresh_token / di_client_id) depends on this. Do **not** downgrade
   to 0.2.x. If upstream bumps it, re-verify `session_manager` + token import before taking it.
@@ -190,12 +193,12 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
   `get_client(ctx)` (add a `ctx: Context` param). This is how we adapted
   `create_manual_activity`, `download_activity_file`, and `unschedule_workout(s)`.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 148 / remote 146.
+**Definition of done:** suite green, invariants intact, tool counts stdio 150 / remote 148.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (484+ at time of writing).
-- Tool counts: **stdio 148**, **remote 146** (auth tools are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (573+ at time of writing).
+- Tool counts: **stdio 150**, **remote 148** (auth tools are stdio-only).
 
 ## History
 
