@@ -5,7 +5,7 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
-## Security review backlog — M3, L1, L3, L4
+## Security review backlog — M3, L1, L2, L3, L4
 
 Closes the findings deliberately deferred from the August 2026 review.
 
@@ -22,6 +22,12 @@ Closes the findings deliberately deferred from the August 2026 review.
   one request every ~37s), and the browser login path now returns a single
   generic error for both "not allowlisted" and "bad credentials" so membership
   cannot be inferred by differencing. The specific reason is still logged.
+- **L2 — container ran as root.** The image now starts as root only long enough
+  to take ownership of the volume, then drops to an unprivileged `appuser` via
+  `gosu` before exec'ing the server, so an RCE in the Python process does not get
+  root in the container. A bare `USER` directive cannot work here: Railway mounts
+  volumes root-owned at container start, and its documented workaround
+  (`RAILWAY_RUN_UID=0`) would force root again.
 - **L4 — log injection.** Untrusted values are escaped before logging
   (`_safe_log`), so CR/LF in an email cannot forge log lines.
 

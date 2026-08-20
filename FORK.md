@@ -60,6 +60,11 @@ coverage.
 - **Per-user token dirs are owner-only.** `secure_token_dir()` runs after every
   token dump *and* `SessionManager` sweeps existing dirs at startup, so tokens on
   the volume are never left world-readable (CVE-2026-54447 residual).
+- **The server process does not run as root.** `Dockerfile.remote` starts as root
+  (Railway mounts volumes root-owned, at container start only), chowns `/data`, then
+  drops to `appuser` via `gosu` in `scripts/docker-entrypoint.sh`. Do **not** replace
+  this with a bare `USER` directive: the volume would be unwritable, and Railway's
+  documented workaround (`RAILWAY_RUN_UID=0`) would just put it back to root.
 - **Remote tools never read server filesystem paths.** `upload_course` accepts
   `gpx_base64` and refuses `gpx_path` in remote mode — a path names the SERVER's
   disk, making it an arbitrary-file-read primitive for any authenticated user.

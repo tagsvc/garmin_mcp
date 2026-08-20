@@ -25,8 +25,21 @@ RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
  && uv pip install --system -r /tmp/requirements.txt \
  && uv pip install --system --no-deps -e .
 
-# Create data directories
-RUN mkdir -p /data/garmin_sessions
+# Unprivileged runtime user + gosu for dropping privileges in the entrypoint.
+# The server must not run as root: a compromise of the Python process would
+# otherwise have root inside the container. Railway mounts the volume as root at
+# start, so the entrypoint takes ownership before dropping privileges.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --create-home --shell /usr/sbin/nologin appuser
+
+# Create data directories (ownership is fixed at runtime by the entrypoint,
+# because the volume is only mounted once the container starts)
+RUN mkdir -p /data/garmin_sessions && chown -R appuser:appuser /data
+
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Expose the HTTP port
 EXPOSE 8000
@@ -40,4 +53,5 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os, httpx; p = os.getenv('GARMIN_MCP_PORT') or os.getenv('PORT') or '8000'; r = httpx.get(f'http://localhost:{p}/mcp'); assert r.status_code in (200, 401)"
 
-ENTRYPOINT ["garmin-mcp-remote"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["garmin-mcp-remote"]
