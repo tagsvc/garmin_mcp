@@ -4,6 +4,7 @@ import json
 import os
 
 import pytest
+from types import SimpleNamespace
 
 from garmin_mcp.session_manager import SessionManager
 from garmin_mcp.oauth_provider import GarminOAuthProvider
@@ -55,8 +56,10 @@ def test_import_json_missing_fields_raises(tmp_path):
 
 
 class _FakeRequest:
-    def __init__(self, data):
+    def __init__(self, data, headers=None, peer="203.0.113.7"):
         self._data = data
+        self.headers = headers or {}
+        self.client = SimpleNamespace(host=peer)
 
     async def form(self):
         return self._data
@@ -179,7 +182,7 @@ async def test_login_callback_token_import_rejects_non_allowlisted(provider):
     )
     response = await provider.handle_login_callback(request)
     assert response.status_code == 200
-    assert b"not authorized" in response.body
+    assert b"Invalid email or password." in response.body  # unified: no allowlist oracle
 
 
 @pytest.mark.asyncio

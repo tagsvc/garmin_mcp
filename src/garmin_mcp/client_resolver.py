@@ -34,6 +34,36 @@ def set_session_manager(manager) -> None:
     _session_manager = manager
 
 
+def is_remote_mode() -> bool:
+    """True when the server is running in remote (multi-user, HTTP) mode.
+
+    Remote mode is defined by a SessionManager having been installed by
+    ``remote.py``. Tools use this to refuse capabilities that are safe on a
+    local single-user stdio server but not on a network-exposed one (e.g.
+    reading arbitrary paths off the server's filesystem).
+    """
+    return _session_manager is not None
+
+
+def get_user_id(ctx: Optional[Context] = None) -> Optional[str]:
+    """Resolve the calling user's id in remote mode, else None.
+
+    Lets per-user state (saved reports, uploads) be scoped so one authenticated
+    user cannot read or overwrite another's.
+    """
+    if ctx is None or _session_manager is None:
+        return None
+    try:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+
+        access_token = get_access_token()
+        if access_token is None:
+            return None
+        return _session_manager.get_user_id_for_token(access_token.token)
+    except ImportError:
+        return None
+
+
 def get_client(ctx: Optional[Context] = None) -> Garmin:
     """Resolve the Garmin client based on context.
 

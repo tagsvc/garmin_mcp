@@ -1,5 +1,6 @@
 """Unit tests for the email allowlist (config + OAuth provider)."""
 import pytest
+from types import SimpleNamespace
 
 from garmin_mcp.config import RemoteConfig
 from garmin_mcp.oauth_provider import GarminOAuthProvider
@@ -61,8 +62,10 @@ def test_provider_empty_allowlist_fail_closed(tmp_path):
 
 
 class _FakeRequest:
-    def __init__(self, data):
+    def __init__(self, data, headers=None, peer="203.0.113.7"):
         self._data = data
+        self.headers = headers or {}
+        self.client = SimpleNamespace(host=peer)
 
     async def form(self):
         return self._data
@@ -86,7 +89,7 @@ async def test_login_callback_rejects_non_allowlisted_without_contacting_garmin(
     response = await provider.handle_login_callback(request)
 
     assert response.status_code == 200
-    assert b"not authorized" in response.body
+    assert b"Invalid email or password." in response.body  # unified: no allowlist oracle
 
 
 @pytest.mark.asyncio
