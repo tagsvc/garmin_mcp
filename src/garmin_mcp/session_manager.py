@@ -35,6 +35,41 @@ class SessionManager:
         self._token_user_map: Dict[str, str] = {}
         self._lock = threading.Lock()
         os.makedirs(storage_path, exist_ok=True)
+        self._secure_existing_sessions()
+
+    def _secure_existing_sessions(self) -> None:
+        """Apply owner-only permissions to token dirs already on disk.
+
+        The per-dump ``secure_token_dir()`` calls only cover tokens written from
+        now on, so sessions persisted before that hardening (or by an affected
+        garminconnect <=0.3.4, CVE-2026-54447) would stay world-readable on the
+        volume until the next re-import. Sweeping at startup heals them in place
+        with no manual chmod. Idempotent and cheap: a handful of directories,
+        and re-running on already-secured dirs is a no-op.
+        """
+        secured = 0
+        try:
+            entries = list(os.scandir(self.storage_path))
+        except OSError:
+            logger.debug("Could not scan %s for session hardening", self.storage_path)
+            return
+
+        for entry in entries:
+            if not entry.is_dir():
+                continue
+            try:
+                secure_token_dir(entry.path)
+                secured += 1
+            except OSError:
+                # Never let a permissions hiccup stop the server from booting.
+                logger.warning("Could not secure token dir %s", entry.path, exc_info=True)
+
+        if secured:
+            logger.info(
+                "Applied owner-only permissions to %d existing session dir(s) in %s",
+                secured,
+                self.storage_path,
+            )
 
     def get_user_id_for_token(self, token: str) -> Optional[str]:
         """Get the user_id associated with an access token."""

@@ -237,3 +237,34 @@ async def test_import_limiter_cannot_be_bypassed_by_spoofed_xff(tmp_path):
             seen_429 = True
             break
     assert seen_429, "spoofed X-Forwarded-For bypassed the /import-token rate limiter"
+
+
+# ─── Startup hardening of pre-existing token dirs (H1 residual) ───────────
+
+def test_startup_secures_preexisting_token_dirs(tmp_path):
+    """Sessions written before the hardening must be healed on boot.
+
+    Covers the H1 residual: the per-dump secure_token_dir() calls only affect
+    NEW writes, so files already on the volume would stay world-readable.
+    """
+    import os, stat
+
+    store = tmp_path / "sessions"
+    user_dir = store / "user-1"
+    user_dir.mkdir(parents=True)
+    token = user_dir / "garmin_tokens.json"
+    token.write_text('{"di_token":"x"}')
+    os.chmod(user_dir, 0o755)   # simulate pre-fix state
+    os.chmod(token, 0o644)
+
+    SessionManager(str(store))   # startup sweep
+
+    assert stat.S_IMODE(os.stat(user_dir).st_mode) == 0o700
+    assert stat.S_IMODE(os.stat(token).st_mode) == 0o600
+
+
+def test_startup_hardening_is_idempotent_and_survives_empty_store(tmp_path):
+    store = tmp_path / "empty"
+    SessionManager(str(store))          # no dirs yet -> must not raise
+    SessionManager(str(store))          # re-run -> still fine
+    assert store.is_dir()
