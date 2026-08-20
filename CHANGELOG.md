@@ -5,27 +5,6 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
-## Security hardening — 2026-06-18
-
-Phase-1 self-review of the auth surface (`oauth_provider.py`) and its fixes:
-- **Reflected XSS fixed** — HTML-escape `state` and `error` on the login and MFA
-  pages, which reflected the raw `?state=` query param into the credential form.
-- **Rate limiting added** — `/login` (per email), MFA callback (per pending state),
-  and `/import-token` (per IP). Slows credential-stuffing / MFA brute-force and
-  avoids re-hammering Garmin SSO.
-- **Tokens hashed at rest** — access/refresh tokens stored as SHA-256; lookups hash
-  the incoming token. A one-time, idempotent migration hashes any pre-existing
-  plaintext rows, so live sessions are **not** disrupted on deploy.
-- **Security response headers** (Phase-2 finding) — a pure-ASGI middleware adds
-  HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a strict CSP
-  (`default-src 'none'` — blocks scripts), and `Referrer-Policy: no-referrer` to
-  every response. Verified live: Phase-2 probe was 10/10 pass with only these
-  headers flagged; now added.
-
-Review confirmed clean: parameterized SQL (no injection), constant-time secret
-compare, single-use auth codes, per-user isolation, no eval/pickle/path-traversal.
-Full suite: 464 passed.
-
 ## Security review fixes — 2026-08-20
 
 From the August 2026 security review (findings H1, M1, M2):
@@ -53,6 +32,27 @@ Deferred (documented in the review report, not scheduled): M3 remote
 container, login-limiter lockout, log injection).
 
 Result: full suite 576 passed; tool counts stdio 150 / remote 148.
+
+## Security hardening — 2026-06-18
+
+Phase-1 self-review of the auth surface (`oauth_provider.py`) and its fixes:
+- **Reflected XSS fixed** — HTML-escape `state` and `error` on the login and MFA
+  pages, which reflected the raw `?state=` query param into the credential form.
+- **Rate limiting added** — `/login` (per email), MFA callback (per pending state),
+  and `/import-token` (per IP). Slows credential-stuffing / MFA brute-force and
+  avoids re-hammering Garmin SSO.
+- **Tokens hashed at rest** — access/refresh tokens stored as SHA-256; lookups hash
+  the incoming token. A one-time, idempotent migration hashes any pre-existing
+  plaintext rows, so live sessions are **not** disrupted on deploy.
+- **Security response headers** (Phase-2 finding) — a pure-ASGI middleware adds
+  HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a strict CSP
+  (`default-src 'none'` — blocks scripts), and `Referrer-Policy: no-referrer` to
+  every response. Verified live: Phase-2 probe was 10/10 pass with only these
+  headers flagged; now added.
+
+Review confirmed clean: parameterized SQL (no injection), constant-time secret
+compare, single-use auth codes, per-user isolation, no eval/pickle/path-traversal.
+Full suite: 464 passed.
 
 ## Upstream sync — 2026-06-20
 
