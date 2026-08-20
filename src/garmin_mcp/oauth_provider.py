@@ -110,10 +110,17 @@ class _RateLimiter:
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP for rate-limiting (honors X-Forwarded-For)."""
+    """Best-effort client IP for rate-limiting (honors X-Forwarded-For).
+
+    Uses the LAST entry of X-Forwarded-For: proxies append the connecting
+    peer's address, so the last hop is the one added by our own edge proxy
+    (Railway) and cannot be chosen by the client. The first entry is
+    client-supplied and spoofable — keying the rate limiter on it would let
+    an attacker mint a fresh bucket per request and bypass the limiter.
+    """
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
-        return xff.split(",")[0].strip()
+        return xff.split(",")[-1].strip()
     client = getattr(request, "client", None)
     return getattr(client, "host", "") or "unknown"
 
