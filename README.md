@@ -38,7 +38,7 @@ This MCP server implements **130+ tools** covering ~90% of the [python-garmincon
 - ✅ Women's Health (3 tools)
 - ✅ User Profile (3 tools)
 - ✅ High-Level Workout Builders (4 tools) - create and schedule workouts without writing JSON
-- ✅ Courses (3 tools) - list / upload GPX as course / delete course
+- ✅ Courses (3 tools) - list / upload GPX as course (base64 or local path) / delete course
 - ✅ Activity Analysis (2 tools) - FIT file parsing, Power Duration Curve; requires power meter and/or Di2
 - ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
 - ✅ Interactive Auth (2 tools, stdio mode) - `check_garmin_auth` / `login_to_garmin` to authenticate without restarting the client
@@ -971,11 +971,37 @@ Client → 401 → OAuth2 discovery
 
 ### Security
 
+**Access control**
+
 - **Email allowlist** (`GARMIN_ALLOWED_EMAILS`): only Garmin accounts on this list may authenticate. Fail-closed — if unset, every login is rejected.
 - **Token import gating** (`GARMIN_IMPORT_SECRET`): importing a pre-minted token (login page or `POST /import-token`) requires this shared secret in addition to the allowlist, so knowing an allowlisted email alone cannot overwrite a user's session. Fail-closed — unset disables import.
+- OAuth2 + PKCE on `/mcp`; auth codes are single-use and refresh tokens rotate.
+- The login page returns a **single generic error** whether an email is off the allowlist or the password is wrong, so allowlist membership cannot be inferred by comparing responses. The specific reason is logged server-side.
+
+**Credentials and data at rest**
+
 - Garmin credentials are **never stored** — only the resulting session tokens are persisted on disk (per user, in garminconnect's native format).
+- Session token directories are **owner-only** (`0700`/`0600`), applied after every write and swept at startup so pre-existing files are healed too.
+- OAuth access/refresh tokens are stored **SHA-256 hashed**; a read of the database yields no usable bearer tokens.
 - The 2FA client state is held in memory only, with a 5-minute TTL and single-use (`pop`).
-- Users are identified by their Garmin email (upserted on login).
+- Users are identified by their Garmin email (upserted on login), and per-user state (Garmin sessions, saved analytics reports) is **scoped by user id** — one authenticated user cannot read or overwrite another's.
+
+**Hardening**
+
+- **Rate limiting** on `/login`, the MFA callback, and `/import-token`. The login limiter is keyed on email **plus client IP**, so one bad actor cannot lock a legitimate account out; the client IP is taken from the last `X-Forwarded-For` hop, which the client cannot spoof.
+- **Response security headers** on every reply: HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a strict CSP (`default-src 'none'`), and `Referrer-Policy: no-referrer`.
+- Reflected values on the login/MFA pages are **HTML-escaped**, and untrusted values are escaped before logging (no log injection).
+- **Remote tools never read the server's filesystem.** `upload_course` takes `gpx_base64` in remote mode and refuses `gpx_path` — see [Courses](#courses-and-gpx-uploads).
+- The container **does not run the server as root**: the entrypoint takes ownership of `/data`, then drops to an unprivileged user.
+
+### Courses and GPX uploads
+
+`upload_course` accepts the GPX in one of two ways:
+
+- **`gpx_base64`** — the file's bytes, base64-encoded. Works in both modes and is **required in remote mode**.
+- **`gpx_path`** — a path on the machine running the server. **stdio (local) mode only.**
+
+A path is refused in remote mode by design: there it would name the *server's* disk rather than yours, which is both useless to the caller and an arbitrary-file-read primitive. Locally the path is your own disk, so it stays supported.
 
 ### Running the Remote Server
 
