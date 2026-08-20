@@ -18,6 +18,8 @@ from typing import Dict, Optional
 
 from garminconnect import Garmin
 
+from garmin_mcp.token_utils import secure_token_dir
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,6 +104,7 @@ class SessionManager:
         token_dir = self._user_token_dir(user_id)
         os.makedirs(token_dir, exist_ok=True)
         garmin.garth.dump(token_dir)
+        secure_token_dir(token_dir)
 
         # Cache in memory
         with self._lock:
@@ -148,6 +151,11 @@ class SessionManager:
         token_dir = self._user_token_dir(user_id)
         os.makedirs(token_dir, exist_ok=True)
         client.dump(token_dir)  # writes garmin_tokens.json
+        # Owner-only permissions on the token dir and files. Defence in depth
+        # over the garminconnect >= 0.3.5 fix for CVE-2026-54447 (token store
+        # written world-readable under the default umask), so the guarantee
+        # does not depend on the library version.
+        secure_token_dir(token_dir)
 
         # Invalidate cache so next get_client() reloads from disk
         with self._lock:
@@ -200,6 +208,8 @@ class SessionManager:
         token_dir = self._user_token_dir(user_id)
         os.makedirs(token_dir, exist_ok=True)
         garmin.client.dump(token_dir)  # writes garmin_tokens.json
+        # Owner-only permissions (see create_session_from_garth_tokens).
+        secure_token_dir(token_dir)
 
         # Invalidate cache so next get_client() reloads from disk
         with self._lock:
