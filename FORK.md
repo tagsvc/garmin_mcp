@@ -60,10 +60,25 @@ coverage.
 - **Per-user token dirs are owner-only.** `secure_token_dir()` runs after every
   token dump *and* `SessionManager` sweeps existing dirs at startup, so tokens on
   the volume are never left world-readable (CVE-2026-54447 residual).
+- **Remote tools never read server filesystem paths.** `upload_course` accepts
+  `gpx_base64` and refuses `gpx_path` in remote mode — a path names the SERVER's
+  disk, making it an arbitrary-file-read primitive for any authenticated user.
+  Apply the same rule to any new tool that takes a path.
+- **Per-user state is scoped by `user_id` in remote mode.** The analytics
+  saved-report store is per-user; a shared file lets one authenticated user read
+  or overwrite another's definitions.
+- **The browser login path returns ONE generic error** (`_GENERIC_LOGIN_ERROR`)
+  for both "not allowlisted" and "bad credentials" — distinct messages let an
+  attacker enumerate allowlist membership by differencing. Log the specific
+  reason server-side instead.
+- **Untrusted values are sanitised before logging** (`_safe_log`): embedded
+  CR/LF in an email would otherwise forge log lines.
 - **Rate-limit keying uses the LAST `X-Forwarded-For` hop**, never the first.
   The first entry is client-supplied and spoofable; keying on it lets an attacker
   mint a fresh bucket per request and bypass the limiter entirely (`_client_ip`).
 - **Auth endpoints are rate-limited** (`/login`, MFA callback, `/import-token`) via `_RateLimiter`.
+  The login limiter is keyed on **email + client IP**, never email alone: email-only
+  keying let anyone lock an allowlisted account out indefinitely.
 - **Remote responses carry security headers** via `_SecurityHeadersMiddleware`
   in `remote.py` (HSTS, nosniff, `X-Frame-Options: DENY`, strict CSP,
   `Referrer-Policy: no-referrer`). The remote server is served through this
@@ -208,7 +223,7 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (578+ at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (588+ at time of writing).
 - Tool counts: **stdio 150**, **remote 148** (auth tools are stdio-only).
 
 ## History

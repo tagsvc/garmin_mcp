@@ -18,7 +18,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context
 
-from garmin_mcp.client_resolver import get_client
+from garmin_mcp.client_resolver import get_client, get_user_id
 
 
 garmin_client = None
@@ -169,7 +169,7 @@ def register_tools(app):
                     },
                     "groups": sorted(REPORT_GROUPS),
                     "aggregations": sorted(REPORT_AGGREGATIONS),
-                    "saved_report_store": str(_report_store_path()),
+                    "saved_report_store": str(_report_store_path(ctx)),
                 },
                 indent=2,
             )
@@ -200,6 +200,7 @@ def register_tools(app):
         """
         try:
             definition = _report_definition(
+                ctx,
                 saved_report_name=saved_report_name,
                 metrics=metrics,
                 group_by=group_by,
@@ -241,6 +242,7 @@ def register_tools(app):
         """
         try:
             definition = _report_definition(
+                ctx,
                 saved_report_name=None,
                 metrics=metrics,
                 group_by=group_by,
@@ -250,9 +252,9 @@ def register_tools(app):
             )
             definition["name"] = _clean_report_name(name)
             definition["description"] = description or ""
-            reports = _load_saved_reports()
+            reports = _load_saved_reports(ctx)
             reports[definition["name"]] = definition
-            _write_saved_reports(reports)
+            _write_saved_reports(reports, ctx)
             return json.dumps({"saved": True, "report": definition}, indent=2)
         except Exception as e:
             return f"Error saving custom health report: {str(e)}"
@@ -261,10 +263,10 @@ def register_tools(app):
     async def list_saved_health_reports(ctx: Context) -> str:
         """List locally saved custom health report definitions."""
         try:
-            reports = _load_saved_reports()
+            reports = _load_saved_reports(ctx)
             return json.dumps(
                 {
-                    "store": str(_report_store_path()),
+                    "store": str(_report_store_path(ctx)),
                     "count": len(reports),
                     "reports": sorted(reports.values(), key=lambda item: item["name"]),
                 },
@@ -510,6 +512,7 @@ def _weekly_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _report_definition(
+    ctx,
     saved_report_name: str | None,
     metrics: str,
     group_by: str,
@@ -518,7 +521,7 @@ def _report_definition(
     end_date: str | None,
 ) -> dict[str, Any]:
     if saved_report_name:
-        reports = _load_saved_reports()
+        reports = _load_saved_reports(ctx)
         name = _clean_report_name(saved_report_name)
         if name not in reports:
             raise ValueError(f"Saved report not found: {name}")
@@ -642,15 +645,30 @@ def _clean_report_name(name: str) -> str:
     return cleaned
 
 
-def _report_store_path() -> Path:
+def _report_store_path(ctx=None) -> Path:
+    """Location of the saved-report store.
+
+    In remote (multi-user) mode the store is scoped per user: a single shared
+    file would let any authenticated user read, overwrite, or delete another
+    user's saved report definitions. In stdio mode there is only one user, so
+    the historical single-file location is kept.
+    """
     configured = os.getenv("GARMIN_REPORTS_PATH")
-    if configured:
-        return Path(os.path.expanduser(configured))
-    return Path.home() / ".garmin_mcp_reports.json"
+    base = (
+        Path(os.path.expanduser(configured))
+        if configured
+        else Path.home() / ".garmin_mcp_reports.json"
+    )
+
+    user_id = get_user_id(ctx)
+    if not user_id:
+        return base
+    # Server-generated hex id, so it is safe as a path component.
+    return base.with_name(f"{base.stem}.{user_id}{base.suffix}")
 
 
-def _load_saved_reports() -> dict[str, dict[str, Any]]:
-    path = _report_store_path()
+def _load_saved_reports(ctx=None) -> dict[str, dict[str, Any]]:
+    path = _report_store_path(ctx)
     if not path.exists():
         return {}
     data = json.loads(path.read_text())
@@ -664,8 +682,8 @@ def _load_saved_reports() -> dict[str, dict[str, Any]]:
     return reports
 
 
-def _write_saved_reports(reports: dict[str, dict[str, Any]]) -> None:
-    path = _report_store_path()
+def _write_saved_reports(reports: dict[str, dict[str, Any]], ctx=None) -> None:
+    path = _report_store_path(ctx)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(reports, indent=2, sort_keys=True))
 

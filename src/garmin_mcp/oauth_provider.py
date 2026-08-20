@@ -48,11 +48,27 @@ from html import escape as _html_escape  # noqa: E402
 # TTL for pending MFA state (seconds)
 _MFA_TTL = 300  # 5 minutes
 
+# One message for every "we will not log you in" outcome on the browser path, so
+# the response cannot be differenced to reveal allowlist membership.
+_GENERIC_LOGIN_ERROR = "Invalid email or password."
+
 # Retry status codes for the Garmin login client. garth's default also retries
 # on 429, which multiplies requests against Garmin's rate-limited OAuth endpoints
 # and makes throttling worse. We keep retries for genuinely transient errors but
 # drop 429 so a rate-limited login fails fast (one request) instead of ~4.
 _LOGIN_RETRY_STATUS_FORCELIST = (408, 500, 502, 503, 504)
+
+
+def _safe_log(value: str, limit: int = 200) -> str:
+    """Make an untrusted string safe to embed in a log line.
+
+    Email (and similar user-supplied) values are attacker-controlled: embedded
+    CR/LF would let them forge additional log lines. Escape the line breaks and
+    bound the length rather than dropping the value, so logs stay useful for
+    diagnosing rejected logins.
+    """
+    text = (value or "")[:limit]
+    return text.replace("\r", "\\r").replace("\n", "\\n")
 
 
 def _hash_token(token: str) -> str:
@@ -215,7 +231,7 @@ class GarminOAuthProvider(
             )
 
         if not self._is_email_allowed(email):
-            logger.warning("Rejected /import-token for non-allowlisted email: %s", email)
+            logger.warning("Rejected /import-token for non-allowlisted email: %s", _safe_log(email))
             return JSONResponse(
                 {"error": "This email is not authorized."}, status_code=403
             )
@@ -229,10 +245,10 @@ class GarminOAuthProvider(
         try:
             self.session_manager.create_session_from_token_blob(user_id, token)
         except Exception as e:
-            logger.warning("Token import via endpoint failed for %s: %s", email, e)
+            logger.warning("Token import via endpoint failed for %s: %s", _safe_log(email), e)
             return JSONResponse({"error": f"Invalid token: {e}"}, status_code=400)
 
-        logger.info("Imported Garmin token via endpoint for %s", email)
+        logger.info("Imported Garmin token via endpoint for %s", _safe_log(email))
         return JSONResponse({"status": "ok", "email": email})
 
     # ─── Database ────────────────────────────────────────────────────
@@ -822,10 +838,15 @@ class GarminOAuthProvider(
                 state, "Enter your password, or paste an existing Garmin token."
             )
 
-        # Throttle repeated attempts per account (slows credential-stuffing and
-        # avoids hammering Garmin's own rate-limited SSO).
-        if not self._login_limiter.allow(f"login:{email.strip().lower()}"):
-            logger.warning("Rate-limited login attempts for %s", email)
+        # Throttle repeated attempts per (account, client) pair. Keying on the
+        # email ALONE let anyone lock an allowlisted account out indefinitely by
+        # sending one request every ~37s; including the client IP confines a
+        # bad actor to their own bucket while still slowing credential-stuffing
+        # and avoiding hammering Garmin's own rate-limited SSO.
+        if not self._login_limiter.allow(
+            f"login:{email.strip().lower()}|{_client_ip(request)}"
+        ):
+            logger.warning("Rate-limited login attempts for %s", _safe_log(email))
             return await self.get_login_page(
                 state, "Too many attempts. Please wait a few minutes and try again."
             )
@@ -833,10 +854,15 @@ class GarminOAuthProvider(
         # Enforce the email allowlist before contacting Garmin. Fail-closed:
         # if no allowlist is configured, every login is rejected.
         if not self._is_email_allowed(email):
-            logger.warning("Rejected login for non-allowlisted email: %s", email)
-            return await self.get_login_page(
-                state, "This account is not authorized to use this server."
+            # Deliberately the SAME message the failed-credentials path returns.
+            # A distinct "not authorized" reply confirmed allowlist membership to
+            # anyone who could reach /login, letting an attacker enumerate which
+            # accounts exist by differencing the responses. The specific reason
+            # is still recorded server-side for diagnosis.
+            logger.warning(
+                "Rejected login for non-allowlisted email: %s", _safe_log(email)
             )
+            return await self.get_login_page(state, _GENERIC_LOGIN_ERROR)
 
         # Token-import path: the user minted tokens from a trusted IP and pasted
         # them. The server persists them directly and performs NO Garmin SSO /
@@ -859,7 +885,7 @@ class GarminOAuthProvider(
                     state, "Token import is disabled on this server."
                 )
             if not hmac.compare_digest(import_secret, self.import_secret):
-                logger.warning("Rejected token import with bad/missing secret for %s", email)
+                logger.warning("Rejected token import with bad/missing secret for %s", _safe_log(email))
                 return await self.get_login_page(
                     state, "Invalid import secret."
                 )
@@ -869,7 +895,7 @@ class GarminOAuthProvider(
                     user_id, garmin_token
                 )
             except Exception as e:
-                logger.warning("Token import failed for %s: %s", email, e)
+                logger.warning("Token import failed for %s: %s", _safe_log(email), e)
                 return await self.get_login_page(
                     state, f"Could not import token: {e}"
                 )
@@ -895,10 +921,8 @@ class GarminOAuthProvider(
                 ),
             )
         except Exception as e:
-            logger.warning("Garmin login failed for %s: %s", email, e)
-            return await self.get_login_page(
-                state, "Invalid email or password."
-            )
+            logger.warning("Garmin login failed for %s: %s", _safe_log(email), e)
+            return await self.get_login_page(state, _GENERIC_LOGIN_ERROR)
 
         # Check if MFA is required
         if isinstance(result, tuple) and len(result) == 2 and result[0] == "needs_mfa":

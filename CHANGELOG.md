@@ -5,6 +5,29 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Security review backlog — M3, L1, L3, L4
+
+Closes the findings deliberately deferred from the August 2026 review.
+
+- **M3 — remote tools accepted server filesystem paths.** `upload_course` read
+  `gpx_path` off the server's disk in remote mode: an arbitrary-file-read
+  primitive (any `.gpx`-suffixed file) for any authenticated user. It now takes
+  `gpx_base64` and refuses `gpx_path` in remote mode, where a server path is both
+  useless to the caller and dangerous. Local stdio use is unchanged.
+- **L1 — analytics saved-report store was global.** Scoped per `user_id` in
+  remote mode, so one user can no longer read, overwrite, or delete another's
+  report definitions.
+- **L3 — login-limiter lockout and allowlist oracle.** The limiter is keyed on
+  email + client IP (email alone let anyone lock an allowlisted account out with
+  one request every ~37s), and the browser login path now returns a single
+  generic error for both "not allowlisted" and "bad credentials" so membership
+  cannot be inferred by differencing. The specific reason is still logged.
+- **L4 — log injection.** Untrusted values are escaped before logging
+  (`_safe_log`), so CR/LF in an email cannot forge log lines.
+
+Tests: +10 covering each behaviour, including that the two login rejections are
+byte-identical and that an attacker cannot lock out the real user from another IP.
+
 ## Security review fixes — 2026-08-20
 
 From the August 2026 security review (findings H1, M1, M2):

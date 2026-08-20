@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import Context
 
-from garmin_mcp.client_resolver import get_client
+from garmin_mcp.client_resolver import get_client, is_remote_mode
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -206,7 +206,8 @@ def register_tools(app):
     @app.tool()
     async def upload_course(
         ctx: Context,
-        gpx_path: str,
+        gpx_path: Optional[str] = None,
+        gpx_base64: Optional[str] = None,
         course_name: Optional[str] = None,
         activity_type: str = "running",
         description: Optional[str] = None,
@@ -216,8 +217,17 @@ def register_tools(app):
         The course can then be loaded onto the watch (sync or "Send to Device")
         and used as a navigation course or to build a PacePro strategy.
 
+        Supply the GPX either as `gpx_base64` (the file's bytes, base64-encoded)
+        or, when running locally over stdio, as `gpx_path`. Reading a path off
+        the server's filesystem is refused in remote mode: on a network server
+        the path would name the SERVER's disk, not yours, so it is both useless
+        and an arbitrary-file-read primitive. Use `gpx_base64` there.
+
         Args:
-            gpx_path: Absolute path to the .gpx file on disk.
+            gpx_path: Path to a .gpx file on the machine running the server.
+                stdio (local) mode only.
+            gpx_base64: Base64-encoded contents of the .gpx file. Works in both
+                modes and is required in remote mode.
             course_name: Override the course name. Defaults to the name parsed
                 from the GPX file.
             activity_type: One of running, cycling, hiking, walking, trail_running,
@@ -225,12 +235,43 @@ def register_tools(app):
             description: Optional description shown on the course detail page.
         """
         try:
-            _p = pathlib.Path(gpx_path)
-            if _p.suffix.lower() != ".gpx":
-                return f"Error: only .gpx files are allowed, got: {_p.suffix or '(no extension)'}"
-            gpx_path = str(_p.resolve())
-            if not os.path.isfile(gpx_path):
-                return f"Error: GPX file not found: {gpx_path}"
+            if not gpx_path and not gpx_base64:
+                return "Error: supply either gpx_base64 (preferred) or gpx_path."
+            if gpx_path and gpx_base64:
+                return "Error: supply only one of gpx_base64 or gpx_path, not both."
+
+            upload_filename = "course.gpx"
+
+            if gpx_base64:
+                import base64 as _b64
+
+                try:
+                    gpx_bytes = _b64.b64decode(gpx_base64, validate=True)
+                except Exception:
+                    return "Error: gpx_base64 is not valid base64."
+                if not gpx_bytes:
+                    return "Error: gpx_base64 decoded to empty content."
+                if course_name:
+                    upload_filename = f"{course_name}.gpx"
+            else:
+                # Path reads name the SERVER's filesystem. Harmless for a local
+                # stdio server; on the remote server it lets any authenticated
+                # user read arbitrary .gpx-suffixed files off the host.
+                if is_remote_mode():
+                    return (
+                        "Error: gpx_path is disabled in remote mode because it would "
+                        "read from the server's filesystem, not yours. Send the file "
+                        "contents as gpx_base64 instead."
+                    )
+                _p = pathlib.Path(gpx_path)
+                if _p.suffix.lower() != ".gpx":
+                    return f"Error: only .gpx files are allowed, got: {_p.suffix or '(no extension)'}"
+                gpx_path = str(_p.resolve())
+                if not os.path.isfile(gpx_path):
+                    return f"Error: GPX file not found: {gpx_path}"
+                with open(gpx_path, "rb") as f:
+                    gpx_bytes = f.read()
+                upload_filename = os.path.basename(gpx_path)
 
             activity_type_id = _ACTIVITY_TYPE_IDS.get(activity_type.lower())
             if activity_type_id is None:
@@ -239,9 +280,6 @@ def register_tools(app):
                     f"Supported: {', '.join(sorted(_ACTIVITY_TYPE_IDS))}."
                 )
 
-            with open(gpx_path, "rb") as f:
-                gpx_bytes = f.read()
-
             client = get_client(ctx)
             # Step 1: parse the GPX server-side
             parsed = client.client.post(
@@ -249,7 +287,7 @@ def register_tools(app):
                 "/course-service/course/import",
                 files={
                     "file": (
-                        os.path.basename(gpx_path),
+                        upload_filename,
                         gpx_bytes,
                         "application/gpx+xml",
                     )
@@ -260,7 +298,7 @@ def register_tools(app):
             effective_name = (
                 course_name
                 or parsed.get("courseName")
-                or os.path.splitext(os.path.basename(gpx_path))[0]
+                or os.path.splitext(upload_filename)[0]
             )
 
             # Step 2: build the create payload and save
