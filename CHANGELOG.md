@@ -5,6 +5,34 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Security review fixes — 2026-08-20
+
+From the August 2026 security review (findings H1, M1, M2):
+
+- **H1 — CVE-2026-54447** (`garminconnect` <=0.3.4 writes `garmin_tokens.json`
+  world-readable): pin raised to `garminconnect==0.3.5`, and
+  `session_manager` now calls `secure_token_dir()` after **every** token dump so
+  remote mode gets owner-only permissions regardless of library version.
+  Verified: 0.3.5 writes mode `0o600`, and the di-token format
+  (`di_token`/`di_refresh_token`/`di_client_id`) round-trips unchanged, so the
+  pin invariant's re-verification requirement is satisfied.
+- **M1 — rate-limit bypass via spoofable `X-Forwarded-For`**: `_client_ip()` now
+  keys on the LAST XFF hop (appended by the edge proxy) instead of the first
+  (client-supplied). Previously an attacker could mint a fresh bucket per
+  request and bypass the `/import-token` limiter. Recorded as an invariant, with
+  a regression test proving the old logic yields 30 buckets over 30 requests
+  where the fix yields 1.
+- **M2 — h11 CVE-2025-43859** (request smuggling): `h11` 0.14.0 -> 0.16.0
+  (httpcore 1.0.9) in the regenerated lockfile.
+- Python floor raised to >=3.12 (required by garminconnect 0.3.5); CI matrix
+  trimmed to 3.12/3.13 and the DXT manifest/bundle updated to match.
+
+Deferred (documented in the review report, not scheduled): M3 remote
+`upload_course` server-path read, L1-L4 (shared analytics report store, non-root
+container, login-limiter lockout, log injection).
+
+Result: full suite 576 passed; tool counts stdio 150 / remote 148.
+
 ## Security hardening — 2026-06-18
 
 Phase-1 self-review of the auth surface (`oauth_provider.py`) and its fixes:
