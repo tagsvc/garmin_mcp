@@ -57,6 +57,9 @@ coverage.
   the pages collect Garmin credentials). Use `_html_escape`, not raw f-string interpolation.
 - **Access/refresh tokens are stored hashed at rest** (SHA-256 in SQLite); lookups
   hash the incoming token. Don't revert to storing/looking-up plaintext.
+- **Per-user token dirs are owner-only.** `secure_token_dir()` runs after every
+  token dump *and* `SessionManager` sweeps existing dirs at startup, so tokens on
+  the volume are never left world-readable (CVE-2026-54447 residual).
 - **Rate-limit keying uses the LAST `X-Forwarded-For` hop**, never the first.
   The first entry is client-supplied and spoofable; keying on it lets an attacker
   mint a fresh bucket per request and bypass the limiter entirely (`_client_ip`).
@@ -205,7 +208,7 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (576+ at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (578+ at time of writing).
 - Tool counts: **stdio 150**, **remote 148** (auth tools are stdio-only).
 
 ## History

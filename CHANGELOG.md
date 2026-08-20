@@ -16,6 +16,10 @@ From the August 2026 security review (findings H1, M1, M2):
   Verified: 0.3.5 writes mode `0o600`, and the di-token format
   (`di_token`/`di_refresh_token`/`di_client_id`) round-trips unchanged, so the
   pin invariant's re-verification requirement is satisfied.
+- **H1 residual closed** — `SessionManager` now sweeps existing session
+  directories at startup and applies owner-only permissions, so token files
+  written *before* the hardening (mode 0644 on the volume) are healed in place.
+  No manual chmod or re-import needed; idempotent and logged.
 - **M1 — rate-limit bypass via spoofable `X-Forwarded-For`**: `_client_ip()` now
   keys on the LAST XFF hop (appended by the edge proxy) instead of the first
   (client-supplied). Previously an attacker could mint a fresh bucket per
