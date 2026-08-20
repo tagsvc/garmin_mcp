@@ -38,9 +38,11 @@ coverage.
 - **`mcp` stays capped `<2`.** mcp 2.x renames `mcp.server.fastmcp` -> `mcp.server.mcpserver`
   (`FastMCP` -> `MCPServer`); the server is not ported. Don't remove the upper bound
   until that port is done.
-- **`garminconnect==0.3.2` stays pinned** (`pyproject.toml`). The stored-token format
-  (di_token / di_refresh_token / di_client_id) depends on this. Do **not** downgrade
-  to 0.2.x. If upstream bumps it, re-verify `session_manager` + token import before taking it.
+- **`garminconnect==0.3.5` stays pinned** (`pyproject.toml`). The stored-token format
+  (di_token / di_refresh_token / di_client_id) depends on the 0.3.x line. Do **not**
+  downgrade to 0.2.x, and do not go below 0.3.5 (CVE-2026-54447: ≤0.3.4 writes the
+  token store world-readable). If upstream bumps it, re-verify `session_manager` +
+  token import before taking it.
 - **Allowlist is fail-closed.** An empty/unset `GARMIN_ALLOWED_EMAILS` rejects every login.
 - **Token import is fail-closed and secret-gated.** `GARMIN_IMPORT_SECRET` (constant-time
   compare) is required on both the login-page import and `POST /import-token`; unset disables import.
@@ -66,11 +68,13 @@ coverage.
 Read this before reconciling an upstream merge — it explains the *intent* behind
 each divergence so a merge doesn't silently undo a deliberate decision.
 
-- **Pin `garminconnect==0.3.2`.** Why: the stored-token format and session restore
-  (`session_manager`, token import) depend on this version's client API
+- **Pin `garminconnect==0.3.5`.** Why: the stored-token format and session restore
+  (`session_manager`, token import) depend on the 0.3.x client API
   (`garmin.client.dumps/loads/dump`, di-token fields). PR #121 used 0.2.38, which
-  is incompatible. _On merge:_ if upstream bumps it, re-verify token import +
-  session restore before accepting; don't take the bump blindly.
+  is incompatible. 0.3.5 is the security floor: ≤0.3.4 writes `garmin_tokens.json`
+  world-readable (CVE-2026-54447); `session_manager` also chmods the token dir
+  itself as defence in depth. _On merge:_ if upstream bumps it, re-verify token
+  import + session restore before accepting; don't take the bump blindly.
 
 - **`auth_tools` is stdio-only.** Why: in remote mode, authentication happens
   through the OAuth login page; `login_to_garmin` exists so the *stdio* server can
@@ -179,7 +183,8 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 **Watch items during conflict resolution:**
 
-- `pyproject.toml` — keep `garminconnect==0.3.2` unless you re-verify token import.
+- `pyproject.toml` — keep `garminconnect==0.3.5` (0.3.5 minimum; CVE-2026-54447)
+  unless you re-verify token import.
 - `__init__.py` / `remote.py` — ensure `analytics` stays registered in both,
   `auth_tools` stays registered in `__init__.py` **only**, and the `/import-token`
   route survives.
