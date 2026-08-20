@@ -184,3 +184,56 @@ def test_token_hash_migration_is_safe_and_idempotent(tmp_path):
     toks2 = [r[0] for r in conn.execute("SELECT token FROM access_tokens")]
     conn.close()
     assert toks2 == toks
+
+
+# ─── XFF rate-limit bypass (CVE-review finding M1) ────────────────────────
+
+class _IPReq:
+    """Minimal request stand-in for _client_ip()."""
+
+    def __init__(self, xff=None, peer=None):
+        self.headers = {"x-forwarded-for": xff} if xff is not None else {}
+        self.client = SimpleNamespace(host=peer) if peer else None
+
+
+def test_client_ip_uses_last_xff_hop_not_client_supplied_first():
+    """The first XFF entry is client-supplied; the last is appended by our edge.
+
+    Keying the limiter on the first entry let an attacker mint a fresh bucket
+    per request and bypass rate limiting entirely.
+    """
+    from garmin_mcp.oauth_provider import _client_ip
+
+    req = _IPReq(xff="1.1.1.1, 2.2.2.2, 203.0.113.9")
+    assert _client_ip(req) == "203.0.113.9"
+
+
+def test_client_ip_falls_back_to_peer_without_xff():
+    from garmin_mcp.oauth_provider import _client_ip
+
+    assert _client_ip(_IPReq(peer="198.51.100.4")) == "198.51.100.4"
+    assert _client_ip(_IPReq()) == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_import_limiter_cannot_be_bypassed_by_spoofed_xff(tmp_path):
+    """Rotating the client-supplied XFF prefix must NOT reset the limiter."""
+    p = _provider(
+        tmp_path,
+        session_manager=SessionManager(str(tmp_path / "s")),
+        import_secret="sek",
+    )
+    edge = "203.0.113.9"  # constant real hop appended by the edge proxy
+
+    seen_429 = False
+    for i in range(30):
+        # attacker rotates the spoofable prefix on every request
+        headers = {
+            "x-forwarded-for": f"10.0.0.{i}, {edge}",
+            "X-Import-Secret": "wrong",
+        }
+        resp = await p.handle_import_token(_FakeReq(headers=headers))
+        if resp.status_code == 429:
+            seen_429 = True
+            break
+    assert seen_429, "spoofed X-Forwarded-For bypassed the /import-token rate limiter"
