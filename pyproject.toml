@@ -7,10 +7,13 @@ name = "garmin-mcp"
 version = "0.1.0"
 description = "MCP server to access Garmin data"
 readme = "README.md"
-requires-python = ">=3.10"
+# 3.12 floor driven by garminconnect==0.3.5 (CVE-2026-54447 fix); the
+# deployment image (python:3.12-slim) already satisfies it.
+requires-python = ">=3.12"
 dependencies = [
     "python-dotenv==1.2.2",
-    "garminconnect==0.3.2",
+    # 0.3.5+ fixes CVE-2026-54447 (token store written world-readable).
+    "garminconnect==0.3.5",
     "requests==2.33.0",
     # mcp 2.x renamed mcp.server.fastmcp -> mcp.server.mcpserver (FastMCP ->
     # MCPServer). Cap until the server is ported to the new API.
@@ -36,4 +39,3 @@ dev-dependencies = [
     "pytest-mock>=3.14.0",
     "pytest-timeout>=2.3.1",
 ]
-
