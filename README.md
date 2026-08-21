@@ -1040,6 +1040,10 @@ remote deployment.
 The server binds to Railway's injected `PORT` automatically, so you do not need
 to set `GARMIN_MCP_PORT`.
 
+4. Back up the volume. It is the only stateful thing in the deployment: lose it
+   and every user has to authenticate again. See `OPERATIONS.md` for the backup
+   policy and the second recovery path.
+
 ### Configuration (Environment Variables)
 
 | Variable | Default | Description |
