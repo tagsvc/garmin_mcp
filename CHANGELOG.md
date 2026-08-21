@@ -5,6 +5,37 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Dependency refresh — 2026-08-21
+
+Full `uv lock --upgrade` of everything the deliberate pins allow (~30 packages),
+plus removal of four transitive packages nothing needs any more (`rich`,
+`markdown-it-py`, `mdurl`, `sniffio`).
+
+**The invariant pins held automatically**, which was the point of recording them:
+`garminconnect` stayed `0.3.5`, `garth` stayed `<0.6.0`, `requests` and
+`python-dotenv` unchanged, and **`mcp` stopped at 1.29.0 rather than 2.x** — the
+`<2` cap prevented an upgrade that would have swapped out `mcp.server.fastmcp`
+and broken the server outright.
+
+Notable moves, all in the serving path and therefore validated explicitly:
+`starlette` 1.3.1 -> 1.6.0, `sse-starlette` 2.2.1 -> **3.4.8** (major),
+`uvicorn` 0.34.0 -> 0.52.4, `pydantic` 2.12.5 -> 2.13.4 (+ `pydantic-settings`
+2.8.1 -> 2.15.0), `curl-cffi` 0.15 -> 0.16 (garth's HTTP layer), `click` 8.1.8 ->
+8.4.2 (clears the advisory; `click.edit` was never called here).
+
+Verification beyond the suite: the OAuth layer imports and its RFC 9728 patches
+apply; the remote app builds and wraps in the security-headers middleware; and the
+server was started locally on the new stack, where `/mcp` returned 401 both
+anonymously and with a forged bearer, discovery served 200, and all five security
+headers were present.
+
+Known benign warning: `pydantic-settings` 2.15 emits
+`IncompleteFieldDefinitionWarning` for MCP's own `FastMCP.lifespan` field (an
+unresolved forward reference in the SDK's settings model, not our code, and a
+field this server never sets).
+
+Result: full suite 588 passed.
+
 ## Security review backlog — M3, L1, L2, L3, L4
 
 Closes the findings deliberately deferred from the August 2026 review.
