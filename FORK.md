@@ -21,6 +21,12 @@ features and invariants below must not regress.** After any upstream merge, run
 the full test suite (`uv run pytest -m "not e2e"`) — every item here has test
 coverage.
 
+> **These invariants are CI-gated.** GitHub Actions runs the suite on every push
+> and pull request to `main` (`.github/workflows/ci.yml`, Python 3.12/3.13), so an
+> upstream merge that regresses one of them fails visibly rather than landing
+> quietly. Still run the suite locally while resolving a merge — CI is the backstop,
+> not the first line of defence.
+
 ## What this fork adds
 
 | Feature | Lives in | Notes |
