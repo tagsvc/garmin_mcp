@@ -5,6 +5,28 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Platform configuration documented — 2026-08-21
+
+No code change. The repository and deployment settings that protect this fork
+lived only in one person's memory; `OPERATIONS.md` now records them as the
+counterpart to `FORK.md` — code invariants there, platform configuration here.
+
+- **Branch ruleset on `main`** — active, empty bypass list, no direct pushes, no
+  force pushes, no deletion, and the four CI checks required with GitHub Actions
+  pinned as their reporting source. This changes `FORK.md`'s invariants from
+  *visible when broken* to *unmergeable when broken*.
+- **GitHub Advanced Security** — secret scanning with push protection, dependency
+  graph (off by default on forks), Dependabot alerts / malware alerts / security
+  updates / grouped updates, private vulnerability reporting.
+- **Dependabot version updates deliberately left off**, with the reasoning
+  recorded: the deliberate pins (`garminconnect==0.3.5`, `mcp<2`, exact `requests`
+  and `python-dotenv`) would generate PRs that must be closed every time.
+- **Railway** — builder pin, `/data` volume, environment-variable contract (names
+  and which are fail-closed), and the backup policy: daily schedule plus a locked
+  snapshot as a permanent known-good baseline.
+- **`FORK.md`** — sync procedure corrected: it told you to merge to `main` and
+  push, which the ruleset now refuses. It routes through a PR instead.
+
 ## Hardening round 2 — 2026-08-21
 
 Two issues introduced by the same day's fixes, found in follow-up validation.

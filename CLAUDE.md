@@ -8,6 +8,13 @@ allowlist, secret-gated token import, and a Railway remote deployment).
 
 - **`FORK.md`** documents what this fork adds and the **invariants that must not
   regress**. Read it before merging upstream changes or touching auth/registration/config.
+- **`OPERATIONS.md`** documents the platform configuration nothing in the repo
+  enforces — the branch ruleset, GitHub security settings, and the Railway
+  deployment (volume, env vars, backups). Read it before changing deployment
+  config or repository settings.
+
+`main` takes **no direct pushes**: every change goes through a PR, and the four
+required checks must pass before it can merge.
 
 ## Working in this repo
 

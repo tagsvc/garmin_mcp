@@ -21,10 +21,13 @@ features and invariants below must not regress.** After any upstream merge, run
 the full test suite (`uv run pytest -m "not e2e"`) — every item here has test
 coverage.
 
-> **These invariants are CI-gated.** GitHub Actions runs the suite on every push
-> and pull request to `main` (`.github/workflows/ci.yml`, Python 3.12/3.13), so an
-> upstream merge that regresses one of them fails visibly rather than landing
-> quietly. Still run the suite locally while resolving a merge — CI is the backstop,
+> **These invariants are CI-gated *and* merge-gated.** GitHub Actions runs the
+> suite on every push and pull request to `main` (`.github/workflows/ci.yml`,
+> Python 3.12/3.13), and a branch ruleset makes those checks **required**: a merge
+> that regresses one of them cannot land on `main` at all, rather than landing red.
+> `main` also takes no direct pushes, so every change arrives through a PR. See
+> `OPERATIONS.md` for the ruleset detail and how to verify it is still enforcing.
+> Still run the suite locally while resolving a merge — the gate is the backstop,
 > not the first line of defence.
 
 ## What this fork adds
@@ -212,7 +215,10 @@ git merge upstream/main                     # or: git rebase upstream/main
 # resolve conflicts, preserving the invariants above
 
 uv run pytest -m "not e2e"                  # MUST pass before going further
-# review the result, then merge to main and push; Railway redeploys on push to main
+
+git push -u origin sync-upstream-$(date +%Y%m%d)
+# then open a PR: `main` takes no direct pushes, and the four required checks
+# must go green before it can merge. Railway redeploys once the PR lands on main.
 ```
 
 **Conflict-prone files** (this fork customized them, so upstream edits here often
