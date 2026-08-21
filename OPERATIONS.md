@@ -113,6 +113,32 @@ disabled). This is a separate switch from workflow *permissions* — having the
 permissions page populated does not mean Actions is running. If no workflow run
 has ever appeared, that switch is the reason.
 
+**`security.yml` needs a second, separate enable.** GitHub disables workflows
+containing a `schedule:` trigger in forked repositories, and it disables the
+*whole workflow* — not just the scheduled run. `security.yml` is the only one of
+the three with a `schedule:`, which is why it alone sits in state
+`disabled_fork` while `ci.yml` and `pr-validation.yml` run normally. The effect
+is silent: no run appears, no failure appears, and the PR checks look complete
+because the other two workflows reported.
+
+Enable it at **Actions → Security Checks → Enable workflow** (one click; it then
+stays enabled). Verify with:
+
+```bash
+curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://api.github.com/repos/tagsvc/garmin_mcp/actions/workflows \
+  | grep -E '"(name|state)"'
+```
+
+All workflows should read `"state": "active"`. Anything reading
+`"disabled_fork"` is not running, whatever its file says. Note that enabling
+requires an admin-scoped token; a read-only one returns `403` on the enable
+endpoint.
+
+GitHub also auto-disables scheduled workflows after 60 days without repository
+activity, so a long-dormant period can put this back to `disabled_fork` — worth
+re-checking after any long gap.
+
 ## Railway deployment
 
 - **Builder**: `railway.json` pins `Dockerfile.remote` (the HTTP/OAuth server).

@@ -29,6 +29,15 @@ possible state, and worse once `OPERATIONS.md` described the surrounding posture
   since auditing a stale lock file scans the wrong dependency set.
 - **`OPERATIONS.md` correction** — it claimed a lock-check failure blocks the
   merge. It does not: `security.yml`'s jobs are not required checks.
+- **The workflow has never actually run.** Found while verifying the fix: GitHub
+  disables workflows carrying a `schedule:` trigger in forked repositories, and
+  disables the *entire* workflow rather than just the scheduled run.
+  `security.yml` is the only one of the three with a `schedule:`, so it alone
+  sits in state `disabled_fork` — zero runs across the repository's history,
+  while `ci.yml` and `pr-validation.yml` ran normally. The failure is silent: no
+  run, no error, and PR checks look complete because the other workflows
+  reported. Needs a one-click enable in the Actions tab (documented, with a
+  verification command, in `OPERATIONS.md`); no repo change can fix it.
 
 ## Platform configuration documented — 2026-08-21
 
