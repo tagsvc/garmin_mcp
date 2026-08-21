@@ -5,6 +5,31 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## CI actually scans for vulnerabilities now — 2026-08-21
+
+`security.yml`'s "Check for dependency vulnerabilities" step was a placeholder:
+it ran `uv pip list`, echoed *"Checking for known security vulnerabilities…"*,
+and checked nothing. Between the job name (`dependency-check`), the step name,
+and the reassuring output, it read as a working scanner — the most misleading
+possible state, and worse once `OPERATIONS.md` described the surrounding posture.
+
+- **Runs `pip-audit` for real**, against `uv export --frozen --no-dev` — the same
+  export `Dockerfile.remote` installs from, so it audits exactly what is deployed
+  rather than a fresh resolve. Verified it detects genuine advisories and exits
+  non-zero, rather than trusting a clean result from an unproven scanner.
+- **Deliberately overlaps Dependabot.** They fail differently: Dependabot is
+  asynchronous and graph-derived, pip-audit is synchronous and reports on the PR
+  that introduces the problem. Recorded in `OPERATIONS.md`.
+- **Left out of the required checks, deliberately** — a newly published advisory
+  with no available fix would otherwise block every unrelated PR.
+- **Dead lock-file guard fixed.** GitHub runs `run:` blocks under `bash -e`, so
+  `uv lock --check` failing aborted the step before its `if [ $? -ne 0 ]` branch
+  could run — the "run `uv lock` locally" message had never printed. The step
+  failed correctly; the guidance was unreachable. Also moved ahead of the audit,
+  since auditing a stale lock file scans the wrong dependency set.
+- **`OPERATIONS.md` correction** — it claimed a lock-check failure blocks the
+  merge. It does not: `security.yml`'s jobs are not required checks.
+
 ## Platform configuration documented — 2026-08-21
 
 No code change. The repository and deployment settings that protect this fork

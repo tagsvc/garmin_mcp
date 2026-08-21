@@ -22,21 +22,35 @@ jobs:
     - name: Set up Python
       run: uv python install 3.13
 
-    - name: Check for dependency vulnerabilities
-      run: |
-        uv sync
-        uv pip list
-        echo "Checking for known security vulnerabilities..."
-        # Note: Add pip-audit or safety scan here if desired
-
+    # Checked BEFORE the audit: the audit reads the lock file, so auditing a
+    # lock file that no longer matches pyproject.toml would scan the wrong set.
     - name: Verify lock file is up to date
       run: |
-        uv lock --check
-        if [ $? -ne 0 ]; then
-          echo "⚠️ Lock file is out of sync with pyproject.toml"
+        if ! uv lock --check; then
+          echo "::error::Lock file is out of sync with pyproject.toml"
           echo "Run 'uv lock' locally and commit the updated uv.lock"
           exit 1
         fi
+
+    # Audits the exact locked runtime set that ships in the image (the same
+    # `uv export --frozen` that Dockerfile.remote installs from), not a fresh
+    # resolve. --disable-pip works because the export carries hashes, so this
+    # resolves nothing and audits precisely what is deployed.
+    #
+    # This overlaps Dependabot deliberately, and the two are not redundant:
+    # Dependabot is asynchronous (alerts land in the dashboard after the fact,
+    # and it opens fix PRs) and depends on GitHub's dependency graph; pip-audit
+    # is synchronous, reports on the PR that introduces the problem, and reads
+    # PyPI advisories directly. See OPERATIONS.md.
+    - name: Audit locked dependencies for known vulnerabilities
+      run: |
+        uv export --frozen --no-dev --no-emit-project -o requirements-audit.txt
+        uvx pip-audit -r requirements-audit.txt --disable-pip
+
+    # A scanner that cannot fail is the placeholder this step replaced. If an
+    # advisory has no fixed version available, do NOT weaken this step --
+    # add an explicit `--ignore-vuln <ID>` with a comment saying why, so the
+    # exception is a recorded decision rather than an invisible one.
 
   code-quality:
     runs-on: ubuntu-latest

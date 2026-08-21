@@ -74,9 +74,37 @@ Deliberately **off**:
 - **Automatic dependency submission** — for build-time ecosystems like Gradle;
   irrelevant to uv.
 
-`security.yml` runs `uv lock --check`, so a dependency PR that edits
-`pyproject.toml` without regenerating `uv.lock` fails and the ruleset blocks the
-merge. The fix is `uv lock` locally, then push to that PR branch.
+### How dependency scanning actually works
+
+Two layers, deliberately overlapping, because they fail differently:
+
+| | Dependabot | `pip-audit` in `security.yml` |
+|---|---|---|
+| When | Asynchronous — after the fact | Synchronous — on the PR that introduces it |
+| Source | GitHub dependency graph | PyPI advisory database, directly |
+| Output | Dashboard alert + a fix PR | Red check on the PR |
+| Scope | Full graph, including dev | Locked **runtime** set (what ships) |
+
+`pip-audit` runs against `uv export --frozen --no-dev` — the same export
+`Dockerfile.remote` installs from — so it audits precisely what is deployed
+rather than a fresh resolve. `security.yml` also runs `uv lock --check` first,
+since auditing a lock file that no longer matches `pyproject.toml` would scan the
+wrong set.
+
+**These are not required checks.** `security.yml`'s jobs (`dependency-check`,
+`code-quality`) report on the PR but do **not** gate the merge — only
+`test (3.12)`, `test (3.13)`, `validate`, and `test-installation` do. That is
+deliberate: making an advisory-database lookup a merge requirement means a newly
+published advisory with no fix available blocks every unrelated PR until someone
+intervenes. A red `dependency-check` is a stop-and-look signal you have to
+actually look at, not an automatic block.
+
+If an advisory has no fixed version, add an explicit `--ignore-vuln <ID>` to the
+audit step with a comment explaining why, rather than weakening the step. The
+exception then lives in version control as a decision someone made.
+
+A dependency PR that edits `pyproject.toml` without regenerating `uv.lock` fails
+the lock check. The fix is `uv lock` locally, then push to that PR branch.
 
 ### Actions
 
