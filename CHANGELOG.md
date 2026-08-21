@@ -5,6 +5,26 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Hardening round 2 — 2026-08-21
+
+Two issues introduced by the same day's fixes, found in follow-up validation.
+Filed as "cosmetic"; the first is not.
+
+- **Log injection through `X-Forwarded-For`** — the same bug class as L4, reached
+  through a different input. `_client_ip()` reads an attacker-controlled header and
+  its value was logged raw at the `/import-token` rate-limit warning, so CR/LF in
+  the header could forge log lines. Fixed **at the source**: `_client_ip()` now
+  escapes and length-bounds what it returns, so every caller — present and future —
+  is safe rather than each log site needing to remember. A sweep found and fixed a
+  third site as well (raw request `state` in the auth-state warnings).
+- **Unsanitised `course_name` as a multipart filename** — introduced with the M3
+  fix. Now passed through `_safe_upload_filename()`: strips directory components
+  (`../../etc/passwd` -> `passwd.gpx`), quotes that could inject into
+  `Content-Disposition`, and CR/LF; falls back to `course.gpx` when nothing usable
+  remains, and bounds the length.
+
+Tests: +4. Result: full suite 592 passed.
+
 ## Dependency refresh — 2026-08-21
 
 Full `uv lock --upgrade` of everything the deliberate pins allow (~30 packages),
