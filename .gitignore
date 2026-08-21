@@ -21,5 +21,8 @@ docs/*
 .gitignore
 playground/*
 scratch/*
+# Written by the security.yml audit step (uv export -o); also appears locally
+# when reproducing that step by hand.
+requirements-audit.txt
 tests/fixtures/captured/*
 !tests/fixtures/captured/poc_walk_run.json
