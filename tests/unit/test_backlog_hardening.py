@@ -191,3 +191,51 @@ def test_safe_log_escapes_line_breaks():
 
 def test_safe_log_bounds_length():
     assert len(_safe_log("a" * 5000)) <= 200
+
+
+# ─── Round 2: log injection via headers, and upload filename ──────────────
+
+class _IPReq:
+    """Minimal request stand-in for _client_ip()."""
+
+    def __init__(self, xff=None, peer=None):
+        self.headers = {"x-forwarded-for": xff} if xff is not None else {}
+        self.client = SimpleNamespace(host=peer) if peer else None
+
+
+def test_client_ip_is_sanitised_at_source():
+    """Every caller of _client_ip gets a safe value — it is an untrusted header.
+
+    Sanitising inside _client_ip rather than at each log site means a future
+    caller cannot reintroduce the log-injection hole by forgetting to wrap it.
+    """
+    from garmin_mcp.oauth_provider import _client_ip
+
+    forged = "1.1.1.1, 203.0.113.9\n2026-01-01 [INFO] forged: admin logged in"
+    out = _client_ip(_IPReq(xff=forged))
+    assert "\n" not in out and "\r" not in out
+
+
+def test_client_ip_bounds_length_so_a_huge_header_cannot_bloat_the_limiter():
+    from garmin_mcp.oauth_provider import _client_ip
+
+    assert len(_client_ip(_IPReq(xff="9.9.9.9, " + "A" * 10_000))) <= 64
+
+
+def test_peer_fallback_is_also_sanitised():
+    from garmin_mcp.oauth_provider import _client_ip
+
+    assert "\n" not in _client_ip(_IPReq(peer="10.0.0.1\nforged"))
+
+
+def test_upload_filename_strips_paths_quotes_and_newlines():
+    """course_name is caller-supplied and becomes a multipart filename."""
+    from garmin_mcp.courses import _safe_upload_filename as f
+
+    assert f("../../etc/passwd") == "passwd.gpx"          # no directory escape
+    assert '"' not in f('a"; filename="evil.gpx')          # no header injection
+    assert "\n" not in f("route\nX-Injected: 1")
+    assert f("") == "course.gpx"                           # empty -> fallback
+    assert f("/////") == "course.gpx"                      # nothing usable -> fallback
+    assert len(f("z" * 500)) <= 84                         # bounded
+    assert f("My Route") == "My Route.gpx"                 # ordinary names survive

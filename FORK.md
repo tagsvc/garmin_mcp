@@ -83,7 +83,14 @@ coverage.
   attacker enumerate allowlist membership by differencing. Log the specific
   reason server-side instead.
 - **Untrusted values are sanitised before logging** (`_safe_log`): embedded
-  CR/LF in an email would otherwise forge log lines.
+  CR/LF in an email would otherwise forge log lines. Request-derived values are
+  sanitised **at their source**, not at each log site — `_client_ip()` escapes and
+  bounds the value it returns, so a caller cannot reintroduce the hole by
+  forgetting to wrap it.
+- **Caller-supplied text never becomes a filename unfiltered.**
+  `upload_course` passes `course_name` through `_safe_upload_filename()` before
+  using it as a multipart filename (strips directory components, quotes and
+  CR/LF that would otherwise land in a `Content-Disposition` header).
 - **Rate-limit keying uses the LAST `X-Forwarded-For` hop**, never the first.
   The first entry is client-supplied and spoofable; keying on it lets an attacker
   mint a fresh bucket per request and bypass the limiter entirely (`_client_ip`).
@@ -234,7 +241,7 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (588+ at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (592+ at time of writing).
 - Tool counts: **stdio 150**, **remote 148** (auth tools are stdio-only).
 
 ## History

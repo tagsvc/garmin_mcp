@@ -136,9 +136,13 @@ def _client_ip(request: Request) -> str:
     """
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
-        return xff.split(",")[-1].strip()
+        # Sanitised on the way OUT, not at each log site: the value comes from a
+        # client-controlled header, and callers use it both as a rate-limit key
+        # and in log lines. Escaping here means a caller cannot forget, and it
+        # also bounds the key length so a huge header cannot bloat the limiter.
+        return _safe_log(xff.split(",")[-1].strip(), limit=64)
     client = getattr(request, "client", None)
-    return getattr(client, "host", "") or "unknown"
+    return _safe_log(getattr(client, "host", "") or "unknown", limit=64)
 
 
 @dataclass
@@ -382,10 +386,10 @@ class GarminOAuthProvider(
                 ).fetchone()
                 if used:
                     logger.warning(
-                        "Auth state %s already consumed (user_id set)", state[:8]
+                        "Auth state %s already consumed (user_id set)", _safe_log(state[:8])
                     )
                 else:
-                    logger.warning("Auth state %s not found in DB", state[:8])
+                    logger.warning("Auth state %s not found in DB", _safe_log(state[:8]))
                 return HTMLResponse(
                     "<h1>Authorization expired</h1><p>Please try again.</p>",
                     status_code=400,
@@ -395,7 +399,7 @@ class GarminOAuthProvider(
                 logger.warning(
                     "Auth state %s expired: created at %.0f, "
                     "expired at %.0f, now %.0f (%.0fs late)",
-                    state[:8],
+                    _safe_log(state[:8]),
                     row["expires_at"] - 900,
                     row["expires_at"],
                     time.time(),
@@ -1011,7 +1015,7 @@ class GarminOAuthProvider(
         # Throttle MFA code attempts per pending login to cap brute-force of the
         # ~6-digit code (Garmin also limits server-side; this is defense-in-depth).
         if not self._mfa_limiter.allow(f"mfa:{state}"):
-            logger.warning("Rate-limited MFA attempts for state %s", state[:8])
+            logger.warning("Rate-limited MFA attempts for state %s", _safe_log(state[:8]))
             return await self.get_mfa_page(
                 state, "Too many attempts. Please wait a few minutes and try again."
             )

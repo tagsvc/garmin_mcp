@@ -21,6 +21,7 @@ import json
 import math
 import os
 import pathlib
+import re
 from typing import Any, Dict, Optional
 
 from mcp.server.fastmcp import Context
@@ -68,6 +69,21 @@ _ACTIVITY_TYPE_IDS = {
     "road_biking": 10,
     "gravel_cycling": 4,
 }
+
+
+def _safe_upload_filename(name: str, fallback: str = "course.gpx") -> str:
+    """Derive a safe multipart filename from caller-supplied text.
+
+    ``course_name`` reaches us from the tool caller and is sent to Garmin as the
+    filename of a multipart part. Left raw it could carry path separators, or
+    quotes and CR/LF that land in a Content-Disposition header. Keep a
+    conservative character set, strip any directory component, and bound the
+    length.
+    """
+    base = os.path.basename((name or "").strip())
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]", "_", base).strip(" .")
+    cleaned = cleaned[:80]
+    return f"{cleaned}.gpx" if cleaned else fallback
 
 
 def _build_course_payload(
@@ -252,7 +268,7 @@ def register_tools(app):
                 if not gpx_bytes:
                     return "Error: gpx_base64 decoded to empty content."
                 if course_name:
-                    upload_filename = f"{course_name}.gpx"
+                    upload_filename = _safe_upload_filename(course_name)
             else:
                 # Path reads name the SERVER's filesystem. Harmless for a local
                 # stdio server; on the remote server it lets any authenticated
@@ -271,7 +287,7 @@ def register_tools(app):
                     return f"Error: GPX file not found: {gpx_path}"
                 with open(gpx_path, "rb") as f:
                     gpx_bytes = f.read()
-                upload_filename = os.path.basename(gpx_path)
+                upload_filename = _safe_upload_filename(os.path.basename(gpx_path))
 
             activity_type_id = _ACTIVITY_TYPE_IDS.get(activity_type.lower())
             if activity_type_id is None:
