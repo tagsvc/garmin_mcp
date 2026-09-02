@@ -62,17 +62,27 @@ Settings → Advanced Security. All of these are **on**:
 
 Deliberately **off**:
 
-- **Dependabot version updates.** `pyproject.toml` carries intentional
+- **Dependabot version updates for `pip`.** `pyproject.toml` carries intentional
   constraints — `garminconnect==0.3.5` (CVE-2026-54447 floor), `mcp>=1.28.1,<2`
   (2.x renames `mcp.server.fastmcp`), exact pins on `requests` and
   `python-dotenv`. Version updates ignore that intent and would reopen the same
   `mcp` 2.x bump indefinitely. Security updates fire only on real advisories,
-  which is the signal worth having. If this is ever turned on, it needs a
-  `.github/dependabot.yml` with `ignore` rules for those four.
+  which is the signal worth having. If pip version updates are ever turned on,
+  they need `ignore` rules for those four.
+
 - **CodeQL** and **AI findings** — optional, not a gap. Note that the **Copilot
   Autofix** toggle is on but inert until CodeQL default setup exists.
 - **Automatic dependency submission** — for build-time ecosystems like Gradle;
   irrelevant to uv.
+
+Deliberately **on**, and the one exception to the version-updates line above:
+
+- **Dependabot version updates for `github-actions`**, via
+  `.github/dependabot.yml` (monthly, grouped into one PR). That ecosystem holds
+  no deliberate pins, so there is nothing for Dependabot to fight. Without it,
+  every GitHub runner-runtime deprecation means hand-bumping ten `uses:` lines
+  across three workflows — which is what prompted the file. Its PRs still have
+  to clear all four required checks.
 
 ### How dependency scanning actually works
 
