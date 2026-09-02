@@ -243,4 +243,51 @@ def register_tools(app):
         except Exception as e:
             return f"Error removing gear from activity: {str(e)}"
 
+    @app.tool()
+    async def get_gear_activities(
+        ctx: Context, gear_uuid: str, limit: int = 1000
+    ) -> str:
+        """List every activity a given piece of gear was used on.
+
+        The reverse of get_activity_gear (which answers "what gear did I use on
+        this activity"). Use this to audit a shoe's or bike's accumulated
+        mileage: get_gear reports the total, this itemises what makes it up, so
+        a mis-recorded activity -- a GPS dropout logging 0.5 mi for a 2 mi walk
+        -- can actually be found.
+
+        Args:
+            gear_uuid: UUID of the gear (get UUIDs from get_gear).
+            limit: Maximum activities to return (default 1000).
+        """
+        try:
+            data = get_client(ctx).get_gear_activities(gear_uuid, limit=limit)
+            if not isinstance(data, list):
+                return json.dumps(data, indent=2)
+
+            curated = [
+                {
+                    "activity_id": a.get("activityId"),
+                    "name": a.get("activityName"),
+                    "start_time": a.get("startTimeLocal"),
+                    "distance_m": a.get("distance"),
+                    "duration_s": a.get("duration"),
+                    "activity_type": (a.get("activityType") or {}).get("typeKey"),
+                }
+                for a in data
+            ]
+            total_m = sum(c["distance_m"] or 0 for c in curated)
+            return json.dumps(
+                {
+                    "gear_uuid": gear_uuid,
+                    "activity_count": len(curated),
+                    # Summed here so the total can be reconciled against the
+                    # figure get_gear reports for the same gear.
+                    "total_distance_m": round(total_m, 2),
+                    "activities": curated,
+                },
+                indent=2,
+            )
+        except Exception as e:
+            return f"Error listing activities for gear: {str(e)}"
+
     return app

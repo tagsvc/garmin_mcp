@@ -262,12 +262,12 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
     path in remote mode. Do not add it to `_GUARDED` to make the test pass —
     `_GUARDED` records tools that already refuse.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 160 / remote 158.
+**Definition of done:** suite green, invariants intact, tool counts stdio 164 / remote 162.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (700 at time of writing).
-- Tool counts: **stdio 160**, **remote 158** (auth tools are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (707 at time of writing).
+- Tool counts: **stdio 164**, **remote 162** (auth tools are stdio-only).
 
 ## History
 

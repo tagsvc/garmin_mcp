@@ -5,6 +5,41 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Training-plan discovery and per-gear activity lists — 2026-09-02
+
+Four tools filling gaps found by auditing this fork's coverage of the
+`garminconnect` library (134 public methods; 29 were unused).
+
+- **`get_training_plans`**, **`get_training_plan_details`**,
+  **`get_adaptive_training_plan_details`** — the fork could already read the
+  workouts *inside* a plan (`get_garmin_coach_workouts`) but could not list or
+  inspect the plans themselves. Adaptive (Garmin Coach) plans are served by a
+  separate endpoint, so they get their own tool; `get_training_plans` reports
+  which family each plan belongs to, and Garmin spells that flag two different
+  ways across families.
+- **`get_gear_activities`** — the reverse of `get_activity_gear`. `get_gear`
+  reports a shoe's or bike's accumulated total and `get_activity_gear` answers
+  "what did I wear on this run", but nothing itemised the activities behind a
+  total. That is what makes a mis-recorded activity findable: a GPS dropout
+  logging 0.49 mi for a 1.78 mi walk silently undercounts a shoe by 1.3 mi, and
+  the only way to spot it was fetching every activity and checking its gear one
+  at a time. The tool sums distance itself so the figure can be reconciled
+  against what `get_gear` reports.
+
+**Deliberately not built**, having compared them against existing coverage:
+
+- `get_activity_details` — Garmin's downsampled chart feed (2000 points). Our
+  `get_activity_fit_data` parses the real FIT file at full per-second
+  resolution and derives what that endpoint never exposes. It would be a
+  lower-fidelity duplicate; the README already listed it as skipped.
+- Golf (3 methods) — not used.
+- `set_gear_default`, badges, `delete_blood_pressure`,
+  `set_activity_exercise_sets` — one-time settings or cosmetic. Every tool is
+  description text the model carries in every session, so unused ones make the
+  used ones harder to find.
+
+Tests: +7. Result: 707 passed. Tool counts stdio 164 / remote 162.
+
 ## Dependabot manages GitHub Actions versions — 2026-09-02
 
 GitHub is deprecating Node 20; `actions/checkout@v4` and `astral-sh/setup-uv@v5`
