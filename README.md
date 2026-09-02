@@ -13,7 +13,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 - View body composition data
 - Track training status and readiness
 - Access cycling FTP and lactate threshold metrics
-- Manage gear and equipment
+- Manage gear and equipment, including free-text notes returned by `get_gear`
 - Access workouts and training plans
 - Inspect detailed workout step structures, including repeat groups and swim pace targets
 - Weekly health aggregates (steps, stress, intensity minutes)
@@ -24,11 +24,11 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~150 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
+This MCP server implements **~160 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
 
 - ✅ Activity Management (20 tools) - includes write tools for type, description, event type, perceived effort, and feel
-- ✅ Health & Wellness (31 tools) - includes custom lightweight summary tools
-- ✅ Training & Performance (13 tools) - includes CTL/ATL/TSB, HRV, VO2 max, and respiration trends
+- ✅ Health & Wellness (32 tools) - includes custom lightweight summary tools
+- ✅ Training & Performance (16 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
 - ✅ Workouts (8 tools)
 - ✅ Devices (7 tools)
 - ✅ Gear Management (5 tools)
@@ -36,15 +36,22 @@ This MCP server implements **~150 tools** covering ~90% of the [python-garmincon
 - ✅ Challenges & Badges (10 tools)
 - ✅ Nutrition (8 tools) - food logs, meals, custom foods, and food logging
 - ✅ Women's Health (3 tools)
-- ✅ User Profile (3 tools)
+- ✅ Calendar (1 tool) - races and events from the Garmin calendar
+- ✅ User Profile (5 tools) - includes per-sport heart rate zone reads and writes
 - ✅ High-Level Workout Builders (4 tools) - create and schedule workouts without writing JSON
-- ✅ Courses (3 tools) - list / upload GPX as course (base64 or local path) / delete course
-- ✅ Activity Analysis (2 tools) - FIT file parsing, Power Duration Curve; requires power meter and/or Di2
+- ✅ Courses (5 tools) - list / get details / upload GPX as course (base64 or local path) / download GPX / delete course
+- ✅ Activity Analysis (3 tools) - FIT file parsing, paginated FIT messages, Power Duration Curve; requires power meter and/or Di2
 - ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
 - ✅ Interactive Auth (2 tools, stdio mode) - `check_garmin_auth` / `login_to_garmin` to authenticate without restarting the client
 - ✅ Activity File Downloads (2 tools) - download activity files in FIT, GPX, TCX, or CSV format
 
 > **Note:** Activity Analysis tools require a compatible power meter (e.g., Garmin Rally, Favero Assioma, PowerTap P1) and/or Shimano Di2 / SRAM eTap electronic shifting. The `fitparse` dependency is installed automatically.
+
+### Gear Notes
+
+Each item in the `gear` array returned by `get_gear` includes a `notes` field
+containing the free-text Notes value shown in Garmin Connect. Gear without a
+Notes value returns `null`; all existing gear fields remain unchanged.
 
 ### Activity File Downloads
 
@@ -59,7 +66,12 @@ Two tools let you download a raw activity file to disk:
 2. `GARMIN_FIT_DOWNLOAD_DIR` environment variable.
 3. Persisted config set via `set_fit_download_dir`.
 
-**First-run behavior:** if no directory is configured, `download_activity_file` returns `status: "needs_setup"`. The assistant will ask where you want to save files (suggesting the current directory as default), call `set_fit_download_dir` to persist your choice, and then retry the download automatically.
+**Remote mode:** writing to a path is disabled. On a hosted server a path names
+the *server's* filesystem, not yours, so `download_activity_file` returns the
+file inline as base64 (omit `output_dir`), and `set_fit_download_dir` is
+refused. The same applies to `download_course_gpx`, which returns the GPX inline.
+
+**First-run behavior (stdio only):** if no directory is configured, `download_activity_file` returns `status: "needs_setup"`. The assistant will ask where you want to save files (suggesting the current directory as default), call `set_fit_download_dir` to persist your choice, and then retry the download automatically.
 
 ### Intentionally Skipped Endpoints
 
@@ -98,7 +110,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~150 tools by default, which can be a lot of context for
+This server registers ~160 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 two optional environment variables:
 
@@ -456,6 +468,7 @@ By default the server communicates over **stdio**, which is what Claude Desktop,
 - `GARMIN_MCP_TRANSPORT`: `stdio` (default), `streamable-http`, or `sse`
 - `GARMIN_MCP_HOST`: bind address for HTTP transports (default `127.0.0.1`; set to `0.0.0.0` only when the endpoint is fronted by an authenticating reverse proxy)
 - `GARMIN_MCP_PORT`: bind port for HTTP transports (default `8000`)
+- `GARMIN_MCP_CALL_TIMEOUT`: per-request timeout in seconds for calls to Garmin (default `90`). Garmin's API occasionally stalls a single request indefinitely; without this bound the call hangs until the MCP client's own timeout fires and reports the whole server as unresponsive. On timeout the tool returns a clear, retry-able error instead. Set to `0` to disable the bound.
 
 ```bash
 GARMIN_MCP_TRANSPORT=streamable-http garmin-mcp

@@ -50,6 +50,31 @@ def test_every_registered_module_is_also_configured():
     )
 
 
+def test_stdio_and_remote_register_the_same_modules():
+    """A new upstream module lands in __init__.py only -- remote silently lacks it.
+
+    Upstream is stdio-only, so it wires new modules into __init__.py alone.
+    Comparing remote.py against itself cannot catch that (both of its lists are
+    consistently missing the module); this compares the two servers. Found by
+    the 2026-09-02 sync, where calendar_events reached stdio only.
+    """
+    from garmin_mcp import __init__ as _pkg  # noqa: F401
+    import garmin_mcp
+
+    stdio = set(re.findall(r"app = (\w+)\.register_tools\(app\)", inspect.getsource(garmin_mcp)))
+    remote_mods = _registered_modules_in_source()
+
+    # auth_tools is deliberately stdio-only (FORK.md invariant): remote users
+    # authenticate through the OAuth login page instead.
+    assert stdio - remote_mods == {"auth_tools"}, (
+        "module(s) registered for stdio but missing from remote.py: "
+        f"{sorted(stdio - remote_mods - {'auth_tools'})}"
+    )
+    assert remote_mods - stdio == set(), (
+        f"module(s) in remote.py but not stdio: {sorted(remote_mods - stdio)}"
+    )
+
+
 def test_every_configured_module_exposes_configure():
     for module in remote._CONFIGURED_MODULES:
         assert hasattr(module, "configure"), f"{module.__name__} has no configure()"
@@ -129,6 +154,7 @@ _GUARDED = {
     ("upload_course", "gpx_path"),
     ("download_activity_file", "output_dir"),
     ("set_fit_download_dir", "path"),
+    ("download_course_gpx", "output_path"),
 }
 
 
@@ -290,3 +316,55 @@ async def test_an_upstream_style_tool_using_the_bare_global_works_in_remote_mode
     assert "alice-run" in (await app.call_tool("upstream_style_tool", {}))[0][0].text
     current["client"] = bob
     assert "bob-ride" in (await app.call_tool("upstream_style_tool", {}))[0][0].text
+
+
+@pytest.mark.asyncio
+async def test_download_course_gpx_refuses_output_path_in_remote_mode(
+    monkeypatch, tmp_path, restore_resolver
+):
+    """Caught by the path-guard tripwire when it arrived from upstream."""
+    from unittest.mock import Mock
+
+    from garmin_mcp import courses
+
+    cr.set_session_manager(SessionManager(str(tmp_path / "s")))
+    client = Mock()
+    client.client.connectapi.return_value = {
+        "courseName": "Loop", "geoPoints": [{"latitude": 1.0, "longitude": 2.0}],
+    }
+    courses.configure(client)
+
+    refused = await _call(
+        courses,
+        "download_course_gpx",
+        {"course_id": 1, "output_path": str(tmp_path / "nope.gpx")},
+    )
+    assert "disabled in remote mode" in refused
+    assert not (tmp_path / "nope.gpx").exists()
+
+    inline = await _call(courses, "download_course_gpx", {"course_id": 1})
+    assert "<gpx" in inline and "trkpt" in inline
+
+
+@pytest.mark.asyncio
+async def test_course_gpx_escapes_xml_special_characters(
+    tmp_path, restore_resolver
+):
+    """A course named 'Ben & Jerry <loop>' must not emit corrupt XML."""
+    import json as _json
+    import xml.etree.ElementTree as ET
+    from unittest.mock import Mock
+
+    from garmin_mcp import courses
+
+    cr.set_session_manager(SessionManager(str(tmp_path / "s")))
+    client = Mock()
+    client.client.connectapi.return_value = {
+        "courseName": "Ben & Jerry <loop>",
+        "geoPoints": [{"latitude": 1.0, "longitude": 2.0, "elevation": 3.0}],
+        "coursePoints": [{"lat": 1.0, "lon": 2.0, "name": "A & B", "pointType": "GENERIC"}],
+    }
+    courses.configure(client)
+
+    gpx = _json.loads(await _call(courses, "download_course_gpx", {"course_id": 1}))["gpx"]
+    ET.fromstring(gpx)  # raises on malformed XML

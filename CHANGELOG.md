@@ -5,6 +5,53 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Upstream sync 2026-09-02 — 17 commits, 10 new tools
+
+First sync since the stdio/remote split was collapsed, and **the first that
+needed no tool migration at all**: upstream's 10 new tools use the bare
+`garmin_client` global and worked unchanged through `_ResolvingGarminProxy`.
+Verified with a real one — `get_calendar_events` — that two callers dispatch to
+their own clients (one call each, no bleed), not just with the simulated tool in
+the contract test.
+
+**New tools:** `get_acclimation`, `get_running_tolerance(_trend)`,
+`get_heart_rate_zones` / `set_heart_rate_zones`, `get_course_details`,
+`download_course_gpx`, `get_calendar_events` (new `calendar_events` module),
+`get_sleep_summary_range`, `get_activity_fit_messages`.
+
+**Fixes taken:** bounded Garmin call duration so a stalled request can't hang the
+server, non-blocking background login, null-section hardening across HRV / sleep
+/ progress / body-battery / scheduled workouts, null device-map entries in
+`get_training_status`, lactate-threshold unit conversion, VO2-max trend
+continuity, strength-workout repeat groups, nutrition query params.
+
+**The tripwire earned itself on its first run.** `download_course_gpx` arrived
+with an `output_path` that wrote to the server's disk, and the path-guard test
+failed the merge by name. It now returns the GPX inline in remote mode and
+refuses the path. Without the guard added hours earlier this would have merged
+green, because collapsing the split had just removed the crash that used to stop
+it by accident.
+
+**Two things found while merging:**
+
+- **A blind spot in the contract test.** It compared `remote.py`'s configured and
+  registered module lists *against each other*, so a module upstream added to
+  `__init__.py` alone passed — both of remote's lists were consistently missing
+  it. `calendar_events` reached stdio only, and remote would have been short one
+  tool. Fixed, and the test now compares the two servers rather than one server
+  against itself.
+- **Malformed XML in the new GPX writer.** Course and waypoint names were
+  interpolated into the document raw, so a name containing `&` or `<` produced a
+  corrupt file. Escaped, with a test that parses the output.
+
+Conflicts resolved in `__init__.py`, `courses.py`, `health_wellness.py`,
+`nutrition.py`, `training.py`, `workouts.py`. The one that mattered: upstream's
+background login replaced the block where we call `set_global_client`, which
+stdio's `get_client()` falls back to — taking upstream's version wholesale would
+have left every stdio tool unable to resolve a client.
+
+Result: 700 passed. Tool counts stdio 160 / remote 158.
+
 ## Collapse the stdio/remote split — 2026-09-02
 
 Every upstream merge used to carry a manual migration: upstream is stdio-only,
