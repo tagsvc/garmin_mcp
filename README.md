@@ -24,14 +24,14 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~160 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
+This MCP server implements **~164 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
 
 - ✅ Activity Management (20 tools) - includes write tools for type, description, event type, perceived effort, and feel
 - ✅ Health & Wellness (32 tools) - includes custom lightweight summary tools
 - ✅ Training & Performance (16 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
-- ✅ Workouts (8 tools)
+- ✅ Workouts (11 tools) - includes training plan discovery and detail
 - ✅ Devices (7 tools)
-- ✅ Gear Management (5 tools)
+- ✅ Gear Management (6 tools) - includes per-gear activity lists for mileage auditing
 - ✅ Weight Tracking (5 tools)
 - ✅ Challenges & Badges (10 tools)
 - ✅ Nutrition (8 tools) - food logs, meals, custom foods, and food logging
@@ -110,7 +110,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~160 tools by default, which can be a lot of context for
+This server registers ~164 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 two optional environment variables:
 

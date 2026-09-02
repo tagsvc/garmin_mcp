@@ -1437,4 +1437,75 @@ def register_tools(app):
             "results": results
         }, indent=2)
 
+    @app.tool()
+    async def get_training_plans(ctx: Context) -> str:
+        """List the training plans on your Garmin Connect account.
+
+        Returns each plan's id, name, type and date range. Use the id with
+        get_training_plan_details, or with get_adaptive_training_plan_details
+        for a Garmin Coach plan.
+
+        This is the entry point: get_garmin_coach_workouts returns the workouts
+        inside a plan but not the plans themselves.
+        """
+        try:
+            data = get_client(ctx).get_training_plans()
+            plans = data.get("trainingPlanList", data) if isinstance(data, dict) else data
+            if not isinstance(plans, list):
+                return json.dumps(data, indent=2)
+
+            curated = [
+                {
+                    "plan_id": p.get("trainingPlanId") or p.get("id"),
+                    "name": p.get("planName") or p.get("name"),
+                    "type": p.get("planType") or p.get("type"),
+                    "adaptive": bool(p.get("adaptive") or p.get("isAdaptive")),
+                    "start_date": p.get("startDate"),
+                    "end_date": p.get("endDate"),
+                    "active": p.get("active"),
+                }
+                for p in plans
+            ]
+            return json.dumps({"count": len(curated), "plans": curated}, indent=2)
+        except Exception as e:
+            return f"Error listing training plans: {str(e)}"
+
+    @app.tool()
+    async def get_training_plan_details(ctx: Context, plan_id: Union[int, str]) -> str:
+        """Get the full detail of one training plan.
+
+        For a Garmin Coach (adaptive) plan use get_adaptive_training_plan_details
+        instead -- adaptive plans are served by a different endpoint and this one
+        may return nothing for them. get_training_plans reports which is which.
+
+        Args:
+            plan_id: Plan id from get_training_plans.
+        """
+        try:
+            return json.dumps(
+                get_client(ctx).get_training_plan_by_id(plan_id), indent=2
+            )
+        except Exception as e:
+            return f"Error getting training plan {plan_id}: {str(e)}"
+
+    @app.tool()
+    async def get_adaptive_training_plan_details(
+        ctx: Context, plan_id: Union[int, str]
+    ) -> str:
+        """Get the full detail of one Garmin Coach (adaptive) training plan.
+
+        Adaptive plans regenerate as you train, so the detail reflects Garmin's
+        current projection rather than a fixed schedule -- it can change between
+        calls without you doing anything.
+
+        Args:
+            plan_id: Plan id from get_training_plans (one marked adaptive).
+        """
+        try:
+            return json.dumps(
+                get_client(ctx).get_adaptive_training_plan_by_id(plan_id), indent=2
+            )
+        except Exception as e:
+            return f"Error getting adaptive training plan {plan_id}: {str(e)}"
+
     return app
