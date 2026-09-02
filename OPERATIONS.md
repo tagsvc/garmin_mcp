@@ -69,9 +69,8 @@ Deliberately **off**:
   `mcp` 2.x bump indefinitely. Security updates fire only on real advisories,
   which is the signal worth having. If pip version updates are ever turned on,
   they need `ignore` rules for those four.
-
-- **CodeQL** and **AI findings** — optional, not a gap. Note that the **Copilot
-  Autofix** toggle is on but inert until CodeQL default setup exists.
+- **AI findings** (preview) — generates findings for non-CodeQL languages. Off;
+  CodeQL's own analysis already covers both languages present here.
 - **Automatic dependency submission** — for build-time ecosystems like Gradle;
   irrelevant to uv.
 
@@ -83,6 +82,13 @@ Deliberately **on**, and the one exception to the version-updates line above:
   every GitHub runner-runtime deprecation means hand-bumping ten `uses:` lines
   across three workflows — which is what prompted the file. Its PRs still have
   to clear all four required checks.
+- **CodeQL**, default setup, scanning **Python and GitHub Actions**. The second
+  language matters here: Dependabot now opens PRs that modify workflow files, and
+  CodeQL checks those for script injection and unsafe handling of untrusted
+  input. It adds three check runs — `Analyze (python)`, `Analyze (actions)` and
+  `CodeQL` — which report but do **not** gate merges, since they are not in the
+  required set. Enabling it also activates the **Copilot Autofix** toggle, which
+  was on but inert beforehand.
 
 ### How dependency scanning actually works
 

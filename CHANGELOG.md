@@ -5,6 +5,31 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Documentation audit — 2026-09-02
+
+Checked every count and claim in the docs against the running code. Most were
+right; these were not.
+
+- **`CLAUDE.md` still said stdio 150 / remote 148.** This is the file loaded
+  automatically at the start of every session, so its stale figure was the first
+  thing any future session would read — and the check it prescribes ("re-enumerate
+  tool counts") would have been measured against a wrong target. Now 164 / 162.
+- **`README.md` per-section tool counts summed to 148, not 164.** Drift
+  accumulated across several syncs: Nutrition was six under, Workouts six under,
+  Data Management (3 tools) was never listed at all, and Gear Management was two
+  *over* — an error introduced earlier the same day by assuming
+  `get_activity_gear` lived in `gear_management` when it is in
+  `activity_management`. Every section recounted from the registered tools; the
+  sections now sum to exactly 164.
+- **`OPERATIONS.md` listed CodeQL as deliberately off.** It was enabled today.
+  Moved to the "on" list with what it actually scans (Python *and* GitHub
+  Actions — relevant now that Dependabot opens PRs modifying workflow files) and
+  its three non-gating check runs.
+- **`README.md` skip rationale for `get_activity_details` sharpened** — the real
+  reason is not payload size but that `get_activity_fit_data` parses the true FIT
+  file at per-second resolution, where that endpoint returns ~2000 downsampled
+  chart points.
+
 ## Training-plan discovery and per-gear activity lists — 2026-09-02
 
 Four tools filling gaps found by auditing this fork's coverage of the

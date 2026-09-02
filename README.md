@@ -26,19 +26,20 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 This MCP server implements **~164 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
 
-- ✅ Activity Management (20 tools) - includes write tools for type, description, event type, perceived effort, and feel
+- ✅ Activity Management (21 tools) - includes write tools for type, description, event type, perceived effort, and feel
 - ✅ Health & Wellness (32 tools) - includes custom lightweight summary tools
-- ✅ Training & Performance (16 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
-- ✅ Workouts (11 tools) - includes training plan discovery and detail
-- ✅ Devices (7 tools)
-- ✅ Gear Management (6 tools) - includes per-gear activity lists for mileage auditing
+- ✅ Training & Performance (18 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
+- ✅ Workouts (17 tools) - includes training plan discovery and detail
+- ✅ Devices (6 tools)
+- ✅ Gear Management (4 tools) - includes per-gear activity lists for mileage auditing
 - ✅ Weight Tracking (5 tools)
-- ✅ Challenges & Badges (10 tools)
-- ✅ Nutrition (8 tools) - food logs, meals, custom foods, and food logging
+- ✅ Challenges & Badges (9 tools)
+- ✅ Nutrition (14 tools) - food logs, meals, custom foods, and food logging
+- ✅ Data Management (3 tools) - bulk export helpers
 - ✅ Women's Health (3 tools)
 - ✅ Calendar (1 tool) - races and events from the Garmin calendar
-- ✅ User Profile (5 tools) - includes per-sport heart rate zone reads and writes
-- ✅ High-Level Workout Builders (4 tools) - create and schedule workouts without writing JSON
+- ✅ User Profile (6 tools) - includes per-sport heart rate zone reads and writes
+- ✅ High-Level Workout Builders (5 tools) - create and schedule workouts without writing JSON
 - ✅ Courses (5 tools) - list / get details / upload GPX as course (base64 or local path) / download GPX / delete course
 - ✅ Activity Analysis (3 tools) - FIT file parsing, paginated FIT messages, Power Duration Curve; requires power meter and/or Di2
 - ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
@@ -78,7 +79,7 @@ refused. The same applies to `download_course_gpx`, which returns the GPX inline
 Some endpoints are not implemented due to performance or complexity considerations:
 
 **High Data Volume:**
-- `get_activity_details()` - Returns large GPS tracks and chart data (50KB-500KB). Use `get_activity()` for summaries instead.
+- `get_activity_details()` - Returns Garmin's downsampled chart feed (50KB-500KB, capped at ~2000 points). Use `get_activity()` for summaries, or `get_activity_fit_data()` for the real FIT file at full per-second resolution — strictly higher fidelity than this endpoint.
 
 **Specialized Workout Formats:**
 - `upload_running_workout()`, `upload_cycling_workout()`, `upload_swimming_workout()` - Sport-specific workout uploads. Use `upload_workout()` for general workouts.

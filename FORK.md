@@ -40,6 +40,7 @@ coverage.
 | Email allowlist | `config.py`, `oauth_provider.py` | `GARMIN_ALLOWED_EMAILS`; enforced in `handle_login_callback` before any Garmin contact. |
 | Token import | `session_manager.py`, `oauth_provider.py`, `remote.py` | `create_session_from_token_blob`; login-page import + `POST /import-token`. Gated by `GARMIN_IMPORT_SECRET` + allowlist. |
 | 429 fail-fast login client | `oauth_provider.py` (`_new_login_client`) | Excludes 429 from garth's retry `status_forcelist` so a rate-limited login isn't amplified. |
+| Coverage additions (4 tools) | `workouts.py`, `gear_management.py` | `get_training_plans`, `get_training_plan_details`, `get_adaptive_training_plan_details`, `get_gear_activities` — gaps found auditing this fork against the garminconnect library. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
 
 ## Invariants that must NOT regress
