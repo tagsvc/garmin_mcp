@@ -91,6 +91,7 @@ from garmin_mcp import courses
 from garmin_mcp import workout_builders
 from garmin_mcp import activity_analysis
 from garmin_mcp import analytics
+from garmin_mcp import calendar_events
 
 # Every module that exposes tools and therefore needs a `garmin_client` global.
 # workout_templates is absent deliberately: it registers resources, not tools,
@@ -112,6 +113,7 @@ _CONFIGURED_MODULES = (
     workout_builders,
     activity_analysis,
     analytics,
+    calendar_events,
 )
 
 
@@ -274,6 +276,7 @@ def main():
     app = workout_builders.register_tools(app)
     app = activity_analysis.register_tools(app)
     app = analytics.register_tools(app)
+    app = calendar_events.register_tools(app)
 
     # Register resources (workout templates)
     app = workout_templates.register_resources(app)
