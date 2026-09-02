@@ -8,6 +8,15 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch:
 
+# Least privilege for GITHUB_TOKEN. These jobs only read the repository -- they
+# never push, comment, or publish -- so anything beyond `contents: read` is blast
+# radius for no benefit. Without an explicit block the token inherits the
+# repository default, which can be read/write; a compromised dependency pulled
+# during `uv sync` would then be running with push rights.
+# (CodeQL: actions/missing-workflow-permissions)
+permissions:
+  contents: read
+
 jobs:
   dependency-check:
     runs-on: ubuntu-latest

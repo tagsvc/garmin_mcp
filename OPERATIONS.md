@@ -93,6 +93,34 @@ Deliberately **on**, and the one exception to the version-updates line above:
   required set. Enabling it also activates the **Copilot Autofix** toggle, which
   was on but inert beforehand.
 
+#### CodeQL baseline (first scan, 2026-09-02)
+
+The first scan raised 8 alerts. Six were real and are fixed; two are false
+positives **in this context** and should stay dismissed. Recorded here so a
+future reader does not re-litigate them, or worse, "fix" working code to quiet a
+scanner.
+
+**Fixed — `actions/missing-workflow-permissions` (6, medium).** None of the three
+workflows declared `permissions:`, so `GITHUB_TOKEN` inherited the repository
+default, which can be read/write. All three now pin `contents: read` at the top
+level: these jobs only read the repository, so anything more is blast radius for
+no benefit — a compromised dependency pulled during `uv sync` would otherwise run
+with push rights.
+
+**Dismissed — clear-text logging, `tests/test_garmin.py` (high).** Prints a
+resting heart rate, which CodeQL correctly classifies as sensitive. It is a
+manual diagnostic script: the module sets `pytestmark = pytest.mark.e2e` and CI
+runs `-m "not e2e"`, so it is deselected and **never executes in CI** — nothing
+reaches this public repository's build logs. Run by hand, it prints the
+operator's own data to their own terminal. *If that marker is ever removed, this
+becomes a real finding:* health data would land in public CI logs.
+
+**Dismissed — clear-text storage, `courses.py` (high).** Writing a GPX file to
+disk; CodeQL treats location data as sensitive, which is fair in general. Here
+the write happens only in **stdio mode** — remote mode refuses `output_path` and
+returns the GPX inline — so it is the user's own route on the user's own machine,
+which is the entire purpose of the tool.
+
 ### How dependency scanning actually works
 
 Two layers, deliberately overlapping, because they fail differently:
