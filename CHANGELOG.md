@@ -5,6 +5,30 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## CodeQL first scan: workflow permissions hardened — 2026-09-02
+
+I predicted CodeQL would find nothing. It found 8; six were real.
+
+**Fixed: `GITHUB_TOKEN` was unconstrained in all three workflows.** None declared
+`permissions:`, so the token inherited the repository default, which can be
+read/write. All three now pin `contents: read` at the top level. These jobs only
+read the repository — they never push, comment, or publish — so a broader token
+was blast radius for no benefit: a compromised dependency pulled during
+`uv sync` would have been running with push rights against a repository whose
+`main` is otherwise protected.
+
+**Two dismissed as false positives in context**, reasoning recorded in
+`OPERATIONS.md` so they are not re-litigated:
+
+- `tests/test_garmin.py` printing a resting heart rate. The module sets
+  `pytestmark = pytest.mark.e2e` and CI runs `-m "not e2e"`, so it never
+  executes in CI and no health data reaches this public repository's build logs.
+  Worth checking rather than assuming, given the repo is public — and worth
+  knowing that removing that marker would make it a genuine finding.
+- `courses.py` writing a GPX to disk. The write is stdio-only; remote mode
+  refuses `output_path` and returns the file inline, so it is the user's own
+  route on their own machine.
+
 ## Documented counts are now test-enforced, plus a security policy — 2026-09-02
 
 The documentation audit earlier today fixed four stale counts. This fixes the
