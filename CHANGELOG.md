@@ -5,6 +5,28 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Documented counts are now test-enforced, plus a security policy — 2026-09-02
+
+The documentation audit earlier today fixed four stale counts. This fixes the
+*cause*: nothing failed when a count was wrong, so drift was only ever found by
+someone recounting by hand.
+
+- **`tests/unit/test_documented_counts.py`** derives the tool counts by
+  registering every module, then fails when `CLAUDE.md`, `FORK.md`, or
+  `README.md` disagrees — including the README's per-section list, which is
+  where the drift actually accumulated (148 against 164 registered). Verified
+  non-vacuous by reintroducing both real drifts and confirming each is caught:
+  the section failure prints every section and its count, so the wrong one is
+  immediately visible.
+- **`SECURITY.md`** — private vulnerability reporting has been enabled for a
+  while, but nothing on the repo said so, which made the channel undiscoverable.
+  States the reporting route, sets honest expectations (a personal fork, best
+  effort, no bounty), scopes what is worth reporting given the server holds
+  Garmin tokens, and notes that upstream bugs should also go upstream since this
+  fork cannot fix them for upstream's users.
+
+Tests: +4. Result: 711 passed.
+
 ## Documentation audit — 2026-09-02
 
 Checked every count and claim in the docs against the running code. Most were

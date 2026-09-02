@@ -267,8 +267,11 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (707 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (711 at time of writing).
 - Tool counts: **stdio 164**, **remote 162** (auth tools are stdio-only).
+- Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
+  fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
+  actually registered, so these figures cannot silently rot again.
 
 ## History
 

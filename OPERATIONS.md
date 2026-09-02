@@ -59,6 +59,9 @@ Settings → Advanced Security. All of these are **on**:
 - **Private vulnerability reporting** — the repo is public; this gives a reporter
   a private channel instead of a public issue against a server that holds Garmin
   tokens.
+- **Security policy** (`SECURITY.md`) — points reporters at that private
+  channel and scopes what is worth reporting. Without it the channel exists but
+  is undiscoverable.
 
 Deliberately **off**:
 
