@@ -26,7 +26,7 @@ except ImportError:
 
 from mcp.server.fastmcp import Context
 
-from garmin_mcp.client_resolver import get_client
+from garmin_mcp.client_resolver import get_client, is_remote_mode
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -169,6 +169,48 @@ def _resolve_download_dir(output_dir: Optional[str]) -> Optional[str]:
     if cfg_dir:
         return os.path.abspath(os.path.expanduser(cfg_dir))
     return None
+
+
+# Remote mode has no useful notion of "the server's disk": a path there names the
+# HOST's filesystem, not the caller's, so writing to it is both useless to the
+# caller and an arbitrary-file-write primitive. Return the bytes instead.
+_MAX_INLINE_DOWNLOAD_BYTES = 8 * 1024 * 1024
+
+
+def _download_as_base64(client, activity_id, fmt: str, format_map: dict) -> str:
+    """Fetch an activity file and return it inline, base64-encoded."""
+    import base64 as _b64
+
+    activity_id = int(activity_id)
+    data = client.download_activity(activity_id, dl_fmt=format_map[fmt])
+    if not data:
+        return f"No {fmt} data returned for activity {activity_id}"
+
+    raw = bytes(data)
+    if fmt == "fit":
+        try:
+            payload = _extract_fit_bytes(raw)
+        except Exception as extract_err:
+            return json.dumps({"error": str(extract_err)}, indent=2)
+    else:
+        payload = raw
+
+    if len(payload) > _MAX_INLINE_DOWNLOAD_BYTES:
+        return json.dumps({
+            "error": (
+                f"File is {len(payload)} bytes, over the "
+                f"{_MAX_INLINE_DOWNLOAD_BYTES}-byte inline limit."
+            ),
+            "hint": "Use get_activity_fit_data for parsed metrics instead of raw bytes.",
+        }, indent=2)
+
+    return json.dumps({
+        "activity_id": activity_id,
+        "format": fmt,
+        "size_bytes": len(payload),
+        "content_base64": _b64.b64encode(payload).decode("ascii"),
+        "message": "File returned inline; remote mode does not write to the server's disk.",
+    }, indent=2)
 
 
 def _safe_avg(values: list) -> Optional[float]:
@@ -1311,6 +1353,17 @@ def register_tools(app):
                     "valid_formats": list(format_map.keys()),
                 }, indent=2)
 
+            if is_remote_mode():
+                if output_dir:
+                    return json.dumps({
+                        "error": (
+                            "output_dir is disabled in remote mode: it names the "
+                            "SERVER's filesystem, not yours. Omit it and the file "
+                            "contents are returned as base64 instead."
+                        ),
+                    }, indent=2)
+                return _download_as_base64(get_client(ctx), activity_id, fmt, format_map)
+
             download_dir = _resolve_download_dir(output_dir)
             if download_dir is None:
                 return json.dumps({
@@ -1382,6 +1435,18 @@ def register_tools(app):
                   server runs.
         """
         try:
+            if is_remote_mode():
+                return json.dumps({
+                    "error": (
+                        "set_fit_download_dir is disabled in remote mode. It "
+                        "configures the SERVER's filesystem, not yours, and the "
+                        "setting is process-global -- one caller would change "
+                        "where every other user's downloads land. Call "
+                        "download_activity_file without output_dir instead; it "
+                        "returns the file contents directly."
+                    ),
+                }, indent=2)
+
             abspath = os.path.abspath(os.path.expanduser(path))
             os.makedirs(abspath, exist_ok=True)
             _write_fit_config(abspath)

@@ -5,6 +5,48 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Collapse the stdio/remote split — 2026-09-02
+
+Every upstream merge used to carry a manual migration: upstream is stdio-only,
+so its tools call the module-global `garmin_client`, which was `None` in our
+remote mode. Each sync meant grepping for `garmin_client.` and rewriting every
+new tool to `get_client(ctx)`; a missed one crashed at runtime for real users.
+The pending sync has 10 such tools, the largest batch yet.
+
+**Root cause: `ctx` was a fake dependency.** `get_client(ctx)` only used `ctx`
+as a truthiness gate — the caller's identity actually comes from
+`get_access_token()`, a per-request contextvar. Every tool carried a `ctx`
+parameter solely to satisfy a check that never read it.
+
+- **Dropped the gate**, so a client can be resolved without threading `ctx`.
+- **Added `_ResolvingGarminProxy`**, and `remote.py` now `configure()`s all 16
+  modules with it. It holds no client: each attribute access resolves the
+  *calling user's* client, so two concurrent users never share one, and a tool
+  written the way upstream writes them works unchanged in both modes.
+- **Fail-closed preserved.** With no token in context, resolution falls through
+  to the stdio global — which `remote.py` never sets — and raises.
+
+**The catch, and the reason this shipped with guards.** A tool using the bare
+global previously *crashed* in remote mode, and that crash was accidental
+protection: it is the only reason upstream's `download_course_gpx(output_path=)`
+could not write to our server's disk. Removing the crash would have silently
+enabled it. So the same change closes the live hole and replaces the accident
+with a test:
+
+- `download_activity_file` now returns the file inline as base64 in remote mode
+  and refuses `output_dir`; `set_fit_download_dir` is refused outright (it wrote
+  a process-global setting — one caller could redirect every other user's
+  downloads). Both were unguarded arbitrary-file-write primitives, the write-side
+  mirror of the M3 read primitive fixed in `courses.py`.
+- `tests/unit/test_remote_mode_contract.py` fails when any registered tool
+  exposes a path-shaped parameter not on a reviewed allowlist, and when a
+  registered module is left unconfigured. Verified the tripwire catches
+  `output_path` — the parameter on upstream's incoming tool.
+
+Tests: +12, including one that registers an upstream-style tool (bare global, no
+`ctx`) and proves it resolves per user. Result: 604 passed. Tool counts
+unchanged at stdio 150 / remote 148.
+
 ## CI actually scans for vulnerabilities now — 2026-08-21
 
 `security.yml`'s "Check for dependency vulnerabilities" step was a placeholder:
