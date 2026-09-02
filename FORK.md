@@ -94,6 +94,14 @@ coverage.
   client captured at configure() time: that would hand one user's Garmin session
   to another. `test_remote_mode_contract.py` fails if a registered module is
   left unconfigured.
+- **No test performing a real Garmin login runs in the default CI selection.**
+  This repository is public, so build logs are public: such a test prints live
+  account data into them. Any module doing live auth must carry
+  `pytestmark = pytest.mark.e2e`, and
+  `tests/unit/test_live_auth_is_excluded_from_ci.py` fails when one does not —
+  including new ones, since it detects the calls rather than listing files. Two
+  dismissed CodeQL alerts rest on this exclusion, and a dismissal stays closed
+  even after the exclusion breaks.
 - **Per-user state is scoped by `user_id` in remote mode.** The analytics
   saved-report store is per-user; a shared file lets one authenticated user read
   or overwrite another's definitions.
@@ -267,7 +275,7 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (711 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (718 at time of writing).
 - Tool counts: **stdio 164**, **remote 162** (auth tools are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

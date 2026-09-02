@@ -5,6 +5,33 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Live-auth tests are provably excluded from CI — 2026-09-02
+
+Two CodeQL alerts were dismissed on the grounds that the tests involved never run
+in CI. That was true, but rested on a marker no check enforced — and a dismissal
+is sticky: remove the marker, the test runs, live data reaches this public
+repository's build logs, and the alert stays closed with nothing to say so.
+
+`tests/unit/test_live_auth_is_excluded_from_ci.py` closes that gap. It detects
+any test module performing a real Garmin login (matching on the calls, with
+comments stripped, so new files are covered and a prose mention in
+`test_session_manager.py` is not a false positive), asserts each is marked
+`e2e`, and separately runs the real collection command to confirm the CI
+selection picks up none of them.
+
+**Writing it immediately found a second module.** `tests/test_mcp_debug.py` was
+unmarked and therefore *did* run in CI. It performs a real `client.login()` and
+printed the login email — `print(f"Logging in with email: {email}")` — while
+catching every exception, so it passed regardless of what happened. Today that
+prints `None`, because CI holds no Garmin credentials; the moment `GARMIN_EMAIL`
+were added to CI it would print a real address into public logs. Now marked
+`e2e`, and the print reports presence rather than the value.
+
+Verified the guard fires: commenting out the marker on `test_garmin.py` fails the
+suite by name.
+
+Tests: +7. Result: 718 passed.
+
 ## CodeQL first scan: workflow permissions hardened — 2026-09-02
 
 I predicted CodeQL would find nothing. It found 8; six were real.

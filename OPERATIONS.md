@@ -112,8 +112,15 @@ resting heart rate, which CodeQL correctly classifies as sensitive. It is a
 manual diagnostic script: the module sets `pytestmark = pytest.mark.e2e` and CI
 runs `-m "not e2e"`, so it is deselected and **never executes in CI** — nothing
 reaches this public repository's build logs. Run by hand, it prints the
-operator's own data to their own terminal. *If that marker is ever removed, this
-becomes a real finding:* health data would land in public CI logs.
+operator's own data to their own terminal.
+
+That exclusion is the entire basis for the dismissal, and a dismissal is sticky:
+remove the marker and the test starts running, data reaches public logs, and the
+alert stays closed with nothing to say so. It is therefore **CI-enforced** by
+`tests/unit/test_live_auth_is_excluded_from_ci.py`, which detects any test module
+performing a real Garmin login and fails if it is not excluded from the default
+selection. Adding that test immediately found a second module,
+`tests/test_mcp_debug.py`, which was unmarked and did run in CI.
 
 **Dismissed — clear-text storage, `courses.py` (high).** Writing a GPX file to
 disk; CodeQL treats location data as sensitive, which is fair in general. Here
