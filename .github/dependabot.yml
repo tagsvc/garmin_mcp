@@ -1,0 +1,26 @@
+# Dependabot version updates are enabled for GitHub Actions ONLY.
+#
+# This is a deliberate exception, not a reversal of the decision recorded in
+# OPERATIONS.md. That decision concerns the *pip* ecosystem, where this fork
+# holds intentional pins -- garminconnect==0.3.5 (CVE-2026-54447 floor),
+# mcp>=1.28.1,<2 (2.x renames mcp.server.fastmcp), and exact requests /
+# python-dotenv -- so version updates there would raise the same PRs forever.
+# Security updates still cover pip; they fire only on real advisories.
+#
+# The github-actions ecosystem carries no such pins. Leaving it unmanaged means
+# hand-bumping ten `uses:` lines across three workflows every time GitHub
+# deprecates a runner Node version, which is what prompted this file.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+    groups:
+      # One PR per run instead of one per action; these move together and each
+      # still has to clear all four required checks before it can merge.
+      actions:
+        patterns: ["*"]

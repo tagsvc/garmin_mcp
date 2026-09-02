@@ -5,6 +5,24 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Dependabot manages GitHub Actions versions — 2026-09-02
+
+GitHub is deprecating Node 20; `actions/checkout@v4` and `astral-sh/setup-uv@v5`
+are being force-run on Node 24. Nothing is broken yet, but the fix by hand is ten
+`uses:` pins across three workflows, and it recurs at every runtime deprecation.
+
+`.github/dependabot.yml` now enables version updates for the **`github-actions`
+ecosystem only** — monthly, grouped into one PR. This is an exception to the
+"version updates off" decision, not a reversal of it: that decision is about
+`pip`, where the deliberate pins (`garminconnect==0.3.5`, `mcp<2`, exact
+`requests` / `python-dotenv`) would generate PRs to close forever. The actions
+ecosystem holds no such pins, so there is nothing for Dependabot to fight, and
+its PRs still have to clear all four required checks.
+
+Also fixes a grouping error introduced in the same edit to `OPERATIONS.md`, which
+briefly listed CodeQL and automatic dependency submission under "deliberately
+on". Both are off.
+
 ## Upstream sync 2026-09-02 — 17 commits, 10 new tools
 
 First sync since the stdio/remote split was collapsed, and **the first that
