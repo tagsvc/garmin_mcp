@@ -68,7 +68,10 @@ from garmin_mcp.config import get_config
 from garmin_mcp import oauth_claude
 from garmin_mcp.oauth_provider import GarminOAuthProvider
 from garmin_mcp.session_manager import SessionManager
-from garmin_mcp.client_resolver import set_session_manager
+from garmin_mcp.client_resolver import (
+    _ResolvingGarminProxy,
+    set_session_manager,
+)
 
 # Import all tool modules
 from garmin_mcp import activity_management
@@ -88,6 +91,28 @@ from garmin_mcp import courses
 from garmin_mcp import workout_builders
 from garmin_mcp import activity_analysis
 from garmin_mcp import analytics
+
+# Every module that exposes tools and therefore needs a `garmin_client` global.
+# workout_templates is absent deliberately: it registers resources, not tools,
+# and has no configure().
+_CONFIGURED_MODULES = (
+    activity_management,
+    health_wellness,
+    user_profile,
+    devices,
+    gear_management,
+    weight_management,
+    challenges,
+    training,
+    workouts,
+    data_management,
+    womens_health,
+    nutrition,
+    courses,
+    workout_builders,
+    activity_analysis,
+    analytics,
+)
 
 
 def main():
@@ -218,6 +243,19 @@ def main():
     @app.custom_route("/import-token", methods=["POST"])
     async def import_token(request: Request) -> Response:
         return await oauth_provider.handle_import_token(request)
+
+    # Give every module a `garmin_client` global, exactly as stdio does. In
+    # remote mode it is a proxy that resolves the CALLING USER's client on each
+    # attribute access rather than a single shared client -- see
+    # _ResolvingGarminProxy. Without this the global stays None here and any
+    # tool using it (all upstream tools do) fails at runtime in remote mode,
+    # which is why each upstream merge used to require a manual migration.
+    #
+    # Keep this list in step with the register_tools() calls below;
+    # test_remote_module_configuration.py fails if they diverge.
+    _client = _ResolvingGarminProxy()
+    for _module in _CONFIGURED_MODULES:
+        _module.configure(_client)
 
     # Register tools from all modules
     app = activity_management.register_tools(app)

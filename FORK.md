@@ -74,10 +74,25 @@ coverage.
   drops to `appuser` via `gosu` in `scripts/docker-entrypoint.sh`. Do **not** replace
   this with a bare `USER` directive: the volume would be unwritable, and Railway's
   documented workaround (`RAILWAY_RUN_UID=0`) would just put it back to root.
-- **Remote tools never read server filesystem paths.** `upload_course` accepts
-  `gpx_base64` and refuses `gpx_path` in remote mode — a path names the SERVER's
-  disk, making it an arbitrary-file-read primitive for any authenticated user.
-  Apply the same rule to any new tool that takes a path.
+- **Remote tools never read *or write* server filesystem paths.** A path names
+  the SERVER's disk in remote mode, making it an arbitrary-file-read (or -write)
+  primitive for any authenticated user. `upload_course` takes `gpx_base64` and
+  refuses `gpx_path`; `download_activity_file` returns the bytes inline and
+  refuses `output_dir`; `set_fit_download_dir` is refused outright (it is also
+  process-global, so one caller would redirect every other user's downloads).
+  **This is now CI-enforced:** `tests/unit/test_remote_mode_contract.py` fails
+  when any registered tool exposes a path-shaped parameter that is not on its
+  reviewed `_GUARDED` list. That test replaces protection this used to get by
+  accident — see the module-configuration invariant below.
+- **Every tool module is `configure()`d in remote mode**, from
+  `remote._CONFIGURED_MODULES`, with a `_ResolvingGarminProxy`. The proxy holds
+  no client: each attribute access resolves the *calling user's* client via the
+  per-request contextvar, so a tool written against the plain `garmin_client`
+  global — which is how upstream writes every tool — works in both modes and
+  never shares a client between users. Do not "simplify" this back to a single
+  client captured at configure() time: that would hand one user's Garmin session
+  to another. `test_remote_mode_contract.py` fails if a registered module is
+  left unconfigured.
 - **Per-user state is scoped by `user_id` in remote mode.** The analytics
   saved-report store is per-user; a shared file lets one authenticated user read
   or overwrite another's definitions.
@@ -236,18 +251,22 @@ collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 - `Dockerfile.remote` — ensure no `VOLUME` instruction was reintroduced, and it
   still installs from `uv.lock` (reproducible deploys), not a fresh resolve.
 - `config.py` — keep the `$PORT` fallback, the allowlist, and the import secret.
-- **New upstream tools must use `get_client(ctx)`, not the module-global
-  `garmin_client`.** Upstream is stdio-only, so its new tools call the global
-  directly — which is `None` in our remote (multi-user) mode and crashes. After a
-  sync, grep `src/garmin_mcp` for `garmin_client.` and migrate any tool hit to
-  `get_client(ctx)` (add a `ctx: Context` param). This is how we adapted
-  `create_manual_activity`, `download_activity_file`, and `unschedule_workout(s)`.
+- **New upstream tools no longer need migrating.** Upstream is stdio-only, so
+  its tools call the module-global `garmin_client` directly. That global is now
+  a `_ResolvingGarminProxy` in remote mode, so those tools work unchanged — the
+  old "grep for `garmin_client.` and rewrite every call to `get_client(ctx)`"
+  step is gone. Two things replace it, both automatic:
+  - a **new module** must be added to `remote._CONFIGURED_MODULES` *and* have
+    `register_tools()` called on it; the contract test fails if they diverge.
+  - a **new tool taking a path** fails the path-guard test until it refuses that
+    path in remote mode. Do not add it to `_GUARDED` to make the test pass —
+    `_GUARDED` records tools that already refuse.
 
 **Definition of done:** suite green, invariants intact, tool counts stdio 150 / remote 148.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (592+ at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (604 at time of writing).
 - Tool counts: **stdio 150**, **remote 148** (auth tools are stdio-only).
 
 ## History
