@@ -7,8 +7,15 @@ import datetime
 import os
 from pathlib import Path
 
+import pytest
 from dotenv import load_dotenv
 from garminconnect import Garmin
+
+# Performs a REAL Garmin login. Without this marker the module is collected by
+# the default CI selection (`-m "not e2e"`), where it would print the login
+# email into this public repository's build logs the moment GARMIN_EMAIL is set
+# in CI -- and it passes either way, since every exception below is caught.
+pytestmark = pytest.mark.e2e
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent / '.env'
@@ -20,7 +27,8 @@ async def test_direct():
     email = os.environ.get("GARMIN_EMAIL")
     password = os.environ.get("GARMIN_PASSWORD")
 
-    print(f"Logging in with email: {email}")
+    # Presence, not the value: this is a real address.
+    print(f"Logging in with email: {'set' if email else 'NOT SET'}")
 
     try:
         # Create and initialize Garmin client
