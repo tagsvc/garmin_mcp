@@ -153,9 +153,12 @@ published advisory with no fix available blocks every unrelated PR until someone
 intervenes. A red `dependency-check` is a stop-and-look signal you have to
 actually look at, not an automatic block.
 
-If an advisory has no fixed version, add an explicit `--ignore-vuln <ID>` to the
-audit step with a comment explaining why, rather than weakening the step. The
-exception then lives in version control as a decision someone made.
+If an advisory has no fixed version, or provably does not reach this code, add
+an explicit `--ignore-vuln <ID>` to the audit step with a comment explaining why
+and what ends it, rather than weakening the step. The exception then lives in
+version control as a decision someone made. Prefer the fix when one exists: a
+major version number is not evidence of risk on its own — diff the release over
+the code paths this repo actually runs (see the oauthlib entry in `CHANGELOG.md`).
 
 A dependency PR that edits `pyproject.toml` without regenerating `uv.lock` fails
 the lock check. The fix is `uv lock` locally, then push to that PR branch.

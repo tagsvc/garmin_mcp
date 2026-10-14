@@ -57,9 +57,12 @@ jobs:
         uvx pip-audit -r requirements-audit.txt --disable-pip
 
     # A scanner that cannot fail is the placeholder this step replaced. If an
-    # advisory has no fixed version available, do NOT weaken this step --
-    # add an explicit `--ignore-vuln <ID>` with a comment saying why, so the
-    # exception is a recorded decision rather than an invisible one.
+    # advisory has no fixed version available, or provably does not reach this
+    # code, do NOT weaken this step -- add an explicit `--ignore-vuln <ID>` with
+    # a comment saying why and what ends it, so the exception is a recorded
+    # decision rather than an invisible one. Prefer the fix when there is one:
+    # diff the fixed release over the code paths this repo actually runs
+    # before calling a version bump risky.
 
   code-quality:
     runs-on: ubuntu-latest
