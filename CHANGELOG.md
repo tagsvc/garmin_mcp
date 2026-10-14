@@ -5,22 +5,34 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
-## Recorded a pip-audit exception for oauthlib — 2026-10-14
+## oauthlib 3.3.1 → 4.0.0 (CVE-2026-49265) — 2026-10-14
 
-The weekly audit went red on `oauthlib 3.3.1` (PYSEC-2026-4114 / CVE-2026-49265,
-fixed in 4.0.0) — present on `main` before the 2026-10-14 sync, so a newly
-published advisory rather than a regression. It is a timing side-channel in
-oauthlib's OAuth2 authorization-*server* PKCE check. Nothing here reaches it:
-the repo never imports oauthlib, its only consumer is garth → requests-oauthlib
-using it as an OAuth1 *client*, and no installed package calls the affected
-functions.
+The weekly audit went red on `oauthlib 3.3.1` (PYSEC-2026-4114 /
+CVE-2026-49265): a timing side-channel in oauthlib's OAuth2 authorization-server
+PKCE check. Already present on `main` before the 2026-10-14 sync — a newly
+published advisory, not a regression. This server never reached the flawed code
+(oauthlib arrives only through garth → requests-oauthlib, as an OAuth1 *client*),
+but the fix is now taken rather than excepted.
 
-Recorded as `--ignore-vuln PYSEC-2026-4114` with that reasoning beside it,
-rather than bumped: 4.0.0 is a major version on the Garmin login and
-token-refresh path, which CI cannot exercise because tests mock Garmin. Ends when
-garth or requests-oauthlib supports oauthlib 4 and a live login and refresh pass
-on it. Verified the exception is narrow: the audit passes with it, fails without
-it, and still fails on a known-vulnerable package with the flag in place.
+A major version on the Garmin login path looked risky, and an exception was
+drafted on that basis. Diffing the two releases showed otherwise, so it was
+withdrawn before review:
+
+- every module on garth's OAuth1 client path — `oauth1/rfc5849/__init__.py`
+  (`Client`), `signature.py`, `parameters.py`, `utils.py` — is **byte-identical**
+  between 3.3.1 and 4.0.0;
+- the only other change garth's path touches is one added `"resource": None`
+  default in `common.Request`, an OAuth2 parameter OAuth1 signing never reads;
+- both of 4.0.0's breaking changes are in OAuth2 provider code nothing here
+  loads.
+
+Confirmed end to end: the same OAuth1 request, signed through `requests_oauthlib`
+with a fixed nonce and timestamp, produces an identical `Authorization` header
+under both versions. Suite green; the audit is clean with no exception.
+
+The audit policy in `security.yml` and `OPERATIONS.md` now also says to prefer
+the fix and to diff a release over the paths this repo runs before calling a
+bump risky — and that any exception must state what ends it.
 
 ## Upstream sync 2026-10-14 — 54 commits; courses fixed; remote gets annotations
 
