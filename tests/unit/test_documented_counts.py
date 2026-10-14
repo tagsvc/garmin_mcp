@@ -16,20 +16,32 @@ import re
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from garmin_mcp import auth_tools, remote
+from garmin_mcp import remote
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(scope="module")
 def counts():
-    """(stdio, remote) tool counts, measured rather than asserted."""
-    app = FastMCP("count")
-    for module in remote._CONFIGURED_MODULES:
-        app = module.register_tools(app)
-    remote_n = len(app._tool_manager.list_tools())
-    app = auth_tools.register_tools(app)  # stdio-only, per FORK.md
-    return len(app._tool_manager.list_tools()), remote_n
+    """(stdio, remote) tool counts, measured rather than asserted.
+
+    remote comes from remote.register_remote_tools -- the function the server
+    itself calls -- so REMOTE_EXCLUDED_TOOLS is honoured. stdio comes from the
+    DXT generator's module list, which test_dxt_manifest pins to main()'s
+    register_tools() calls. Neither is reconstructed here by hand.
+    """
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from generate_dxt_tools import MODULES
+
+    remote_app = remote.register_remote_tools(FastMCP("count-remote"))
+    remote_n = len(remote_app._tool_manager.list_tools())
+
+    stdio_app = FastMCP("count-stdio")
+    for module in MODULES:
+        stdio_app = module.register_tools(stdio_app)
+    return len(stdio_app._tool_manager.list_tools()), remote_n
 
 
 def _read(name):

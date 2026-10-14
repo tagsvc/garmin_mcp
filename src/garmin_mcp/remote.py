@@ -117,6 +117,67 @@ _CONFIGURED_MODULES = (
 )
 
 
+
+# --- Remote tool set ---------------------------------------------------------
+# Individual tools that stdio registers but this network server withholds.
+# (auth_tools is withheld at module level instead: remote.py never registers it.)
+#
+#   delete_activity -- irreversible. An activity is training history: Garmin
+#   Coach grades it, and training load, acute/chronic balance and every
+#   historical analytic here are computed from it. Its confirm=true gate stops
+#   an accidental call but not a deliberate one, and on the remote server the
+#   caller is a model acting on whatever content it was given. Delete from
+#   Garmin Connect itself, or over stdio. delete_workout / delete_course stay
+#   exposed: a workout or course is a plan, recreatable, not a record.
+REMOTE_EXCLUDED_TOOLS = frozenset({"delete_activity"})
+
+
+def register_remote_tools(app):
+    """Register every remote-mode tool on ``app`` and return the wrapper.
+
+    Goes through ``garmin_mcp._ToolFilter``, the wrapper stdio registers through,
+    so remote tools get the same treatment: effect annotations
+    (readOnlyHint/destructiveHint, which clients use to decide when to ask
+    first), and ``structured_output=False``, without which FastMCP re-wraps every
+    JSON string a tool returns as ``{"result": "<escaped json>"}`` and doubles
+    the payload. Before this, remote.py registered on the bare FastMCP app and
+    got neither.
+
+    Fails closed: if a name in REMOTE_EXCLUDED_TOOLS matches no registered tool
+    (an upstream rename, say), startup raises rather than silently serving it.
+    """
+    from garmin_mcp import _ToolFilter
+
+    tool_filter = _ToolFilter(app, set(), set(REMOTE_EXCLUDED_TOOLS))
+    app = tool_filter
+    app = activity_management.register_tools(app)
+    app = health_wellness.register_tools(app)
+    app = user_profile.register_tools(app)
+    app = devices.register_tools(app)
+    app = gear_management.register_tools(app)
+    app = weight_management.register_tools(app)
+    app = challenges.register_tools(app)
+    app = training.register_tools(app)
+    app = workouts.register_tools(app)
+    app = data_management.register_tools(app)
+    app = womens_health.register_tools(app)
+    app = nutrition.register_tools(app)
+    app = courses.register_tools(app)
+    app = workout_builders.register_tools(app)
+    app = activity_analysis.register_tools(app)
+    app = analytics.register_tools(app)
+    app = calendar_events.register_tools(app)
+
+    unmatched = tool_filter.unknown_filter_names()
+    if unmatched:
+        raise RuntimeError(
+            f"REMOTE_EXCLUDED_TOOLS names no registered tool: {unmatched}. "
+            "It was probably renamed upstream; update the exclusion rather than "
+            "let the tool reach the network server."
+        )
+    return app
+
+
 def main():
     """Start the remote MCP server with OAuth2 authentication."""
     # Configure logging so our own logs (session restore failures, OAuth
@@ -259,24 +320,10 @@ def main():
     for _module in _CONFIGURED_MODULES:
         _module.configure(_client)
 
-    # Register tools from all modules
-    app = activity_management.register_tools(app)
-    app = health_wellness.register_tools(app)
-    app = user_profile.register_tools(app)
-    app = devices.register_tools(app)
-    app = gear_management.register_tools(app)
-    app = weight_management.register_tools(app)
-    app = challenges.register_tools(app)
-    app = training.register_tools(app)
-    app = workouts.register_tools(app)
-    app = data_management.register_tools(app)
-    app = womens_health.register_tools(app)
-    app = nutrition.register_tools(app)
-    app = courses.register_tools(app)
-    app = workout_builders.register_tools(app)
-    app = activity_analysis.register_tools(app)
-    app = analytics.register_tools(app)
-    app = calendar_events.register_tools(app)
+    # Register tools from all modules -- through the same filter stdio uses,
+    # minus REMOTE_EXCLUDED_TOOLS. Tests measure the remote tool set by calling
+    # this same function, so documented counts cannot drift from what is served.
+    app = register_remote_tools(app)
 
     # Register resources (workout templates)
     app = workout_templates.register_resources(app)

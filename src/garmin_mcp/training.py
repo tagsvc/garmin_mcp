@@ -29,6 +29,136 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def _device_id(value: Any) -> Optional[str]:
+    """Normalize Garmin device IDs for comparing map keys with device records."""
+    return str(value) if value is not None else None
+
+
+def _primary_device_id(devices: Any) -> Optional[str]:
+    """Return the verified primary tracker ID, or unknown when unavailable."""
+    if not isinstance(devices, list):
+        return None
+    return next(
+        (
+            _device_id(device.get("deviceId"))
+            for device in devices
+            if isinstance(device, dict) and device.get("primaryDevice") is True
+        ),
+        None,
+    )
+
+
+def _select_training_device(
+    latest_data: Any, devices: Any
+) -> Tuple[Dict[str, Any], Optional[str], Optional[str], Optional[bool]]:
+    """Select one status record and describe whether it is the primary tracker.
+
+    Garmin keys ``latestTrainingStatusData`` by device ID.  The device endpoint
+    identifies the primary activity tracker with ``primaryDevice``.  If that
+    endpoint is unavailable, retain the historical primary-training-device
+    selection but mark tracker identity unknown; callers must not manufacture a
+    cross-device load in that case.
+    """
+    latest = latest_data if isinstance(latest_data, dict) else {}
+    entries = [
+        (key, value)
+        for key, value in latest.items()
+        if isinstance(value, dict) and value
+    ]
+    if not entries:
+        return {}, None, None, None
+
+    # A failed lookup is deliberately different from an empty, valid response:
+    # in both cases the primary tracker is unknown, so never infer ``False``.
+    device_records = (
+        [device for device in devices if isinstance(device, dict)]
+        if isinstance(devices, list)
+        else []
+    )
+    primary = next(
+        (device for device in device_records if device.get("primaryDevice") is True),
+        None,
+    )
+    primary_id = _device_id(primary.get("deviceId")) if primary else None
+
+    selected_key, selected = entries[0]
+    if primary_id is not None:
+        matched_primary = False
+        for key, value in entries:
+            record_id = _device_id(value.get("deviceId")) or _device_id(key)
+            if record_id == primary_id:
+                selected_key, selected = key, value
+                matched_primary = True
+                break
+        # The primary tracker may be absent from this day's status map.  Use
+        # Garmin's explicit primary-training marker before insertion order.
+        if not matched_primary:
+            for key, value in entries:
+                if value.get("primaryTrainingDevice") is True:
+                    selected_key, selected = key, value
+                    break
+    else:
+        for key, value in entries:
+            if value.get("primaryTrainingDevice") is True:
+                selected_key, selected = key, value
+                break
+
+    reporting_id = _device_id(selected.get("deviceId")) or _device_id(selected_key)
+    metadata = next(
+        (
+            device
+            for device in device_records
+            if _device_id(device.get("deviceId")) == reporting_id
+        ),
+        None,
+    )
+    reporting_name = (
+        metadata.get("displayName") or metadata.get("productDisplayName")
+        if metadata
+        else None
+    )
+    is_primary = (
+        reporting_id == primary_id
+        if primary_id is not None and reporting_id is not None
+        else None
+    )
+    return selected, reporting_id, reporting_name, is_primary
+
+
+def _tracker_acute_load(
+    readiness: Any, date: str, tracker_id: Optional[str]
+) -> Tuple[Optional[float], Optional[str]]:
+    """Extract acute load only from an identified tracker/date readiness row.
+
+    Training Readiness can return rows for several devices.  An undated row,
+    or a row without ``deviceId``, cannot establish that it belongs to the
+    verified primary tracker and is therefore rejected rather than guessed.
+    """
+    if tracker_id is None:
+        return None, "tracker_id_unavailable"
+    candidates = readiness if isinstance(readiness, list) else [readiness]
+    matching = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = _device_id(candidate.get("deviceId"))
+        if (
+            candidate_id == tracker_id
+            and candidate.get("calendarDate") == date
+            and candidate.get("acuteLoad") is not None
+        ):
+            matching.append(candidate)
+    if not matching:
+        return None, "readiness_device_or_date_mismatch"
+    if len(matching) > 1:
+        matching.sort(
+            key=lambda item: str(
+                item.get("timestampLocal") or item.get("timestamp") or ""
+            )
+        )
+    return matching[-1]["acuteLoad"], None
+
+
 # The fitnessstats "calories" metric is stored pre-multiplied by this factor
 # (verified empirically: activity kcal totals from get_activity/get_stats
 # times exactly 4.19 reproduce the raw sum/avg/min/max here). It doesn't match
@@ -43,6 +173,20 @@ def _convert_progress_metric(metric: str, value: Optional[float]) -> Optional[fl
     if value is None or metric != "calories":
         return value
     return value / _PROGRESS_CALORIES_FACTOR
+
+
+# Garmin returns the lactate threshold speed in cm/ms, not seconds/meter:
+# Garmin Connect's web app converts it with CmPerMsToMps = 10 before showing
+# the pace (a raw 0.3888878 is 3.889 m/s, shown as 4:17 min/km). Inverting
+# looked plausible only near ~0.32, where 1/x and 10x are both ~3.1-3.2 m/s.
+_CM_PER_MS_TO_MPS = 10
+
+
+def _lactate_threshold_speed_mps(value: Optional[float]) -> Optional[float]:
+    """Convert a raw lactate threshold speed to m/s."""
+    if not value:
+        return None
+    return value * _CM_PER_MS_TO_MPS
 
 
 def _extract_vo2_measurements(data: Any) -> Dict[str, float]:
@@ -124,6 +268,141 @@ def _get_max_metrics_range(
         return False, None
 
     return True, connectapi(f"{metrics_url}/{start_date}/{end_date}")
+
+
+def _is_forbidden_error(exc: Exception) -> bool:
+    """True when Garmin rejected the call with HTTP 403 Forbidden."""
+    text = str(exc).lower()
+    return "403" in text or "forbidden" in text
+
+
+def _first_present(mapping: Any, *keys: str) -> Any:
+    """Return the first non-None value for keys on a mapping-like object."""
+    data = _as_dict(mapping)
+    for key in keys:
+        value = data.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _activity_id_matches(item: Any, activity_id: int) -> bool:
+    """Compare Garmin activityId values that may arrive as int or str."""
+    raw = _as_dict(item).get("activityId")
+    try:
+        return int(raw) == int(activity_id)
+    except (TypeError, ValueError):
+        return str(raw) == str(activity_id)
+
+
+def _as_activity_list(payload: Any) -> List[Dict[str, Any]]:
+    """Normalize activity-search payloads to a list of dicts."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    data = _as_dict(payload)
+    for key in ("activityList", "activities"):
+        nested = data.get(key)
+        if isinstance(nested, list):
+            return [item for item in nested if isinstance(item, dict)]
+    return []
+
+
+def _lookup_activity_in_list(client: Any, activity_id: int, limit: int = 100):
+    """Find an activity in the list-search endpoint, which often works when details 403.
+
+    Garmin's `/activity-service/activity/{id}` endpoint returns HTTP 403 for some
+    valid, recently synced activities. The list search used by get_activities
+    still includes aerobic/anaerobic training effect on those same records.
+    """
+    url = getattr(
+        client,
+        "garmin_connect_activities",
+        "/activitylist-service/activities/search/activities",
+    )
+    connectapi = getattr(client, "connectapi", None)
+    search_attempts: List[Dict[str, str]] = [
+        {"activityIds": str(activity_id), "start": "0", "limit": "1"},
+        {"start": "0", "limit": str(limit)},
+    ]
+    if callable(connectapi):
+        for params in search_attempts:
+            try:
+                payload = connectapi(url, params=params)
+            except Exception:
+                continue
+            match = next(
+                (
+                    item
+                    for item in _as_activity_list(payload)
+                    if _activity_id_matches(item, activity_id)
+                ),
+                None,
+            )
+            if match is not None:
+                return match
+
+    get_activities = getattr(client, "get_activities", None)
+    if callable(get_activities):
+        try:
+            payload = get_activities(0, limit)
+        except Exception:
+            payload = None
+        return next(
+            (
+                item
+                for item in _as_activity_list(payload)
+                if _activity_id_matches(item, activity_id)
+            ),
+            None,
+        )
+    return None
+
+
+def _minutes_to_hours(value: Any) -> Optional[float]:
+    """Convert Garmin recovery minutes to hours, or None if missing/invalid."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 0 or not math.isfinite(value):
+        return None
+    return round(value / 60.0, 1)
+
+
+def _curate_training_effect(
+    activity: Any, activity_id: int, source: str
+) -> Dict[str, Any]:
+    """Pull training-effect fields from either details or list-search shapes."""
+    activity = _as_dict(activity)
+    summary = _as_dict(activity.get("summaryDTO"))
+    aerobic = _first_present(
+        summary, "trainingEffect", "aerobicTrainingEffect"
+    ) or _first_present(activity, "aerobicTrainingEffect", "trainingEffect")
+    anaerobic = _first_present(summary, "anaerobicTrainingEffect") or _first_present(
+        activity, "anaerobicTrainingEffect"
+    )
+    label = _first_present(summary, "trainingEffectLabel") or _first_present(
+        activity, "trainingEffectLabel", "aerobicTrainingEffectMessage"
+    )
+    recovery = _first_present(summary, "recoveryTime") or _first_present(
+        activity, "recoveryTime"
+    )
+    load = _first_present(summary, "activityTrainingLoad") or _first_present(
+        activity, "activityTrainingLoad"
+    )
+    performance = _first_present(summary, "performanceCondition") or _first_present(
+        activity, "performanceCondition"
+    )
+    curated = {
+        "activity_id": activity_id,
+        "source": source,
+        "training_effect": aerobic,
+        "aerobic_effect": aerobic,
+        "anaerobic_effect": anaerobic,
+        "training_effect_label": label,
+        "recovery_time_hours": _minutes_to_hours(recovery),
+        "training_load": load,
+        "performance_condition": performance,
+    }
+    return {key: value for key, value in curated.items() if value is not None}
 
 
 def _build_vo2_trend_series(
@@ -463,46 +742,48 @@ def register_tools(app):
 
     @app.tool()
     async def get_training_effect(ctx: Context, activity_id: int) -> str:
-        """Get training effect data for a specific activity
+        """Get training effect data for a specific activity.
+
+        Uses activity details first. If Garmin returns HTTP 403 for that
+        endpoint (seen on valid, recent activities), falls back to activity
+        list search, which still includes aerobic/anaerobic training effect.
 
         Args:
             activity_id: ID of the activity to retrieve training effect for
         """
         try:
-            # Training effect data is available through get_activity
-            # The garminconnect library doesn't have a separate get_training_effect method
-            activity = get_client(ctx).get_activity(activity_id)
+            activity_id = int(activity_id)
+        except (TypeError, ValueError):
+            return f"Invalid activity ID: {activity_id}"
+
+        source = "activity_details"
+        detail_error: Optional[Exception] = None
+        try:
+            activity = garmin_client.get_activity(activity_id)
+        except Exception as e:
+            if not _is_forbidden_error(e):
+                return f"Error retrieving training effect data: {e}"
+            activity = None
+            detail_error = e
+
+        if not activity:
+            source = "activity_list"
+            try:
+                activity = _lookup_activity_in_list(garmin_client, activity_id)
+            except Exception as e:
+                return f"Error retrieving training effect data: {e}"
             if not activity:
+                if detail_error is not None:
+                    return (
+                        "Error retrieving training effect data: Garmin returned HTTP 403 "
+                        f"for activity {activity_id} details, and the activity was not "
+                        "found in recent activity search."
+                    )
                 return f"No activity found with ID {activity_id}."
 
-            # Extract training effect data from activity summary
-            summary = activity.get("summaryDTO", {})
-
-            # Curate to essential fields only
-            curated = {
-                "activity_id": activity_id,
-                "training_effect": summary.get("trainingEffect"),
-                "aerobic_effect": summary.get("trainingEffect"),
-                "anaerobic_effect": summary.get("anaerobicTrainingEffect"),
-                "training_effect_label": summary.get("trainingEffectLabel"),
-                # Recovery metrics
-                "recovery_time_hours": (
-                    round(summary.get("recoveryTime", 0) / 60, 1)
-                    if summary.get("recoveryTime")
-                    else None
-                ),
-                # Training load
-                "training_load": summary.get("activityTrainingLoad"),
-                # Additional metrics that may be available
-                "performance_condition": summary.get("performanceCondition"),
-            }
-
-            # Remove None values
-            curated = {k: v for k, v in curated.items() if v is not None}
-
-            return json.dumps(curated, indent=2)
-        except Exception as e:
-            return f"Error retrieving training effect data: {str(e)}"
+        return json.dumps(
+            _curate_training_effect(activity, activity_id, source), indent=2
+        )
 
     @app.tool()
     async def get_hrv_data(ctx: Context, date: str, return_timeseries: bool = False) -> str:
@@ -664,13 +945,13 @@ def register_tools(app):
             recent_status = _as_dict(status.get("mostRecentTrainingStatus"))
             latest_data = _as_dict(recent_status.get("latestTrainingStatusData"))
 
-            # Get first device data (usually the primary device)
-            device_data = {}
-            for data in latest_data.values():
-                if not isinstance(data, dict) or not data:
-                    continue
-                device_data = data
-                break
+            try:
+                devices = garmin_client.get_devices()
+            except Exception:
+                devices = None
+            device_data, reporting_id, reporting_name, is_primary_tracker = (
+                _select_training_device(latest_data, devices)
+            )
 
             acwr_data = _as_dict(device_data.get("acuteTrainingLoadDTO"))
 
@@ -682,16 +963,30 @@ def register_tools(app):
             # Training load balance
             load_balance = _as_dict(status.get("mostRecentTrainingLoadBalance"))
             load_map = _as_dict(load_balance.get("metricsTrainingLoadBalanceDTOMap"))
-            load_data = {}
-            for data in load_map.values():
-                if not isinstance(data, dict) or not data:
-                    continue
-                load_data = data
-                break
+            load_data: Dict[str, Any] = {}
+            load_device_id: Optional[str] = None
+            # Load-balance is also device-keyed. Never attach the first
+            # available record to a different reporting device.
+            if reporting_id is not None:
+                for key, data in load_map.items():
+                    if not isinstance(data, dict) or not data:
+                        continue
+                    candidate_id = _device_id(data.get("deviceId")) or _device_id(key)
+                    if candidate_id == reporting_id:
+                        load_data = data
+                        load_device_id = candidate_id
+                        break
 
             # Curate to essential fields only - remove userIds
             curated = {
                 "date": device_data.get("calendarDate", date),
+                "reporting_device_id": int(reporting_id)
+                if reporting_id and reporting_id.isdigit()
+                else reporting_id,
+                "reporting_device_name": reporting_name,
+                "load_device_id": int(load_device_id)
+                if load_device_id and load_device_id.isdigit()
+                else load_device_id,
                 # Training status
                 "training_status": device_data.get("trainingStatus"),
                 "training_status_feedback": device_data.get(
@@ -699,14 +994,6 @@ def register_tools(app):
                 ),
                 "sport": device_data.get("sport"),
                 "fitness_trend": device_data.get("fitnessTrend"),
-                # Acute Chronic Workload Ratio
-                "acute_load": acwr_data.get("dailyTrainingLoadAcute"),
-                "chronic_load": acwr_data.get("dailyTrainingLoadChronic"),
-                "load_ratio": acwr_data.get("dailyAcuteChronicWorkloadRatio"),
-                "acwr_status": acwr_data.get("acwrStatus"),
-                "acwr_percent": acwr_data.get("acwrPercent"),
-                "optimal_chronic_load_min": acwr_data.get("minTrainingLoadChronic"),
-                "optimal_chronic_load_max": acwr_data.get("maxTrainingLoadChronic"),
                 # VO2 Max
                 "vo2_max": vo2_data.get("vo2MaxValue"),
                 "vo2_max_precise": vo2_data.get("vo2MaxPreciseValue"),
@@ -721,9 +1008,40 @@ def register_tools(app):
                 ),
             }
 
-            # Remove None values
-            curated = {k: v for k, v in curated.items() if v is not None}
+            if is_primary_tracker is not False:
+                curated.update(
+                    {
+                        "acute_load": acwr_data.get("dailyTrainingLoadAcute"),
+                        "chronic_load": acwr_data.get("dailyTrainingLoadChronic"),
+                        "load_ratio": acwr_data.get("dailyAcuteChronicWorkloadRatio"),
+                        "acwr_status": acwr_data.get("acwrStatus"),
+                        "acwr_percent": acwr_data.get("acwrPercent"),
+                        "optimal_chronic_load_min": acwr_data.get("minTrainingLoadChronic"),
+                        "optimal_chronic_load_max": acwr_data.get("maxTrainingLoadChronic"),
+                    }
+                )
+            else:
+                try:
+                    readiness = garmin_client.get_training_readiness(date)
+                    acute_load, readiness_reason = _tracker_acute_load(
+                        readiness, date, _primary_device_id(devices)
+                    )
+                except Exception:
+                    acute_load, readiness_reason = None, "readiness_unavailable"
+                if acute_load is not None:
+                    curated["acute_load"] = acute_load
+                    curated["acute_load_source"] = "training_readiness"
+                elif readiness_reason is not None:
+                    curated["acute_load_source"] = "unavailable"
+                    curated["acute_load_unavailable_reason"] = readiness_reason
 
+            if not load_data and any(
+                isinstance(data, dict) and data for data in load_map.values()
+            ):
+                curated["load_source"] = "unavailable"
+                curated["load_unavailable_reason"] = "load_device_mismatch"
+
+            curated = {k: v for k, v in curated.items() if v is not None}
             return json.dumps(curated, indent=2)
         except Exception as e:
             return f"Error retrieving training status data: {str(e)}"
@@ -769,9 +1087,18 @@ def register_tools(app):
         endurance training.
 
         Args:
-            start_date: Start date in YYYY-MM-DD format (optional, omit for latest)
-            end_date: End date in YYYY-MM-DD format (optional, omit for latest)
+            start_date: Start date in YYYY-MM-DD format (optional; give with
+                end_date for history, omit both for latest)
+            end_date: End date in YYYY-MM-DD format (optional; give with
+                start_date for history, omit both for latest)
         """
+        # A lone date would otherwise fall through to the latest-values query
+        # and silently ignore the requested range.
+        if bool(start_date) != bool(end_date):
+            return (
+                "Provide both start_date and end_date for lactate threshold "
+                "history, or omit both for the latest values."
+            )
         try:
             # Call API with appropriate parameters
             if start_date and end_date:
@@ -790,7 +1117,7 @@ def register_tools(app):
 
             # Handle different response formats based on query type
             if start_date and end_date:
-                # Historical range format: {speed: [...], heartRate: [...], power: [...]}
+                # Historical range format: {speed: [...], heart_rate: [...], power: [...]}
                 curated = {
                     "start_date": start_date,
                     "end_date": end_date,
@@ -799,20 +1126,18 @@ def register_tools(app):
                 # Process speed history
                 speed_history = threshold.get("speed", [])
                 if speed_history:
-                    # Garmin returns speed as seconds/metre (inverse pace); invert to m/s.
                     curated["speed_history"] = [
                         {
                             "date": entry.get("from"),
-                            "speed_mps": (
-                                1 / entry.get("value") if entry.get("value") else None
-                            ),
+                            "speed_mps": _lactate_threshold_speed_mps(entry.get("value")),
                             "series": entry.get("series"),
                         }
                         for entry in speed_history
                     ]
 
-                # Process heart rate history
-                hr_history = threshold.get("heartRate", [])
+                # Process heart rate history. garminconnect returns it under
+                # "heart_rate"; accept the camelCase key too.
+                hr_history = threshold.get("heart_rate") or threshold.get("heartRate")
                 if hr_history:
                     curated["heart_rate_history"] = [
                         {
@@ -842,8 +1167,7 @@ def register_tools(app):
                 raw_speed = speed_hr.get("speed")
                 curated = {
                     # Speed and heart rate data
-                    # Garmin returns speed as seconds/metre (inverse pace); invert to m/s.
-                    "lactate_threshold_speed_mps": 1 / raw_speed if raw_speed else None,
+                    "lactate_threshold_speed_mps": _lactate_threshold_speed_mps(raw_speed),
                     "lactate_threshold_heart_rate_bpm": speed_hr.get("heartRate"),
                     "heart_rate_cycling_bpm": speed_hr.get("heartRateCycling"),
                     "speed_hr_date": speed_hr.get("calendarDate"),
@@ -880,12 +1204,14 @@ def register_tools(app):
 
     @app.tool()
     async def get_training_load_trend(ctx: Context, start_date: str, end_date: str) -> str:
-        """Get the Performance Management Chart (CTL/ATL/TSB) over a date range.
+        """Get Garmin's daily acute and chronic training load over a date range.
 
-        Returns Chronic Training Load (CTL, 42-day fitness), Acute Training Load (ATL, 7-day fatigue),
-        Training Stress Balance (TSB = CTL - ATL, form/freshness), and Acute:Chronic Workload Ratio
-        (ACWR) per day. Use this to assess whether the athlete is building fitness, peaking, or
-        accumulating too much fatigue.
+        Returns, per day, Garmin's acute load (`atl`, the 7-day load), chronic load (`ctl`), their
+        difference (`tsb` = ctl - atl), and Garmin's Acute:Chronic Workload Ratio (`acwr`,
+        `acwr_status`). These are Garmin's dailyTrainingLoadAcute/Chronic values, not TrainingPeaks
+        CTL/ATL: they are on Garmin's weekly load scale, so `tsb` is not comparable to TrainingPeaks
+        TSB and TSB form thresholds do not apply. Use `acwr`/`acwr_status` (and the optimal chronic
+        load range) to judge whether load is building steadily or spiking.
 
         Recommended range: 4-8 weeks. Maximum: 90 days.
 
@@ -907,6 +1233,10 @@ def register_tools(app):
             return "end_date must be on or after start_date."
 
         trend = []
+        try:
+            devices = garmin_client.get_devices()
+        except Exception:
+            devices = None
         current = start
         while current <= end:
             date_str = current.isoformat()
@@ -920,22 +1250,37 @@ def register_tools(app):
                     # the user has no data in, which breaks chained `.get`).
                     recent_status = data.get("mostRecentTrainingStatus") or {}
                     latest_data = recent_status.get("latestTrainingStatusData") or {}
-                    status_data: Dict[str, Any] = {}
-                    for dev_data in latest_data.values():
-                        if not isinstance(dev_data, dict):
-                            continue
-                        if dev_data.get("primaryTrainingDevice"):
-                            status_data = dev_data
-                            break
-                        if not status_data:
-                            status_data = dev_data
+                    status_data, reporting_id, reporting_name, is_primary_tracker = (
+                        _select_training_device(latest_data, devices)
+                    )
                     atl_dto = status_data.get("acuteTrainingLoadDTO") or {}
                     most_recent_vo2 = data.get("mostRecentVO2Max") or {}
                     vo2_data = most_recent_vo2.get("generic") or {}
                     entry: Dict[str, Any] = {"date": date_str}
+                    if reporting_id is not None:
+                        entry["reporting_device_id"] = (
+                            int(reporting_id) if reporting_id.isdigit() else reporting_id
+                        )
+                    if reporting_name is not None:
+                        entry["reporting_device_name"] = reporting_name
                     atl = atl_dto.get("dailyTrainingLoadAcute")
                     ctl = atl_dto.get("dailyTrainingLoadChronic")
                     acwr = atl_dto.get("dailyAcuteChronicWorkloadRatio")
+                    if is_primary_tracker is False:
+                        try:
+                            readiness = garmin_client.get_training_readiness(date_str)
+                            atl, readiness_reason = _tracker_acute_load(
+                                readiness, date_str, _primary_device_id(devices)
+                            )
+                        except Exception:
+                            atl, readiness_reason = None, "readiness_unavailable"
+                        ctl = None
+                        acwr = None
+                        if atl is not None:
+                            entry["atl_source"] = "training_readiness"
+                        else:
+                            entry["atl_source"] = "unavailable"
+                            entry["atl_unavailable_reason"] = readiness_reason
                     if atl is not None:
                         entry["atl"] = round(atl, 1)
                     if ctl is not None:
@@ -945,16 +1290,16 @@ def register_tools(app):
                     if acwr is not None:
                         entry["acwr"] = round(acwr, 2)
                     acwr_status = atl_dto.get("acwrStatus")
-                    if acwr_status:
+                    if acwr_status and is_primary_tracker is not False:
                         entry["acwr_status"] = acwr_status
                     acwr_pct = atl_dto.get("acwrPercent")
-                    if acwr_pct is not None:
+                    if acwr_pct is not None and is_primary_tracker is not False:
                         entry["acwr_percent"] = acwr_pct
                     chronic_min = atl_dto.get("minTrainingLoadChronic")
-                    if chronic_min is not None:
+                    if chronic_min is not None and is_primary_tracker is not False:
                         entry["optimal_chronic_load_min"] = round(chronic_min, 1)
                     chronic_max = atl_dto.get("maxTrainingLoadChronic")
-                    if chronic_max is not None:
+                    if chronic_max is not None and is_primary_tracker is not False:
                         entry["optimal_chronic_load_max"] = round(chronic_max, 1)
                     # Device data now has training status fields flattened — no
                     # longer wrapped in a trainingStatusDTO sub-object.
@@ -998,6 +1343,10 @@ def register_tools(app):
         alongside Garmin's target range; a `status` of "below", "within", or
         "above" is computed from the load relative to that range.
 
+        Garmin reports Load Focus per device. The primary activity tracker's
+        record is used when it can be identified; `load_device_id` and
+        `load_device_name` say which device the numbers came from.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1015,17 +1364,16 @@ def register_tools(app):
         load_balance = data.get("mostRecentTrainingLoadBalance") or {}
         load_map = load_balance.get("metricsTrainingLoadBalanceDTOMap") or {}
 
-        # device-keyed dict; prefer the primary training device, fall back to
-        # the first device with data.
-        load_data: Dict[str, Any] = {}
-        for dev_data in load_map.values():
-            if not isinstance(dev_data, dict):
-                continue
-            if dev_data.get("primaryTrainingDevice"):
-                load_data = dev_data
-                break
-            if not load_data:
-                load_data = dev_data
+        # Device-keyed like the status map: select with the same helper as
+        # get_training_status (primary tracker, then Garmin's primary-training
+        # marker) rather than whichever device happens to come first.
+        try:
+            devices = garmin_client.get_devices()
+        except Exception:
+            devices = None
+        load_data, load_device_id, load_device_name, _ = _select_training_device(
+            load_map, devices
+        )
 
         if not load_data:
             return f"No training load balance data found for {date}."
@@ -1055,6 +1403,12 @@ def register_tools(app):
         result: Dict[str, Any] = {
             "date": load_data.get("calendarDate", date),
         }
+        if load_device_id is not None:
+            result["load_device_id"] = (
+                int(load_device_id) if load_device_id.isdigit() else load_device_id
+            )
+        if load_device_name is not None:
+            result["load_device_name"] = load_device_name
         feedback = load_data.get("trainingBalanceFeedbackPhrase")
         if feedback:
             result["feedback"] = feedback

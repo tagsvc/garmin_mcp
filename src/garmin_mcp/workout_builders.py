@@ -53,19 +53,26 @@ def _hr_target(
     hr_zone: str,
     hr_min: Optional[int],
     hr_max: Optional[int],
+    prefix: str = "",
 ) -> tuple:
     """Resolve HR target fields and a short description suffix.
 
     Returns (target_extra_fields, description_suffix). If hr_min/hr_max are
     both given, builds a custom bpm-range target (targetValueOne/targetValueTwo)
     instead of a named Garmin zone. A custom range and a named zone are mutually
-    exclusive -- if a range is given, hr_zone is ignored.
+    exclusive -- if a range is given, hr_zone is ignored. prefix names the
+    caller's parameters in errors (e.g. "recovery_" for recovery_hr_min).
     """
     if hr_min is not None or hr_max is not None:
         if hr_min is None or hr_max is None:
-            raise ValueError("hr_min and hr_max must both be provided together.")
+            raise ValueError(
+                f"{prefix}hr_min and {prefix}hr_max must both be provided together."
+            )
         if hr_min >= hr_max:
-            raise ValueError(f"hr_min ({hr_min}) must be less than hr_max ({hr_max}).")
+            raise ValueError(
+                f"{prefix}hr_min ({hr_min}) must be less than "
+                f"{prefix}hr_max ({hr_max})."
+            )
         return (
             {"targetValueOne": float(hr_min), "targetValueTwo": float(hr_max)},
             f"{hr_min}-{hr_max}bpm",
@@ -133,6 +140,161 @@ def build_run_json(
                 },
             ],
         }],
+    }
+
+
+def build_run_interval_json(
+    name: str,
+    repeats: int,
+    rep_seconds: int,
+    recovery_seconds: int,
+    warmup_min: int,
+    cooldown_min: int,
+    hr_zone: str = "Z4",
+    hr_min: Optional[int] = None,
+    hr_max: Optional[int] = None,
+    recovery_hr_min: Optional[int] = None,
+    recovery_hr_max: Optional[int] = None,
+) -> dict:
+    """Build the Garmin Connect JSON for a repeat-based interval run workout.
+
+    Structure: warmup -> repeats x [work interval + jog recovery] -> cooldown.
+
+    The work intervals target a named heart-rate zone (hr_zone) by default;
+    pass hr_min and hr_max together to target an exact custom bpm range
+    instead. Named zones are usually too wide for interval work -- a
+    lactate-threshold session at 172-180 bpm sits inside a Z3 that may span
+    158-184, so the watch would report "in range" for efforts well below and
+    above the intended one.
+
+    Recovery steps carry no target unless recovery_hr_min/max are given.
+    A capped recovery alerts continuously for the first minute or two after
+    a hard rep, because heart rate lags the effort -- usually noise rather
+    than signal.
+    """
+    if repeats < 1:
+        raise ValueError("repeats must be >= 1")
+    if rep_seconds < 1:
+        raise ValueError("rep_seconds must be >= 1")
+    if recovery_seconds < 0:
+        raise ValueError("recovery_seconds must be >= 0")
+
+    hr_target_fields, hr_desc = _hr_target(hr_zone, hr_min, hr_max)
+
+    rep_display = f"{rep_seconds // 60}m" if rep_seconds % 60 == 0 else f"{rep_seconds}s"
+    rec_display = (
+        f"{recovery_seconds // 60}m"
+        if recovery_seconds % 60 == 0
+        else f"{recovery_seconds}s"
+    )
+
+    # Steps inside the repeat group. The group itself occupies one step order
+    # and its children continue numbering from there, so a mis-numbered child
+    # is the usual cause of a workout that uploads cleanly but renders
+    # scrambled on the watch.
+    repeat_children = [
+        {
+            "type": "ExecutableStepDTO",
+            "stepOrder": 3,
+            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+            "description": f"Rep {rep_seconds}s {hr_desc}",
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": float(rep_seconds),
+            "targetType": {
+                "workoutTargetTypeId": 4,
+                "workoutTargetTypeKey": "heart.rate.zone",
+            },
+            **hr_target_fields,
+        }
+    ]
+
+    if recovery_seconds > 0:
+        recovery_step = {
+            "type": "ExecutableStepDTO",
+            "stepOrder": 4,
+            "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+            "description": f"Jog {recovery_seconds}s",
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": float(recovery_seconds),
+            "targetType": {
+                "workoutTargetTypeId": 1,
+                "workoutTargetTypeKey": "no.target",
+            },
+        }
+        # `or`, not `and`: a single bound must raise like hr_min/hr_max do,
+        # not be silently dropped.
+        if recovery_hr_min is not None or recovery_hr_max is not None:
+            rec_fields, rec_desc = _hr_target(
+                None, recovery_hr_min, recovery_hr_max, prefix="recovery_"
+            )
+            recovery_step["targetType"] = {
+                "workoutTargetTypeId": 4,
+                "workoutTargetTypeKey": "heart.rate.zone",
+            }
+            recovery_step.update(rec_fields)
+            recovery_step["description"] = f"Jog {recovery_seconds}s {rec_desc}"
+        repeat_children.append(recovery_step)
+
+    cooldown_order = 3 + len(repeat_children)
+
+    return {
+        "workoutName": name,
+        "description": (
+            f"{warmup_min}m warmup + {repeats}x({rep_display} {hr_desc} / "
+            f"{rec_display} jog) + {cooldown_min}m cooldown"
+        ),
+        "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+        "workoutSegments": [
+            {
+                "segmentOrder": 1,
+                "sportType": {"sportTypeId": 1, "sportTypeKey": "running"},
+                "workoutSteps": [
+                    {
+                        "type": "ExecutableStepDTO",
+                        "stepOrder": 1,
+                        "stepType": {"stepTypeId": 1, "stepTypeKey": "warmup"},
+                        "description": f"Warmup {warmup_min} min",
+                        "endCondition": {
+                            "conditionTypeId": 2,
+                            "conditionTypeKey": "time",
+                        },
+                        "endConditionValue": float(warmup_min * 60),
+                        "targetType": {
+                            "workoutTargetTypeId": 1,
+                            "workoutTargetTypeKey": "no.target",
+                        },
+                    },
+                    {
+                        "type": "RepeatGroupDTO",
+                        "stepOrder": 2,
+                        "stepType": {"stepTypeId": 6, "stepTypeKey": "repeat"},
+                        "numberOfIterations": repeats,
+                        "smartRepeat": False,
+                        "endCondition": {
+                            "conditionTypeId": 7,
+                            "conditionTypeKey": "iterations",
+                        },
+                        "endConditionValue": float(repeats),
+                        "workoutSteps": repeat_children,
+                    },
+                    {
+                        "type": "ExecutableStepDTO",
+                        "stepOrder": cooldown_order,
+                        "stepType": {"stepTypeId": 2, "stepTypeKey": "cooldown"},
+                        "description": f"Cooldown {cooldown_min} min",
+                        "endCondition": {
+                            "conditionTypeId": 2,
+                            "conditionTypeKey": "time",
+                        },
+                        "endConditionValue": float(cooldown_min * 60),
+                        "targetType": {
+                            "workoutTargetTypeId": 1,
+                            "workoutTargetTypeKey": "no.target",
+                        },
+                    },
+                ],
+            }
+        ],
     }
 
 
@@ -397,6 +559,7 @@ def register_tools(app):
 
         Args:
             name: Workout name (e.g. "W3 Mié 2:2")
+                Max 256 characters: Garmin SILENTLY TRUNCATES longer names.
             run_seconds: Duration of each run interval in seconds
             walk_seconds: Duration of each walk/recovery interval in seconds
             repeats: Number of run/walk repetitions
@@ -453,6 +616,7 @@ def register_tools(app):
 
         Args:
             name: Workout name (e.g. "Step 8 - 30min continuous")
+                Max 256 characters: Garmin SILENTLY TRUNCATES longer names.
             run_seconds: Duration of the run in seconds
             warmup_min: Warmup walk duration in minutes
             cooldown_min: Cooldown walk duration in minutes
@@ -486,6 +650,81 @@ def register_tools(app):
             return f"Error creating run workout: {str(e)}"
 
     @app.tool()
+    async def create_run_interval_workout(
+        name: str,
+        repeats: int,
+        rep_seconds: int,
+        recovery_seconds: int,
+        warmup_min: int,
+        cooldown_min: int,
+        hr_zone: str = "Z4",
+        hr_min: Optional[int] = None,
+        hr_max: Optional[int] = None,
+        recovery_hr_min: Optional[int] = None,
+        recovery_hr_max: Optional[int] = None,
+    ) -> str:
+        """Create a repeat-based interval run workout and upload it to Garmin Connect.
+
+        Builds warmup -> repeats x [work interval + jog recovery] -> cooldown. Use this
+        instead of create_run_workout whenever the session has more than one work
+        interval (threshold reps, VO2 intervals, cruise intervals, strides).
+
+        Work intervals target a named heart-rate zone by default, but named zones are
+        usually far too wide for interval work: a threshold session at 172-180 bpm sits
+        inside a Z3 that may span 158-184. Pass hr_min and hr_max together to target the
+        exact bpm range, so the watch alerts as soon as the effort drifts off target.
+
+        Recovery steps carry no target unless recovery_hr_min/max are given -- a capped
+        recovery alerts constantly right after a hard rep, since heart rate lags effort.
+
+        Example -- 3 x 6 min at HR 172-180 with 3 min jogs, 12m warmup, 8m cooldown:
+            repeats=3, rep_seconds=360, recovery_seconds=180,
+            hr_min=172, hr_max=180, warmup_min=12, cooldown_min=8
+
+        Args:
+            name: Workout name (e.g. "Threshold 3x6min")
+            repeats: Number of work intervals
+            rep_seconds: Duration of each work interval in seconds
+            recovery_seconds: Jog recovery between work intervals in seconds (0 to omit)
+            warmup_min: Warmup duration in minutes
+            cooldown_min: Cooldown duration in minutes
+            hr_zone: Target zone for the work intervals (Z1-Z5, default Z4). Ignored if hr_min/hr_max are given.
+            hr_min: Custom target HR range for the work intervals, minimum bpm (with hr_max)
+            hr_max: Custom target HR range for the work intervals, maximum bpm (with hr_min)
+            recovery_hr_min: Optional HR range for recovery jogs, minimum bpm (with recovery_hr_max)
+            recovery_hr_max: Optional HR range for recovery jogs, maximum bpm (with recovery_hr_min)
+        """
+        try:
+            workout_json = build_run_interval_json(
+                name=name,
+                repeats=repeats,
+                rep_seconds=rep_seconds,
+                recovery_seconds=recovery_seconds,
+                warmup_min=warmup_min,
+                cooldown_min=cooldown_min,
+                hr_zone=hr_zone,
+                hr_min=hr_min,
+                hr_max=hr_max,
+                recovery_hr_min=recovery_hr_min,
+                recovery_hr_max=recovery_hr_max,
+            )
+            result = garmin_client.upload_workout(workout_json)  # noqa: F821
+
+            if isinstance(result, dict):
+                curated = {
+                    "status": "success",
+                    "workout_id": result.get("workoutId"),
+                    "name": result.get("workoutName"),
+                    "message": "Interval workout uploaded successfully",
+                }
+                curated = {k: v for k, v in curated.items() if v is not None}
+                return json.dumps(curated, indent=2)
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return f"Error creating run interval workout: {str(e)}"
+
+
+    @app.tool()
     async def create_z2_walk_workout(
         ctx: Context,
         name: str,
@@ -497,6 +736,7 @@ def register_tools(app):
 
         Args:
             name: Workout name
+                Max 256 characters: Garmin SILENTLY TRUNCATES longer names.
             duration_min: Main walking block duration in minutes
             hr_min: Minimum heart rate in bpm (used for description; target is Z2)
             hr_max: Maximum heart rate in bpm (used for description; target is Z2)
@@ -539,6 +779,7 @@ def register_tools(app):
 
         Args:
             name: Workout name
+                Max 256 characters: Garmin SILENTLY TRUNCATES longer names.
             exercises: List of dicts with keys: name, sets, reps, rest_seconds and an
                 optional category. Category is omitted from the payload when not
                 given; Garmin accepts that. When given it must be one of Garmin's
@@ -572,22 +813,42 @@ def register_tools(app):
         reported as already scheduled and the POST is skipped (avoids
         duplicating calendar entries).
 
+        Each entry is handled on its own: an invalid or failing entry is
+        reported with status "failed" or "error" and the rest still run.
+
         Args:
             week: List of dicts with keys: date (YYYY-MM-DD), workout_id (int)
         """
         # Imported here (not at module top) to avoid any import-time ordering
         # surprises between sibling modules. Both modules share the same
         # garmin_client instance via configure() in __main__.
-        from garmin_mcp.workouts import _is_already_scheduled
+        from garmin_mcp.workouts import _is_already_scheduled, _validate_date
 
-        try:
-            client = get_client(ctx)
-            results = []
-            for item in week:
-                calendar_date = item["date"]
-                workout_id = int(item["workout_id"])
+        results = []
+        for item in week:
+            calendar_date = item.get("date")
+            workout_id = item.get("workout_id")
 
-                if _is_already_scheduled(client, workout_id, calendar_date):
+            # Validate here: _is_already_scheduled swallows a bad date, which
+            # would then be POSTed to Garmin as-is.
+            try:
+                _validate_date(calendar_date, "date")
+            except ValueError as e:
+                results.append({
+                    "date": calendar_date,
+                    "workout_id": workout_id,
+                    "status": "failed",
+                    "message": str(e),
+                })
+                continue
+
+            # Handle errors per item: earlier items are already on the
+            # calendar, and losing their results invites a retry that
+            # double-books them.
+            try:
+                workout_id = int(workout_id)
+
+                if _is_already_scheduled(workout_id, calendar_date):
                     results.append({
                         "date": calendar_date,
                         "workout_id": workout_id,
@@ -596,31 +857,34 @@ def register_tools(app):
                     })
                     continue
 
-                # garminconnect raises on non-2xx; isolate each item so one
-                # failure doesn't abort scheduling the rest of the week.
-                try:
-                    client.client.post(
-                        "connectapi",
-                        f"workout-service/schedule/{workout_id}",
-                        json={"date": calendar_date},
-                    )
+                # garminconnect 0.3.2 dropped the .garth attribute; use .client.
+                url = f"workout-service/schedule/{workout_id}"
+                response = garmin_client.client.post(
+                    "connectapi", url, json={"date": calendar_date}
+                )
+                if response.status_code == 200:
                     results.append({
                         "date": calendar_date,
                         "workout_id": workout_id,
                         "status": "scheduled",
                     })
-                except Exception as e:
+                else:
                     results.append({
                         "date": calendar_date,
                         "workout_id": workout_id,
                         "status": "failed",
-                        "error": str(e),
+                        "http_status": response.status_code,
                     })
-            return json.dumps({
-                "status": "complete",
-                "scheduled": results,
-            }, indent=2)
-        except Exception as e:
-            return f"Error scheduling week: {str(e)}"
+            except Exception as e:
+                results.append({
+                    "date": calendar_date,
+                    "workout_id": workout_id,
+                    "status": "error",
+                    "message": f"Error scheduling workout: {str(e)}",
+                })
+        return json.dumps({
+            "status": "complete",
+            "scheduled": results,
+        }, indent=2)
 
     return app

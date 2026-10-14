@@ -3,6 +3,7 @@ Nutrition/food logging functions for Garmin Connect MCP Server
 """
 import datetime
 import json
+import re
 from copy import deepcopy
 from typing import Optional
 
@@ -10,6 +11,8 @@ from garminconnect import GarminConnectConnectionError
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client
+
+from garmin_mcp.write_errors import WriteTracker
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -21,6 +24,191 @@ def _num_to_str(value: float) -> str:
     Garmin's API expects integer strings like "160" not "160.0".
     """
     return str(int(value)) if value == int(value) else str(value)
+
+
+def resolve_weight_goal_target_date(stored_target, date, target_date=None):
+    """Decide which ``targetDate`` a nutrition-settings update should carry.
+
+    ``/nutrition-service/settings/{date}`` is a full-object PUT, and the object
+    it returns includes ``targetDate`` -- the *weight goal's* target, not a
+    nutrition field. Garmin validates it on write and rejects the entire
+    request unless it is after the day being written::
+
+        API Error 400 - Goal targetDate must be after the asOfDate provided.
+
+    So once a user's weight-goal target date has passed, every nutrition
+    update fails for every current or future date, with an error that names
+    neither the field nor the weight goal.
+
+    The stored value is deliberately never dropped or silently rewritten: it
+    belongs to the user's weight goal, and changing it as a side effect of a
+    calorie update would alter something they did not ask to change.
+
+    Returns ``(target_date_to_set, error)``. At most one is not ``None``; both
+    ``None`` means the stored value is valid and must be left untouched.
+    """
+    if target_date is not None:
+        try:
+            datetime.date.fromisoformat(target_date)
+        except (ValueError, TypeError):
+            return None, f"Invalid target_date {target_date!r}. Use YYYY-MM-DD."
+        if target_date <= date:
+            return None, (
+                f"target_date ({target_date}) must be after date ({date}); Garmin "
+                f"requires the weight goal's target to be later than the day being written."
+            )
+        return target_date, None
+
+    if stored_target and str(stored_target) <= date:
+        return None, (
+            f"Cannot update nutrition settings for {date}: the weight goal's targetDate "
+            f"({stored_target}) is not after {date}, and Garmin rejects the whole settings "
+            f"update in that case.\n"
+            f"Either set a new target date on the weight goal in Garmin Connect (or end the "
+            f"goal) and retry, or pass target_date=YYYY-MM-DD (after {date}) to move the "
+            f"weight goal's target date as part of this update."
+        )
+
+    return None, None
+
+
+def _extract_http_status(exc: Exception) -> Optional[int]:
+    """Return an HTTP status code from structured exception fields when available.
+
+    The installed garminconnect client sometimes raises bare
+    GarminConnectConnectionError instances with only a status-bearing message,
+    so fall back to parsing the numeric code from that stable library format.
+    """
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+
+    while pending:
+        current = pending.pop(0)
+        if current is None:
+            continue
+
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+
+        response = getattr(current, "response", None)
+        if response is not None:
+            status = getattr(response, "status_code", None)
+            if isinstance(status, int):
+                return status
+
+        error = getattr(current, "error", None)
+        error_response = getattr(error, "response", None)
+        if error_response is not None:
+            status = getattr(error_response, "status_code", None)
+            if isinstance(status, int):
+                return status
+
+        pending.append(getattr(current, "__cause__", None))
+        pending.append(getattr(current, "__context__", None))
+
+    message = str(exc)
+    match = re.search(r"\b(?:API Error|HTTP)\s+(\d{3})\b", message)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _has_http_status(exc: Exception, status_code: int) -> bool:
+    return _extract_http_status(exc) == status_code
+
+
+def _iter_exception_texts(exc: Exception) -> list[str]:
+    """Collect human-readable exception/response text for predicate matching."""
+    texts: list[str] = []
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+
+    while pending:
+        current = pending.pop(0)
+        if current is None:
+            continue
+
+        current_id = id(current)
+        if current_id in seen:
+            continue
+        seen.add(current_id)
+
+        message = str(current)
+        if message:
+            texts.append(message)
+
+        response = getattr(current, "response", None)
+        response_text = getattr(response, "text", None)
+        if isinstance(response_text, str) and response_text:
+            texts.append(response_text)
+
+        error = getattr(current, "error", None)
+        error_response = getattr(error, "response", None)
+        error_text = getattr(error_response, "text", None)
+        if isinstance(error_text, str) and error_text:
+            texts.append(error_text)
+
+        pending.append(getattr(current, "__cause__", None))
+        pending.append(getattr(current, "__context__", None))
+
+    return texts
+
+
+def _is_custom_food_unsupported_403(exc: Exception) -> bool:
+    """Return True only for the known Garmin 403 unsupported-feature response."""
+    if not _has_http_status(exc, 403):
+        return False
+
+    patterns = (
+        "custom food unsupported",
+        "custom foods unsupported",
+        "custom food not supported",
+        "custom foods not supported",
+    )
+    return any(
+        any(pattern in text.lower() for pattern in patterns)
+        for text in _iter_exception_texts(exc)
+    )
+
+
+def _response_text_from_connection_error(exc: GarminConnectConnectionError) -> str:
+    if hasattr(exc, "error") and hasattr(exc.error, "response"):
+        return getattr(exc.error.response, "text", "")
+    return ""
+
+
+_CUSTOM_FOOD_PAGE_SIZE = 20
+_CUSTOM_FOOD_MAX_SCAN = 500
+
+
+def _find_custom_food(food_id: str, food_name: str) -> Optional[dict]:
+    """Return the stored custom food with ``food_id``, or None if not found.
+
+    Garmin has no read-by-ID for custom foods, so search by ``food_name``
+    first (the usual case) and fall back to paging through the unfiltered
+    list: after a rename, the new name does not match the stored record.
+    """
+    for search in (food_name, ""):
+        for start in range(0, _CUSTOM_FOOD_MAX_SCAN, _CUSTOM_FOOD_PAGE_SIZE):
+            data = garmin_client.connectapi(
+                "/nutrition-service/customFood",
+                params={
+                    "searchExpression": search,
+                    "start": start,
+                    "limit": _CUSTOM_FOOD_PAGE_SIZE,
+                    "includeContent": "true",
+                },
+            )
+            foods = (data.get("customFoods") or []) if isinstance(data, dict) else []
+            for food in foods:
+                meta = (food.get("foodMetaData") or {}) if isinstance(food, dict) else {}
+                if str(meta.get("foodId", "")) == food_id:
+                    return food
+            if len(foods) < _CUSTOM_FOOD_PAGE_SIZE:
+                break
+    return None
 
 
 def configure(client):
@@ -168,6 +356,7 @@ def register_tools(app):
         carbs_grams: Optional[int] = None,
         fat_grams: Optional[int] = None,
         protein_grams: Optional[int] = None,
+        target_date: Optional[str] = None,
     ) -> str:
         """Update daily nutrition goals (calorie target and macronutrient targets).
 
@@ -187,16 +376,26 @@ def register_tools(app):
             carbs_grams: Daily carbohydrate target in grams
             fat_grams: Daily fat target in grams
             protein_grams: Daily protein target in grams
+            target_date: Optional new target date (YYYY-MM-DD) for the weight
+                  goal that this endpoint carries. Only needed when the stored
+                  target date has already passed, which otherwise makes Garmin
+                  reject the update; must be after `date`.
         """
         if all(v is None for v in (calorie_goal, carbs_grams, fat_grams, protein_grams)):
             return "No fields to update — supply at least one of calorie_goal, carbs_grams, fat_grams, protein_grams."
         try:
             url = f"/nutrition-service/settings/{date}"
-            client = get_client(ctx)
-            current = client.connectapi(url)
+            current = garmin_client.connectapi(url)
             if not current:
                 return f"Could not read current nutrition settings for {date} — cannot apply update."
             current = deepcopy(current)
+            new_target, target_error = resolve_weight_goal_target_date(
+                current.get("targetDate"), date, target_date
+            )
+            if target_error:
+                return target_error
+            if new_target:
+                current["targetDate"] = new_target
             if calorie_goal is not None:
                 current["calorieGoal"] = calorie_goal
             macro_overrides = {
@@ -212,11 +411,11 @@ def register_tools(app):
                     return "Could not read current macro goals — cannot apply update."
                 macros.update({key: value for key, value in macro_overrides.items() if value is not None})
                 current["macroGoals"] = macros
-            resp = client.client.put("connectapi", url, json=current, api=True)
+            resp = garmin_client.client.put("connectapi", url, json=current, api=True)
             result = resp
             if not result:
                 try:
-                    result = client.connectapi(url)
+                    result = garmin_client.connectapi(url)
                 except Exception as e:
                     return f"Nutrition update submitted, but could not verify stored settings: {e}"
             if not isinstance(result, dict) or not result:
@@ -229,6 +428,7 @@ def register_tools(app):
                 "carbs_grams": result_macros.get("carbs"),
                 "fat_grams": result_macros.get("fat"),
                 "protein_grams": result_macros.get("protein"),
+                "weight_goal_target_date": result.get("targetDate"),
             }, indent=2)
         except Exception as e:
             return f"Error updating nutrition settings: {str(e)}"
@@ -342,6 +542,8 @@ def register_tools(app):
                 return "No custom foods found."
             return json.dumps(data, indent=2)
         except Exception as e:
+            if _is_custom_food_unsupported_403(e):
+                return "No custom foods found; Garmin custom food API returned HTTP 403 Forbidden."
             return f"Error retrieving custom foods: {str(e)}"
 
     @app.tool()
@@ -358,6 +560,8 @@ def register_tools(app):
                 return "No serving units found."
             return json.dumps(data, indent=2)
         except Exception as e:
+            if _is_custom_food_unsupported_403(e):
+                return "No serving units found; Garmin custom food API returned HTTP 403 Forbidden."
             return f"Error retrieving serving units: {str(e)}"
 
     @app.tool()
@@ -461,9 +665,7 @@ def register_tools(app):
                 return "Custom food created (no response data returned)."
             return json.dumps(resp, indent=2)
         except GarminConnectConnectionError as e:
-            body = ""
-            if hasattr(e, "error") and hasattr(e.error, "response"):
-                body = getattr(e.error.response, "text", "")
+            body = _response_text_from_connection_error(e)
             return f"Error creating custom food: {e} | Response: {body}"
         except Exception as e:
             return f"Error creating custom food: {str(e)}"
@@ -475,8 +677,8 @@ def register_tools(app):
         serving_id: str,
         food_name: str,
         calories: float,
-        serving_unit: str = "G",
-        number_of_units: float = 100,
+        serving_unit: Optional[str] = None,
+        number_of_units: Optional[float] = None,
         brand_name: Optional[str] = None,
         carbs: Optional[float] = None,
         protein: Optional[float] = None,
@@ -494,10 +696,16 @@ def register_tools(app):
     ) -> str:
         """Update an existing custom food in the user's Garmin nutrition library
 
-        Fetches the food's current record before writing so that omitted optional
-        fields (brand, carbs, protein, fat, micros, etc.) preserve their existing
-        values rather than being cleared. Only the fields you explicitly pass are
-        changed; everything else is carried forward from the current record.
+        Fetches the food's current record (by food_id, so renaming is safe)
+        before writing so that omitted optional fields (brand, carbs, protein,
+        fat, micros, etc.) preserve their existing values rather than being
+        cleared. Only the fields you explicitly pass are changed; everything
+        else is carried forward from the current record.
+
+        Garmin replaces the whole record on update. If the current record
+        cannot be read, the update is refused unless serving_unit and
+        number_of_units are given; the call then replaces the record in full,
+        and any brand or nutrient you omit is cleared.
 
         All nutrient amounts are ABSOLUTE values per serving, not %DV.
         Nutrition labels often print %DV for calcium/iron/vitamin D —
@@ -510,8 +718,10 @@ def register_tools(app):
             serving_id: Serving ID of the food (from get_custom_foods)
             food_name: Name of the custom food
             calories: Calories per serving
-            serving_unit: Unit for serving size (e.g. "G", "ML", "OZ"). Default "G"
-            number_of_units: Serving size in the specified unit. Default 100
+            serving_unit: Unit for serving size (e.g. "G", "ML", "OZ");
+                omit to preserve the existing value
+            number_of_units: Serving size in the specified unit;
+                omit to preserve the existing value
             brand_name: Brand or vendor name; omit to preserve the existing value
             carbs: Carbohydrates in grams per serving
             protein: Protein in grams per serving
@@ -529,26 +739,26 @@ def register_tools(app):
         """
         try:
             # Fetch current record so omitted fields are preserved (not wiped).
-            existing_nutrition: dict = {}
-            existing_brand: Optional[str] = None
             try:
-                search_data = garmin_client.connectapi(
-                    "/nutrition-service/customFood",
-                    params={
-                        "searchExpression": food_name,
-                        "start": 0,
-                        "limit": 20,
-                        "includeContent": "true",
-                    },
-                )
-                foods = search_data.get("customFoods", []) if isinstance(search_data, dict) else []
-                for f in foods:
-                    if str(f.get("foodMetaData", {}).get("foodId", "")) == food_id:
-                        existing_nutrition = (f.get("nutritionContents") or [{}])[0]
-                        existing_brand = f.get("foodMetaData", {}).get("brandName")
-                        break
+                existing = _find_custom_food(food_id, food_name)
             except Exception:
-                pass  # proceed without existing data; caller's values win
+                existing = None
+            if existing is None and (serving_unit is None or number_of_units is None):
+                # The PUT is a full replace: writing without the stored record
+                # would silently wipe the brand, nutrients and serving size.
+                return (
+                    f"Error updating custom food: could not read the current record "
+                    f"for food_id {food_id}, so omitted fields cannot be preserved. "
+                    "Check the food_id with get_custom_foods, or pass serving_unit "
+                    "and number_of_units (plus every nutrient and brand to keep) to "
+                    "replace the record in full."
+                )
+            existing_nutrition: dict = (
+                ((existing or {}).get("nutritionContents") or [{}])[0] or {}
+            )
+            existing_brand: Optional[str] = (
+                (existing or {}).get("foodMetaData") or {}
+            ).get("brandName")
 
             # API field name → optional param value (None means "not supplied by caller")
             optional_updates = {
@@ -566,10 +776,19 @@ def register_tools(app):
                 "iron": iron,
                 "vitaminD": vitamin_d,
             }
+            # Effective serving basis: caller-supplied wins, else preserve existing,
+            # else fall back to the create-time defaults (stored record lacks them).
+            effective_serving_unit = serving_unit
+            if effective_serving_unit is None:
+                effective_serving_unit = existing_nutrition.get("servingUnit", "G")
+            effective_number_of_units = number_of_units
+            if effective_number_of_units is None:
+                effective_number_of_units = existing_nutrition.get("numberOfUnits", 100)
+
             nutrition: dict = {
                 "servingId": serving_id,
-                "servingUnit": serving_unit,
-                "numberOfUnits": _num_to_str(number_of_units),
+                "servingUnit": effective_serving_unit,
+                "numberOfUnits": _num_to_str(effective_number_of_units),
                 "calories": _num_to_str(calories),
             }
             # Carry forward existing optional fields, then overlay caller-supplied values.
@@ -607,9 +826,7 @@ def register_tools(app):
                 return "Custom food updated (no response data returned)."
             return json.dumps(resp, indent=2)
         except GarminConnectConnectionError as e:
-            body = ""
-            if hasattr(e, "error") and hasattr(e.error, "response"):
-                body = getattr(e.error.response, "text", "")
+            body = _response_text_from_connection_error(e)
             return f"Error updating custom food: {e} | Response: {body}"
         except Exception as e:
             return f"Error updating custom food: {str(e)}"
@@ -618,9 +835,19 @@ def register_tools(app):
     async def delete_custom_food(ctx: Context, food_id: str) -> str:
         """Delete a custom food from the user's Garmin nutrition library
 
-        Permanently removes a custom food entry. The food must not be
-        actively referenced in a logged meal to be deleted.
-        Use get_custom_foods to find the foodId.
+        Permanently removes a custom food entry — this cannot be undone and
+        the deleted food's name/brand/nutrition data cannot be recovered from
+        the API afterward. Confirm the foodId is correct before calling.
+
+        Deleting a food does NOT require it to be unreferenced: existing food
+        log entries that already reference this food are NOT blocked or
+        removed — they remain in the log (their nutrition still counts toward
+        daily totals) but are marked inactive (foodInactive: true) and can no
+        longer be edited/re-logged from the library.
+
+        Use get_custom_foods to find the foodId, and match on the exact
+        foodId (not just a name search) — Garmin's search can return loosely
+        related results for a given search term, not just exact matches.
 
         Args:
             food_id: ID of the custom food to delete — a 32-char hex string
@@ -677,12 +904,12 @@ def register_tools(app):
             serving_qty: Number of servings (default 1)
             source: Food namespace — "GARMIN" (default) or "FATSECRET"
         """
+        tracker = WriteTracker("log_custom_food", "Error logging food")
         try:
             from datetime import datetime, timezone
 
-            client = get_client(ctx)
             meals_url = f"/nutrition-service/meals/{meal_date}"
-            meals_data = client.connectapi(meals_url)
+            meals_data = garmin_client.connectapi(meals_url)
             meals = (meals_data or {}).get("meals", [])
 
             meal_id = None
@@ -695,7 +922,7 @@ def register_tools(app):
             if meal_id is None:
                 snacks = next((m for m in meals if m.get("mealName") == "SNACKS"), None)
                 if snacks is None:
-                    return f"Error logging food: could not match meal for time '{meal_time}' and no SNACKS meal found."
+                    return f"No nutrition meal windows found for {meal_date}; cannot log custom food at '{meal_time}'."
                 meal_id = snacks["mealId"]
 
             log_timestamp = datetime.now(timezone.utc).strftime(
@@ -721,19 +948,16 @@ def register_tools(app):
                 ],
             }
             url = "/nutrition-service/food/logs"
-            resp = client.client.put(
+            tracker.sending()
+            resp = garmin_client.client.put(
                 "connectapi", url, json=payload, api=True
             )
+            tracker.committed()
             if not resp:
                 return "Food logged successfully."
             return json.dumps(resp, indent=2)
-        except GarminConnectConnectionError as e:
-            body = ""
-            if hasattr(e, "error") and hasattr(e.error, "response"):
-                body = getattr(e.error.response, "text", "")
-            return f"Error logging food: {e} | Response: {body}"
         except Exception as e:
-            return f"Error logging food: {str(e)}"
+            return tracker.error(e)
 
     @app.tool()
     async def log_food(
@@ -762,12 +986,12 @@ def register_tools(app):
             fat: Fat in grams
             meal_time: Time in HH:MM:SS format (account timezone)
         """
+        tracker = WriteTracker("log_food", "Error logging food")
         try:
             from datetime import datetime, timezone
 
-            client = get_client(ctx)
             meals_url = f"/nutrition-service/meals/{meal_date}"
-            meals_data = client.connectapi(meals_url)
+            meals_data = garmin_client.connectapi(meals_url)
             meals = (meals_data or {}).get("meals", [])
 
             # Match meal_time against startTime/endTime windows; fall back to SNACKS
@@ -781,7 +1005,7 @@ def register_tools(app):
             if meal_id is None:
                 snacks = next((m for m in meals if m.get("mealName") == "SNACKS"), None)
                 if snacks is None:
-                    return f"Error logging food: could not match meal for time '{meal_time}' and no SNACKS meal found."
+                    return f"No nutrition meal windows found for {meal_date}; cannot log food at '{meal_time}'."
                 meal_id = snacks["mealId"]
 
             now = datetime.now(timezone.utc)
@@ -806,19 +1030,16 @@ def register_tools(app):
                 ],
             }
             url = "/nutrition-service/food/logs/quickAdd"
-            resp = client.client.put(
+            tracker.sending()
+            resp = garmin_client.client.put(
                 "connectapi", url, json=payload, api=True
             )
+            tracker.committed()
             if not resp:
                 return "Food logged successfully."
             return json.dumps(resp, indent=2)
-        except GarminConnectConnectionError as e:
-            body = ""
-            if hasattr(e, "error") and hasattr(e.error, "response"):
-                body = getattr(e.error.response, "text", "")
-            return f"Error logging food: {e} | Response: {body}"
         except Exception as e:
-            return f"Error logging food: {str(e)}"
+            return tracker.error(e)
 
     @app.tool()
     async def delete_food_log(ctx: Context, log_id: str, meal_date: str) -> str:
@@ -833,17 +1054,26 @@ def register_tools(app):
                 (from get_nutrition_daily_food_log)
             meal_date: Date of the log entry in YYYY-MM-DD format
         """
+        tracker = WriteTracker("delete_food_log", "Error deleting food log")
         try:
             url = f"/nutrition-service/food/logs/{meal_date}"
-            get_client(ctx).client.delete("connectapi", url, json={"logIds": [log_id]}, api=True)
+            tracker.sending()
+            garmin_client.client.delete("connectapi", url, json={"logIds": [log_id]}, api=True)
+            tracker.committed()
             return json.dumps({"status": "success", "log_id": log_id, "message": f"Food log entry {log_id} deleted successfully."}, indent=2)
         except GarminConnectConnectionError as e:
-            body = ""
-            if hasattr(e, "error") and hasattr(e.error, "response"):
-                body = getattr(e.error.response, "text", "")
-            return f"Error deleting food log: {e} | Response: {body}"
+            if _has_http_status(e, 404):
+                return json.dumps(
+                    {
+                        "status": "not_found",
+                        "log_id": log_id,
+                        "message": f"Food log entry {log_id} was not found.",
+                    },
+                    indent=2,
+                )
+            return tracker.error(e)
         except Exception as e:
-            return f"Error deleting food log: {str(e)}"
+            return tracker.error(e)
 
     @app.tool()
     async def upsert_and_log(
@@ -855,6 +1085,7 @@ def register_tools(app):
         carbs: Optional[float] = None,
         protein: Optional[float] = None,
         fat: Optional[float] = None,
+        brand_name: Optional[str] = None,
         serving_unit: str = "G",
         number_of_units: float = 100,
         serving_qty: float = 1,
@@ -866,23 +1097,35 @@ def register_tools(app):
         data and then logs it. This avoids duplicate food entries and removes
         the need for separate search → create → log round-trips.
 
+        Matching is by food_name alone (case-insensitive) — brand_name never
+        affects find-or-create lookup, so it can't cause a duplicate by missing
+        an existing unbranded record. If an existing match is found, it is
+        logged as stored, using its first serving: calories, carbs, protein,
+        fat, brand_name, serving_unit and number_of_units are all ignored and
+        the stored food is not changed; only serving_qty applies. Those values
+        only take effect when creating a new food. To change an existing
+        food's nutrition, serving size or brand, use update_custom_food.
+
         Args:
             meal_date: Date in YYYY-MM-DD format
             meal_time: Time in HH:MM:SS format (account timezone); used to
                 determine the meal automatically
             food_name: Name of the food to find or create
-            calories: Calories per serving
-            carbs: Carbohydrates in grams per serving
-            protein: Protein in grams per serving
-            fat: Total fat in grams per serving
+            calories: Calories per serving (new food only)
+            carbs: Carbohydrates in grams per serving (new food only)
+            protein: Protein in grams per serving (new food only)
+            fat: Total fat in grams per serving (new food only)
+            brand_name: Brand or vendor name (new food only)
             serving_unit: Unit for serving size (e.g. "G", "ML", "OZ"). Default "G"
+                (new food only)
             number_of_units: Serving size in the specified unit. Default 100
+                (new food only)
             serving_qty: Number of servings to log (default 1)
         """
+        tracker = WriteTracker("upsert_and_log", "Error in upsert_and_log")
         try:
             from datetime import datetime, timezone
 
-            client = get_client(ctx)
             # 1. Search for existing custom food
             search_data = garmin_client.connectapi(
                 "/nutrition-service/customFood",
@@ -893,13 +1136,15 @@ def register_tools(app):
                     "includeContent": "true",
                 },
             )
-            foods = search_data.get("customFoods", []) if isinstance(search_data, dict) else []
+            foods = (search_data.get("customFoods") or []) if isinstance(search_data, dict) else []
 
             food_id = None
             serving_id = None
+            created = False
             for f in foods:
-                meta = f.get("foodMetaData", f)
-                name_match = meta.get("foodName", "").lower() == food_name.lower()
+                # `or`: Garmin can return explicit nulls, which .get defaults miss.
+                meta = f.get("foodMetaData") or f
+                name_match = (meta.get("foodName") or "").lower() == food_name.lower()
                 if name_match:
                     food_id = str(meta.get("foodId") or f.get("foodId", ""))
                     contents = f.get("nutritionContents", [])
@@ -918,22 +1163,28 @@ def register_tools(app):
                 for key, value in optional_fields.items():
                     if value is not None:
                         nutrition[key] = _num_to_str(value)
+                food_meta: dict = {
+                    "foodName": food_name,
+                    "foodType": "GENERIC",
+                    "source": "GARMIN",
+                    "regionCode": "US",
+                    "languageCode": "en",
+                }
+                if brand_name is not None:
+                    food_meta["brandName"] = brand_name
                 create_payload = {
-                    "foodMetaData": {
-                        "foodName": food_name,
-                        "foodType": "GENERIC",
-                        "source": "GARMIN",
-                        "regionCode": "US",
-                        "languageCode": "en",
-                    },
+                    "foodMetaData": food_meta,
                     "nutritionContents": [nutrition],
                 }
-                create_resp = client.client.put(
+                tracker.sending()
+                create_resp = garmin_client.client.put(
                     "connectapi", "/nutrition-service/customFood", json=create_payload, api=True
                 )
+                tracker.committed()
+                created = True
                 # api=True means create_resp is already a parsed dict; errors raise GarminConnectConnectionError.
                 if create_resp:  # non-empty: response body contains foodId/servingId
-                    meta = create_resp.get("foodMetaData", create_resp)
+                    meta = create_resp.get("foodMetaData") or create_resp
                     food_id = str(meta.get("foodId", ""))
                     contents = create_resp.get("nutritionContents", [])
                     if contents:
@@ -949,10 +1200,10 @@ def register_tools(app):
                             "includeContent": "true",
                         },
                     )
-                    lookup_foods = lookup_data.get("customFoods", []) if isinstance(lookup_data, dict) else []
+                    lookup_foods = (lookup_data.get("customFoods") or []) if isinstance(lookup_data, dict) else []
                     for f in lookup_foods:
-                        meta = f.get("foodMetaData", f)
-                        if meta.get("foodName", "").lower() == food_name.lower():
+                        meta = f.get("foodMetaData") or f
+                        if (meta.get("foodName") or "").lower() == food_name.lower():
                             food_id = str(meta.get("foodId") or f.get("foodId", ""))
                             contents = f.get("nutritionContents", [])
                             if contents:
@@ -961,8 +1212,18 @@ def register_tools(app):
                 if not food_id or not serving_id:
                     return f"Error: could not retrieve foodId/servingId for '{food_name}' after creation."
 
+            # The log is a second write: track it on its own so a failure from
+            # here on reports whether the log landed, not the create. A retry
+            # finds a food created above by name, so it is not duplicated.
+            tracker = WriteTracker(
+                "upsert_and_log",
+                f"Error in upsert_and_log (custom food {food_id} was created)"
+                if created
+                else "Error in upsert_and_log",
+            )
+
             # 3. Resolve meal_id from meal_time
-            meals_data = client.connectapi(f"/nutrition-service/meals/{meal_date}")
+            meals_data = garmin_client.connectapi(f"/nutrition-service/meals/{meal_date}")
             meals = (meals_data or {}).get("meals", [])
             meal_id = None
             for m in meals:
@@ -974,7 +1235,7 @@ def register_tools(app):
             if meal_id is None:
                 snacks = next((m for m in meals if m.get("mealName") == "SNACKS"), None)
                 if snacks is None:
-                    return f"Error logging food: could not match meal for time '{meal_time}' and no SNACKS meal found."
+                    return f"No nutrition meal windows found for {meal_date}; cannot log food at '{meal_time}'."
                 meal_id = snacks["mealId"]
 
             # 4. Log
@@ -998,18 +1259,15 @@ def register_tools(app):
                     }
                 ],
             }
-            log_resp = client.client.put(
+            tracker.sending()
+            log_resp = garmin_client.client.put(
                 "connectapi", "/nutrition-service/food/logs", json=log_payload, api=True
             )
+            tracker.committed()
             if not log_resp:
                 return "Food logged successfully."
             return json.dumps(log_resp, indent=2)
-        except GarminConnectConnectionError as e:
-            body = ""
-            if hasattr(e, "error") and hasattr(e.error, "response"):
-                body = getattr(e.error.response, "text", "")
-            return f"Error in upsert_and_log: {e} | Response: {body}"
         except Exception as e:
-            return f"Error in upsert_and_log: {str(e)}"
+            return tracker.error(e)
 
     return app

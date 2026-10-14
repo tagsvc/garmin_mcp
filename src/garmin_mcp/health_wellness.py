@@ -17,6 +17,220 @@ def configure(client):
     garmin_client = client
 
 
+def _as_snapshot_list(payload: Any) -> List[Dict[str, Any]]:
+    """Normalize training-readiness payloads to a list of dicts."""
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        return [payload]
+    return []
+
+
+def _recovery_state(remaining_hours: Optional[float], phrase: Any) -> str:
+    """Map remaining hours / Garmin change phrase to a coarse state."""
+    if phrase == "REACHED_ZERO" or remaining_hours == 0:
+        return "recovered"
+    if remaining_hours is None:
+        return "unknown"
+    if remaining_hours <= 6:
+        return "nearly_recovered"
+    if remaining_hours <= 24:
+        return "recovering"
+    return "not_recovered"
+
+
+def _hours_from_recovery_minutes(minutes: Any, phrase: Any = None) -> Optional[float]:
+    """Convert Garmin recovery minutes to hours.
+
+    When ``recoveryTimeChangePhrase`` is ``REACHED_ZERO``, Garmin keeps the last
+    assigned minute value even though the clock has drained to zero.
+    """
+    if phrase == "REACHED_ZERO":
+        return 0.0
+    if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
+        return None
+    if minutes < 0:
+        return None
+    return round(float(minutes) / 60.0, 1)
+
+
+def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, Any]]:
+    """Build a recovery-time payload from training-readiness snapshots."""
+    snapshots = _as_snapshot_list(payload)
+    if not snapshots:
+        return None
+    latest = max(
+        snapshots,
+        key=lambda item: str(item.get("timestampLocal") or item.get("timestamp") or ""),
+    )
+    phrase = latest.get("recoveryTimeChangePhrase")
+    hours = _hours_from_recovery_minutes(latest.get("recoveryTime"), phrase)
+    if hours is None:
+        return None
+    score = latest.get("score")
+    if score is None:
+        score = latest.get("readinessScore")
+    curated = {
+        "remaining_hours": hours,
+        "recovery_score": score,
+        "state": _recovery_state(hours, phrase),
+        "source": source,
+        "date": latest.get("calendarDate"),
+        "timestamp": latest.get("timestampLocal") or latest.get("timestamp"),
+        "change_phrase": phrase,
+        "level": latest.get("level") or latest.get("readinessLevel"),
+    }
+    return {key: value for key, value in curated.items() if value is not None}
+
+
+def _curate_training_readiness(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Curate one training-readiness snapshot.
+
+    Shared by get_training_readiness and get_morning_training_readiness:
+    garminconnect's get_morning_training_readiness returns one entry of the
+    same payload (the AFTER_WAKEUP_RESET snapshot), not a different shape.
+    """
+    entry = {
+        "date": r.get('calendarDate'),
+        "timestamp": r.get('timestampLocal'),
+        "context": r.get('inputContext'),
+
+        # Overall readiness
+        "level": r.get('level'),
+        "score": r.get('score'),
+        "feedback": r.get('feedbackShort'),
+
+        # Contributing factors
+        "sleep_score": r.get('sleepScore'),
+        "sleep_factor_percent": r.get('sleepScoreFactorPercent'),
+        "sleep_factor_feedback": r.get('sleepScoreFactorFeedback'),
+
+        "recovery_time_hours": _hours_from_recovery_minutes(
+            r.get('recoveryTime'), r.get('recoveryTimeChangePhrase')
+        ),
+        "recovery_factor_percent": r.get('recoveryTimeFactorPercent'),
+        "recovery_factor_feedback": r.get('recoveryTimeFactorFeedback'),
+
+        "training_load_factor_percent": r.get('acwrFactorPercent'),
+        "training_load_feedback": r.get('acwrFactorFeedback'),
+        "acute_load": r.get('acuteLoad'),
+
+        "hrv_factor_percent": r.get('hrvFactorPercent'),
+        "hrv_factor_feedback": r.get('hrvFactorFeedback'),
+        "hrv_weekly_avg": r.get('hrvWeeklyAverage'),
+
+        "stress_history_factor_percent": r.get('stressHistoryFactorPercent'),
+        "stress_history_feedback": r.get('stressHistoryFactorFeedback'),
+
+        "sleep_history_factor_percent": r.get('sleepHistoryFactorPercent'),
+        "sleep_history_feedback": r.get('sleepHistoryFactorFeedback'),
+    }
+    # Remove None values
+    return {k: v for k, v in entry.items() if v is not None}
+
+
+def _activity_end_utc(activity: Dict[str, Any]) -> Optional[datetime.datetime]:
+    """Estimate activity end time from list-search fields."""
+    begin = activity.get("beginTimestamp")
+    duration = activity.get("duration") or activity.get("elapsedDuration") or 0
+    try:
+        duration_s = float(duration)
+    except (TypeError, ValueError):
+        duration_s = 0.0
+    if isinstance(begin, (int, float)) and not isinstance(begin, bool) and begin > 0:
+        start = datetime.datetime.fromtimestamp(begin / 1000.0, tz=datetime.timezone.utc)
+        return start + datetime.timedelta(seconds=duration_s)
+    return None
+
+
+def _recovery_from_recent_activities(
+    client: Any, now: datetime.datetime
+) -> Optional[Dict[str, Any]]:
+    """Decay activity-assigned recoveryTime when Training Readiness is absent."""
+    get_activities = getattr(client, "get_activities", None)
+    if not callable(get_activities):
+        return None
+    try:
+        items = get_activities(0, 20)
+    except Exception:
+        return None
+    if not isinstance(items, list):
+        return None
+
+    best: Optional[Dict[str, Any]] = None
+    best_end: Optional[datetime.datetime] = None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        recovery = item.get("recoveryTime")
+        if isinstance(recovery, bool) or not isinstance(recovery, (int, float)):
+            continue
+        end = _activity_end_utc(item)
+        if end is None:
+            continue
+        elapsed_min = max(0.0, (now - end).total_seconds() / 60.0)
+        remaining_hours = round(max(0.0, float(recovery) - elapsed_min) / 60.0, 1)
+        if best_end is None or end > best_end:
+            best_end = end
+            best = {
+                "remaining_hours": remaining_hours,
+                "recovery_score": None,
+                "state": _recovery_state(remaining_hours, None),
+                "source": "recent_activity",
+                "activity_id": item.get("activityId"),
+                "activity_name": item.get("activityName"),
+            }
+    if best is None:
+        return None
+    return {key: value for key, value in best.items() if value is not None}
+
+
+def _safe_call(fn: Any, *args: Any) -> Any:
+    try:
+        return fn(*args)
+    except Exception:
+        return None
+
+
+def _collect_recovery_time(
+    client: Any, date_str: str, now: Optional[datetime.datetime] = None
+) -> Dict[str, Any]:
+    """Resolve daily recovery-time remaining from readiness, then activities."""
+    readiness = _safe_call(getattr(client, "get_training_readiness", None), date_str)
+    curated = _recovery_from_readiness(readiness, "training_readiness")
+    if curated:
+        curated.setdefault("date", date_str)
+        return curated
+
+    morning = _safe_call(
+        getattr(client, "get_morning_training_readiness", None), date_str
+    )
+    curated = _recovery_from_readiness(morning, "morning_training_readiness")
+    if curated:
+        curated.setdefault("date", date_str)
+        return curated
+
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    curated = _recovery_from_recent_activities(client, now)
+    if curated:
+        curated.setdefault("date", date_str)
+        return curated
+
+    return {
+        "remaining_hours": None,
+        "recovery_score": None,
+        "state": "unavailable",
+        "date": date_str,
+        "message": (
+            "No recovery time remaining found for this date. Training Readiness "
+            "snapshots were empty and recent activities did not include recoveryTime. "
+            "Some devices (for example Forerunner 255) show recovery on-device without "
+            "publishing a Connect Training Readiness feed."
+        ),
+    }
+
+
 def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
     """Curate a single night's raw Garmin sleep payload down to essential metrics.
 
@@ -212,16 +426,15 @@ def _body_comp_gate_failure(xs: List[float]) -> Optional[str]:
     leverages = [1 / n + (x - mean_x) ** 2 / sxx for x in xs]
     total_leverage = sum(leverages)  # == 2 for a 2-parameter fit
 
-    # Cluster readings whose day-offsets sit within 2 days of a neighbor.
-    order = sorted(range(n), key=lambda i: xs[i])
-    clusters: List[List[int]] = []
-    for idx in order:
-        if clusters and xs[idx] - xs[clusters[-1][-1]] <= 2:
-            clusters[-1].append(idx)
-        else:
-            clusters.append([idx])
-
-    max_cluster_leverage = max(sum(leverages[i] for i in c) for c in clusters)
+    # A cluster is every reading within 2 days of the cluster's first
+    # (earliest) reading, tried from each reading in turn. Anchoring to the
+    # first reading rather than chaining neighbor-to-neighbor keeps regular
+    # daily or every-other-day weigh-ins from merging into one cluster that
+    # spans the whole window.
+    max_cluster_leverage = max(
+        sum(lev for x, lev in zip(xs, leverages) if 0 <= x - anchor <= 2)
+        for anchor in xs
+    )
     if max_cluster_leverage > total_leverage / 2:
         return (
             f"a single cluster of readings within 48h of each other accounts for "
@@ -791,44 +1004,7 @@ def register_tools(app):
                 return f"No training readiness data found for {date}"
 
             # Curate each readiness entry (usually 1-2 per day)
-            curated = []
-            for r in readiness_list:
-                entry = {
-                    "date": r.get('calendarDate'),
-                    "timestamp": r.get('timestampLocal'),
-                    "context": r.get('inputContext'),
-
-                    # Overall readiness
-                    "level": r.get('level'),
-                    "score": r.get('score'),
-                    "feedback": r.get('feedbackShort'),
-
-                    # Contributing factors
-                    "sleep_score": r.get('sleepScore'),
-                    "sleep_factor_percent": r.get('sleepScoreFactorPercent'),
-                    "sleep_factor_feedback": r.get('sleepScoreFactorFeedback'),
-
-                    "recovery_time_hours": round(r.get('recoveryTime', 0) / 60, 1) if r.get('recoveryTime') else None,
-                    "recovery_factor_percent": r.get('recoveryTimeFactorPercent'),
-                    "recovery_factor_feedback": r.get('recoveryTimeFactorFeedback'),
-
-                    "training_load_factor_percent": r.get('acwrFactorPercent'),
-                    "training_load_feedback": r.get('acwrFactorFeedback'),
-                    "acute_load": r.get('acuteLoad'),
-
-                    "hrv_factor_percent": r.get('hrvFactorPercent'),
-                    "hrv_factor_feedback": r.get('hrvFactorFeedback'),
-                    "hrv_weekly_avg": r.get('hrvWeeklyAverage'),
-
-                    "stress_history_factor_percent": r.get('stressHistoryFactorPercent'),
-                    "stress_history_feedback": r.get('stressHistoryFactorFeedback'),
-
-                    "sleep_history_factor_percent": r.get('sleepHistoryFactorPercent'),
-                    "sleep_history_feedback": r.get('sleepHistoryFactorFeedback'),
-                }
-                # Remove None values
-                entry = {k: v for k, v in entry.items() if v is not None}
-                curated.append(entry)
+            curated = [_curate_training_readiness(r) for r in readiness_list]
 
             return json.dumps(curated, indent=2)
         except Exception as e:
@@ -1407,7 +1583,10 @@ def register_tools(app):
         """Get weekly intensity minutes data aggregates
 
         Returns weekly intensity minutes (moderate and vigorous) for the specified
-        number of weeks ending at end_date.
+        number of weeks ending at end_date. total_minutes counts each vigorous
+        minute twice (moderate + 2 x vigorous), as Garmin does, so it is the
+        figure to compare against weekly_goal; moderate_minutes and
+        vigorous_minutes are the raw, unweighted minutes.
 
         Args:
             end_date: End date in YYYY-MM-DD format
@@ -1437,7 +1616,7 @@ def register_tools(app):
                 # Calculate total intensity minutes (vigorous counts double per WHO guidelines)
                 moderate = week.get("moderateValue") or 0
                 vigorous = week.get("vigorousValue") or 0
-                week_entry["total_minutes"] = moderate + vigorous
+                week_entry["total_minutes"] = moderate + 2 * vigorous
 
                 # Remove None values
                 week_entry = {k: v for k, v in week_entry.items() if v is not None}
@@ -1464,6 +1643,8 @@ def register_tools(app):
 
         Returns the morning training readiness assessment, which evaluates
         recovery status and readiness to train based on overnight metrics.
+        Fields match one get_training_readiness entry (the snapshot taken
+        right after waking).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1473,27 +1654,9 @@ def register_tools(app):
             if not readiness:
                 return f"No morning training readiness data found for {date}"
 
-            # Curate the morning training readiness data
-            curated = {
-                "date": date,
-                "readiness_score": readiness.get('readinessScore'),
-                "readiness_level": readiness.get('readinessLevel'),
-                "recovery_time_hours": round(readiness.get('recoveryTime', 0) / 60, 1) if readiness.get('recoveryTime') is not None else None,
-                "hrv_status": readiness.get('hrvStatus'),
-                "sleep_quality": readiness.get('sleepQuality'),
-                "sleep_score": readiness.get('sleepScore'),
-                "resting_heart_rate_bpm": readiness.get('restingHeartRate'),
-                "hrv_baseline": readiness.get('hrvBaseline'),
-                "hrv_last_night": readiness.get('hrvLastNight'),
-                "body_battery_percent": readiness.get('bodyBattery'),
-                "stress_level": readiness.get('stressLevel'),
-                "training_load_balance": readiness.get('trainingLoadBalance'),
-                "acute_load": readiness.get('acuteLoad'),
-                "chronic_load": readiness.get('chronicLoad'),
-            }
-
-            # Remove None values
-            curated = {k: v for k, v in curated.items() if v is not None}
+            # Same entry shape as get_training_readiness, so curate it the same way
+            curated = _curate_training_readiness(readiness)
+            curated.setdefault("date", date)
 
             return json.dumps(curated, indent=2)
         except Exception as e:
@@ -1613,5 +1776,30 @@ def register_tools(app):
             return json.dumps(curated_days, indent=2)
         except Exception as e:
             return f"Error retrieving health status range: {str(e)}"
+
+    @app.tool()
+    async def get_recovery_time_remaining(date: str = "") -> str:
+        """Get remaining recovery time in hours for a day.
+
+        This is the Firstbeat recovery clock shown on-device, distinct from
+        Training Readiness score (missing on some devices such as Forerunner 255)
+        and from Training Status ACWR. When Training Readiness snapshots exist
+        they are the current remaining value. Otherwise the tool decays
+        recoveryTime assigned on recent activities.
+
+        Args:
+            date: Date in YYYY-MM-DD format. Defaults to today.
+        """
+        try:
+            date = (date or "").strip() or datetime.date.today().isoformat()
+            datetime.datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            return f"Invalid date {date!r}. Use YYYY-MM-DD."
+
+        try:
+            curated = _collect_recovery_time(garmin_client, date)
+            return json.dumps(curated, indent=2)
+        except Exception as e:
+            return f"Error retrieving recovery time remaining: {str(e)}"
 
     return app

@@ -1,6 +1,8 @@
 """Regression tests for the Desktop Extension manifest."""
 
+import asyncio
 import json
+import sys
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -8,6 +10,7 @@ from zipfile import ZipFile
 REPO_ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = REPO_ROOT / "dxt" / "manifest.json"
 BUNDLE_PATH = REPO_ROOT / "garmin-mcp.dxt"
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 
 def _read_manifest():
@@ -35,3 +38,29 @@ def test_bundled_manifest_matches_source_manifest():
         bundled_manifest = json.loads(bundle.read("manifest.json"))
 
     assert bundled_manifest == manifest
+
+
+def test_tools_list_matches_registered_tools():
+    """The manifest's tools list must track the server's actual tool set (#340)."""
+    from generate_dxt_tools import _collect_tools
+
+    manifest = _read_manifest()
+    assert manifest["tools"] == asyncio.run(_collect_tools())
+
+
+def test_generator_modules_match_stdio_registration():
+    """FORK: the generator's MODULES must be main()'s registrations, in order.
+
+    test_tools_list_matches_registered_tools compares the manifest against the
+    generator, so both read the same hand-kept MODULES list and a module missing
+    from it is invisible to that test. This one compares MODULES against the
+    register_tools() calls in garmin_mcp/__init__.py instead.
+    """
+    import re
+
+    from generate_dxt_tools import MODULES
+
+    init_src = (REPO_ROOT / "src" / "garmin_mcp" / "__init__.py").read_text()
+    registered = re.findall(r"app = (\w+)\.register_tools\(app\)", init_src)
+    assert registered, "found no register_tools() calls in __init__.py"
+    assert [m.__name__.rsplit(".", 1)[1] for m in MODULES] == registered
