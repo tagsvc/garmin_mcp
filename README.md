@@ -8,7 +8,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 - List recent activities with pagination support
 - Get detailed activity information
-- Edit activities: name, type, description/notes, event type, perceived effort (RPE), and feel
+- Edit activities: name, type, description/notes, event type, perceived effort (RPE), feel, and strength exercise sets
 - Access health metrics (steps, heart rate, sleep, stress, respiration)
 - View body composition data
 - Track training status and readiness
@@ -24,10 +24,10 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~168 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
+This MCP server implements **~172 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
 
-- ✅ Activity Management (21 tools) - includes write tools for type, description, event type, perceived effort, and feel
-- ✅ Health & Wellness (34 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, and a composition-derived TDEE estimate
+- ✅ Activity Management (23 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only)
+- ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining
 - ✅ Training & Performance (18 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
 - ✅ Workouts (17 tools) - Garmin Coach plan listing, detail (race goal, confidence, training week) and per-workout grades
 - ✅ Devices (7 tools) - includes paired-sensor battery levels
@@ -39,7 +39,7 @@ This MCP server implements **~168 tools** covering ~90% of the [python-garmincon
 - ✅ Women's Health (3 tools)
 - ✅ Calendar (1 tool) - races and events from the Garmin calendar
 - ✅ User Profile (6 tools) - includes per-sport heart rate zone reads and writes
-- ✅ High-Level Workout Builders (5 tools) - create and schedule workouts without writing JSON
+- ✅ High-Level Workout Builders (6 tools) - create and schedule workouts without writing JSON, including repeat-based interval runs
 - ✅ Courses (5 tools) - list / get details / upload GPX as course (base64 or local path) / download GPX / delete course
 - ✅ Activity Analysis (3 tools) - FIT file parsing, paginated FIT messages, Power Duration Curve; requires power meter and/or Di2
 - ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
@@ -74,6 +74,34 @@ refused. The same applies to `download_course_gpx`, which returns the GPX inline
 
 **First-run behavior (stdio only):** if no directory is configured, `download_activity_file` returns `status: "needs_setup"`. The assistant will ask where you want to save files (suggesting the current directory as default), call `set_fit_download_dir` to persist your choice, and then retry the download automatically.
 
+### Strength Exercise Sets
+
+`set_activity_exercise_sets(activity_id, sets)` writes structured sets onto a recorded
+strength activity, the same per-set grid the Garmin Connect "Edit sets" screen saves, so
+they appear in Garmin's exercise history and volume charts. It **replaces every existing
+set**, including watch-detected ones; read them first with `get_activity_exercise_sets`
+if you want to keep any.
+
+Each set takes a `category` and optional `exercise_name` using Garmin's keys from
+[`Exercises.json`](https://connect.garmin.com/web-data/exercises/Exercises.json), plus
+optional `reps`, `weight_kg` or `weight_lb` (omit for bodyweight), `duration_seconds` and
+`rest_seconds`. Garmin rejects unknown keys and leaves the activity unchanged.
+
+If the watch recorded the right sets but misidentified the exercises, pass
+`keep_timing: true`: the recorded start times, durations and rest periods are kept and only
+the exercise, reps and weight are replaced, in order. The number of sets must match the
+activity's recorded active sets.
+
+```json
+{
+  "activity_id": 12345678901,
+  "sets": [
+    {"category": "DEADLIFT", "exercise_name": "BARBELL_DEADLIFT", "reps": 5, "weight_kg": 150, "rest_seconds": 180},
+    {"category": "PULL_UP", "reps": 8}
+  ]
+}
+```
+
 ### Intentionally Skipped Endpoints
 
 Some endpoints are not implemented due to performance or complexity considerations:
@@ -85,7 +113,10 @@ Some endpoints are not implemented due to performance or complexity consideratio
 - `upload_running_workout()`, `upload_cycling_workout()`, `upload_swimming_workout()` - Sport-specific workout uploads. Use `upload_workout()` for general workouts.
 
 **Maintenance & Destructive Operations:**
-- `delete_activity()`, `delete_blood_pressure()` - Destructive operations require careful consideration.
+- `delete_blood_pressure()` - Destructive operations require careful consideration.
+- `delete_activity()` is implemented with a confirmation gate: call once to
+  preview, then again with `confirm=true` to delete. Deletions are logged to
+  stderr. There is no undo.
 - Internal/Auth methods: `login()`, `resume_login()`, `connectapi()`, `download()` - Handled automatically by the library.
 
 If you need any of these endpoints, please [open an issue](https://github.com/tagsvc/garmin_mcp/issues).
@@ -111,7 +142,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~168 tools by default, which can be a lot of context for
+This server registers ~172 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 two optional environment variables:
 
@@ -559,6 +590,7 @@ By default the server communicates over **stdio**, which is what Claude Desktop,
 - `GARMIN_MCP_TRANSPORT`: `stdio` (default), `streamable-http`, or `sse`
 - `GARMIN_MCP_HOST`: bind address for HTTP transports (default `127.0.0.1`; set to `0.0.0.0` only when the endpoint is fronted by an authenticating reverse proxy)
 - `GARMIN_MCP_PORT`: bind port for HTTP transports (default `8000`)
+- `GARMIN_MCP_STATELESS_HTTP`: set to `true` to run `streamable-http` without sessions (default `false`). The MCP SDK drops a stateful session after 30 minutes idle, so the first call after an idle gap gets `404 Session not found`; some clients (including claude.ai custom connectors) report that as a failed tool call rather than re-initializing and retrying. Stateless mode has no sessions to expire. No tool in this server depends on session state, so nothing is lost. Recommended for long-lived remote deployments.
 - `GARMIN_MCP_CALL_TIMEOUT`: per-request timeout in seconds for calls to Garmin (default `90`). Garmin's API occasionally stalls a single request indefinitely; without this bound the call hangs until the MCP client's own timeout fires and reports the whole server as unresponsive. On timeout the tool returns a clear, retry-able error instead. Set to `0` to disable the bound.
 
 ```bash
@@ -568,7 +600,8 @@ GARMIN_MCP_TRANSPORT=streamable-http garmin-mcp
 When an HTTP transport is selected:
 
 - MCP clients connect to the **`/mcp`** path (e.g. `http://localhost:8000/mcp`).
-- A plain **`GET /healthz`** endpoint is exposed for liveness/readiness probes.
+- **`GET /healthz`** returns `ok` as soon as the server is up — use it as a **liveness** probe.
+- **`GET /readyz`** reports whether Garmin login has finished — use it as a **readiness** probe. It returns `200 {"status": "ready"}` once login succeeded, and `503` with `{"status": "pending"}` while login is still running or `{"status": "failed"}` if it failed (re-run `garmin-mcp-auth` and restart).
 
 The server itself performs **no authentication** on the HTTP endpoint — put it behind a reverse proxy (nginx, Traefik, Authelia, etc.) if it is reachable beyond localhost.
 
@@ -909,6 +942,27 @@ Once connected in Claude, you can ask questions like:
 
 ## Troubleshooting
 
+### `get_training_effect` returns HTTP 403 for a valid activity
+
+Garmin's activity-details endpoint (`/activity-service/activity/{id}`) can
+return **403 Forbidden** even when the same activity is visible in list tools.
+`get_training_effect` now falls back to activity list search, which still
+includes aerobic/anaerobic training effect for recent activities.
+
+If the activity is older than the recent-search window, list the activity with
+`get_activities` / `get_activities_by_date` and retry, or use those list fields
+directly.
+
+### `get_goals` returns no goals that exist in Garmin Connect
+
+Garmin's goal-service only returns goals created in Connect's current Goals UI
+(named distance/time targets such as a monthly cycling goal) when the request
+sends `Sec-Fetch-Site: same-origin` and uses a 1-based `start`. With
+`start=0`, it returns an empty list. python-garminconnect's `get_goals()` does not do both
+(through 0.3.16), so `get_goals` here calls `/goal-service/goal/goals`
+directly the way Connect's Goals page does, and uses the library call only as
+a fallback.
+
 ### "Failed to spawn process: No such file or directory"
 
 If Claude Desktop can't find `uvx`, it's because `uvx` is not in the PATH that Claude Desktop uses. To fix this:
@@ -1128,6 +1182,8 @@ Client → 401 → OAuth2 discovery
 - **Response security headers** on every reply: HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a strict CSP (`default-src 'none'`), and `Referrer-Policy: no-referrer`.
 - Reflected values on the login/MFA pages are **HTML-escaped**, and untrusted values are escaped before logging (no log injection).
 - **Remote tools never read the server's filesystem.** `upload_course` takes `gpx_base64` in remote mode and refuses `gpx_path` — see [Courses](#courses-and-gpx-uploads).
+- **Three tools are stdio-only.** `check_garmin_auth` and `login_to_garmin` (on a network server, `login_to_garmin` would let any authenticated user store tokens for *any* Garmin account, bypassing the email allowlist), and `delete_activity` (irreversible, and an activity is the training history that Garmin Coach grades and every load and analytics figure is computed from). `delete_workout` and `delete_course` remain available — a workout or course can be recreated.
+- **Every remote tool carries effect annotations** (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`), so a client can tell a delete from a read and ask before running one. Results are returned as plain text, not additionally wrapped as `{"result": ...}` structured content.
 - The container **does not run the server as root**: the entrypoint takes ownership of `/data`, then drops to an unprivileged user.
 
 ### Courses and GPX uploads
@@ -1236,7 +1292,10 @@ This project includes comprehensive tests for all MCP tools. **All tests are cur
 ### Running Tests
 
 ```bash
-# Run all integration tests (default - uses mocked Garmin API)
+# Run unit and integration tests (default - uses mocked Garmin API, e2e tests are deselected)
+uv run pytest
+
+# Run only the integration tests
 uv run pytest tests/integration/
 
 # Run tests with verbose output
@@ -1245,14 +1304,15 @@ uv run pytest tests/integration/ -v
 # Run a specific test module
 uv run pytest tests/integration/test_health_wellness_tools.py -v
 
-# Run end-to-end tests (requires real Garmin credentials)
+# Run end-to-end tests (requires real Garmin credentials).
+# Some of these create and delete foods, food logs and workouts in your account.
 uv run pytest tests/e2e/ -m e2e -v
 ```
 
 ### Test Structure
 
 - **Integration tests** (200+ tests): Test all MCP tools using FastMCP integration with mocked Garmin API responses
-- **End-to-end tests** (4 tests): Test with real MCP server and Garmin API (requires valid credentials)
+- **End-to-end tests** (`tests/e2e/`): Test with real MCP server and Garmin API (requires valid credentials). Only run with `-m e2e`.
 
 ## Reinstalling from local path
 

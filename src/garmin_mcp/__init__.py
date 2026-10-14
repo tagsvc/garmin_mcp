@@ -2,9 +2,11 @@
 Modular MCP Server for Garmin Connect Data
 """
 
+import copy
 import os
 import sys
 import base64
+import contextlib
 import threading
 
 import requests
@@ -34,6 +36,7 @@ from garmin_mcp import analytics
 from garmin_mcp import auth_tools
 from garmin_mcp import calendar_events
 from garmin_mcp.client_resolver import set_global_client
+from garmin_mcp.tool_annotations import annotations_for
 
 
 def is_interactive_terminal() -> bool:
@@ -274,6 +277,50 @@ class _ThreadFilteredStream:
         return getattr(self._real_stream, name)
 
 
+class _ThreadSuppressibleStream:
+    """Wraps a stream so individual threads can opt out of writing to it.
+
+    Used for ``sys.stderr`` while the background login thread validates
+    tokens. Swapping ``sys.stderr`` itself for a ``StringIO`` there would be
+    process-wide, so everything the main thread wrote during login -- the
+    "Serving MCP over ..." line, uvicorn's startup logs, and any logging
+    handler that captured ``sys.stderr`` in that window, for the life of the
+    process -- would vanish too. Only threads inside ``suppressed()`` are
+    silenced; every other thread's writes pass through.
+    """
+
+    def __init__(self, real_stream):
+        self._real_stream = real_stream
+        self._suppressed = set()
+
+    def write(self, data):
+        if threading.get_ident() in self._suppressed:
+            return len(data)
+        return self._real_stream.write(data)
+
+    def flush(self):
+        self._real_stream.flush()
+
+    @contextlib.contextmanager
+    def suppressed(self):
+        ident = threading.get_ident()
+        self._suppressed.add(ident)
+        try:
+            yield
+        finally:
+            self._suppressed.discard(ident)
+
+    def __getattr__(self, name):
+        return getattr(self._real_stream, name)
+
+
+def _suppress_stderr_in_this_thread():
+    """Silence ``sys.stderr`` for the calling thread only (see above)."""
+    if not isinstance(sys.stderr, _ThreadSuppressibleStream):
+        sys.stderr = _ThreadSuppressibleStream(sys.stderr)
+    return sys.stderr.suppressed()
+
+
 class _PendingGarminClient:
     """Stands in for the real Garmin client until a background login finishes.
 
@@ -324,6 +371,16 @@ class _PendingGarminClient:
         threading.Thread(target=_worker, name="garmin-login", daemon=True).start()
         return self
 
+    def login_state(self):
+        """Non-blocking login status: ``"pending"``, ``"ready"`` or ``"failed"``.
+
+        A regular method, so it is found before ``__getattr__`` and never
+        waits on the background login.
+        """
+        if not self._ready.is_set():
+            return "pending"
+        return "failed" if self._login_error is not None else "ready"
+
     def __getattr__(self, name):
         if not self._ready.wait(self._timeout if self._timeout else None):
             raise RuntimeError(
@@ -332,8 +389,31 @@ class _PendingGarminClient:
                 "restart the server."
             )
         if self._login_error is not None:
-            raise self._login_error
+            # Raise a copy, not the stored instance: re-raising it would append
+            # this call's frames to its __traceback__ on every tool call, so it
+            # (and the frame locals it pins) would grow without bound. The copy
+            # keeps the type, message and attributes callers inspect.
+            err = self._login_error
+            try:
+                fresh = copy.copy(err)
+            except Exception:
+                fresh = RuntimeError(f"Garmin login failed: {err}")
+            raise fresh from err
         return getattr(self._client, name)
+
+
+def _readiness(pending_client) -> tuple[int, dict]:
+    """(HTTP status, JSON body) for ``GET /readyz``.
+
+    ``/healthz`` answers as soon as the HTTP server is up, but since login
+    moved to a background thread (#255) that is before Garmin login has
+    resolved -- so an orchestrator using it as a readiness probe routes
+    traffic to a server whose every tool call will still fail. ``/readyz``
+    reports 200 only once login has succeeded, 503 while it is pending or
+    after it failed (``status`` says which).
+    """
+    state = pending_client.login_state()
+    return (200 if state == "ready" else 503), {"status": state}
 
 
 def _parse_transport_config() -> tuple[str, str, int]:
@@ -352,6 +432,31 @@ def _parse_transport_config() -> tuple[str, str, int]:
     return transport, http_host, http_port
 
 
+_TRUE_VALUES = ("1", "true", "yes", "on")
+_FALSE_VALUES = ("", "0", "false", "no", "off")
+
+
+def _resolve_stateless_http() -> bool:
+    """Read GARMIN_MCP_STATELESS_HTTP. Raises ValueError on unrecognized input.
+
+    Stateless mode serves each Streamable HTTP request on a fresh transport with
+    no Mcp-Session-Id, so there is no server-side session for the SDK to reap
+    after its idle timeout (30 min in mcp>=1.30). Without it, the first call after
+    an idle gap gets 404 "Session not found" and some clients (e.g. claude.ai
+    connectors) surface that as a failed tool call instead of replaying it. No
+    tool here relies on session state (progress, sampling, elicitation, server
+    push), so nothing is lost. Only affects the streamable-http transport.
+    """
+    raw = os.getenv("GARMIN_MCP_STATELESS_HTTP", "").strip().lower()
+    if raw in _TRUE_VALUES:
+        return True
+    if raw in _FALSE_VALUES:
+        return False
+    raise ValueError(
+        f"Invalid GARMIN_MCP_STATELESS_HTTP {raw!r}; expected true or false"
+    )
+
+
 class _ToolFilter:
     """Wraps a FastMCP app to conditionally register tools by function name.
 
@@ -365,6 +470,7 @@ class _ToolFilter:
         self._enabled = enabled
         self._disabled = disabled
         self._seen = set()  # tool names encountered, for typo detection
+        self._unannotated = set()
 
     def _allowed(self, name):
         name = name.lower()
@@ -373,7 +479,12 @@ class _ToolFilter:
         return name not in self._disabled
 
     def tool(self, *args, **kwargs):
-        decorator = self._app.tool(*args, **kwargs)
+        # Most tools return json.dumps(...) as str. FastMCP's default
+        # structured_output auto-detection then wraps that string again as
+        # structuredContent {"result": "<escaped json>"}, doubling payload
+        # size for clients that forward both blocks (issue #331). Opt out
+        # globally; callers can still pass structured_output=True explicitly.
+        kwargs.setdefault("structured_output", False)
         # Prefer the explicit registered name if given (@app.tool(name="x")),
         # so the env-var filter matches what the user actually configures.
         explicit = kwargs.get("name") or (
@@ -384,6 +495,12 @@ class _ToolFilter:
             name = explicit or getattr(fn, "__name__", "")
             self._seen.add(name.lower())
             if self._allowed(name):
+                annotations = annotations_for(name)
+                if annotations is None:
+                    self._unannotated.add(name)
+                else:
+                    kwargs.setdefault("annotations", annotations)
+                decorator = self._app.tool(*args, **kwargs)
                 return decorator(fn)
             return fn  # skip registration; tool never reaches the LLM
 
@@ -394,6 +511,10 @@ class _ToolFilter:
         configured = self._enabled or self._disabled
         return sorted(configured - self._seen)
 
+    def unannotated_tool_names(self):
+        """Registered tools missing an explicit effect classification."""
+        return sorted(self._unannotated)
+
     def __getattr__(self, item):
         return getattr(self._app, item)
 # ---------------------------------------------------------------------------
@@ -401,7 +522,6 @@ class _ToolFilter:
 
 def init_api(email, password):
     """Initialize Garmin API with your credentials."""
-    import io
 
     # Claude Desktop may leave blank optional user_config values as literal
     # placeholders. Do not mistake those strings for credentials and trigger a
@@ -431,14 +551,10 @@ def init_api(email, password):
         # already discards any stray write from this thread on its own. A
         # second swap here would instead risk swallowing real MCP protocol
         # output written concurrently by the server's own thread (#255).
-        old_stderr = sys.stderr
-        sys.stderr = io.StringIO()
-
-        try:
+        # stderr is silenced for this thread only, for the same reason.
+        with _suppress_stderr_in_this_thread():
             garmin = Garmin(is_cn=is_cn)
             garmin.login(tokenstore)
-        finally:
-            sys.stderr = old_stderr
 
     except (FileNotFoundError, GarminConnectConnectionError, GarminConnectTooManyRequestsError, GarminConnectAuthenticationError):
         # Session is expired. You'll need to log in again
@@ -468,7 +584,10 @@ def init_api(email, password):
             # sys.stdout is a _ThreadFilteredStream (installed in main());
             # any stray progress output from this call is already discarded
             # without a local swap here (see the token-load path above).
-            result1, result2 = garmin.login()
+            # Exchange the credentials on the client directly. Garmin.login()
+            # with no tokenstore falls back to $GARMINTOKENS and would reload
+            # the same tokens that just failed instead of using the password.
+            result1, result2 = garmin.client.login(email, password, return_on_mfa=True)
             if result1 == "needs_mfa":
                 mfa_code = get_mfa()
                 garmin.resume_login(result2, mfa_code)
@@ -494,6 +613,12 @@ def init_api(email, password):
                 f"Oauth tokens encoded as base64 string and saved to '{tokenstore_base64}' file for future use. (second method)\n",
                 file=sys.stderr,
             )
+            # The early-return login above does not load the profile or unit
+            # settings (display_name stays None, so tools that build URLs from
+            # it fail). Log in again from the saved tokens to load them, which
+            # also points token refreshes at the token directory.
+            garmin = Garmin(is_cn=is_cn)
+            garmin.login(tokenstore)
         except (
             FileNotFoundError,
             GarminConnectConnectionError,
@@ -565,9 +690,11 @@ def main():
     #   GARMIN_MCP_TRANSPORT - stdio (default) | streamable-http | sse
     #   GARMIN_MCP_HOST      - bind address for HTTP transports (default 127.0.0.1)
     #   GARMIN_MCP_PORT      - bind port for HTTP transports (default 8000)
+    #   GARMIN_MCP_STATELESS_HTTP - true to run streamable-http without sessions
     try:
         enabled_tools, disabled_tools = _resolve_tool_filters()
         transport, http_host, http_port = _parse_transport_config()
+        stateless_http = _resolve_stateless_http()
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
@@ -611,7 +738,12 @@ def main():
 
     # Create the MCP app, wrapped so the env-var filter can drop tools.
     # host/port only matter for the HTTP transports; stdio ignores them.
-    fastmcp = FastMCP("Garmin Connect v1.0", host=http_host, port=http_port)
+    fastmcp = FastMCP(
+        "Garmin Connect v1.0",
+        host=http_host,
+        port=http_port,
+        stateless_http=stateless_http,
+    )
     app = _ToolFilter(fastmcp, enabled_tools, disabled_tools)
     if enabled_tools:
         print(f"Tool filter: allowlist of {len(enabled_tools)} tool(s).", file=sys.stderr)
@@ -649,18 +781,34 @@ def main():
             file=sys.stderr,
         )
 
-    # When serving over HTTP, expose a plain health endpoint for k8s probes.
+    unannotated = app.unannotated_tool_names()
+    if unannotated:
+        print(
+            "Tool annotations: warning — unclassified tool(s): "
+            + ", ".join(unannotated),
+            file=sys.stderr,
+        )
+
+    # When serving over HTTP, expose liveness/readiness endpoints for k8s probes.
     # The MCP endpoint itself requires a handshake and isn't probe-friendly.
     if transport != "stdio":
         from starlette.requests import Request
-        from starlette.responses import PlainTextResponse
+        from starlette.responses import JSONResponse, PlainTextResponse
 
+        # Liveness: the process is up and serving HTTP.
         @fastmcp.custom_route("/healthz", methods=["GET"])
         async def healthz(_request: "Request") -> "PlainTextResponse":
             return PlainTextResponse("ok")
 
+        # Readiness: Garmin login has succeeded, tool calls can work.
+        @fastmcp.custom_route("/readyz", methods=["GET"])
+        async def readyz(_request: "Request") -> "JSONResponse":
+            status_code, body = _readiness(pending_client)
+            return JSONResponse(body, status_code=status_code)
+
+        mode = " (stateless)" if stateless_http and transport == "streamable-http" else ""
         print(
-            f"Serving MCP over {transport} on {http_host}:{http_port}",
+            f"Serving MCP over {transport}{mode} on {http_host}:{http_port}",
             file=sys.stderr,
         )
 

@@ -77,6 +77,18 @@ coverage.
 - **No live-Garmin validation of imported tokens.** Validation is structural only — a live
   check would make the server a good/bad token oracle and re-introduce the 429 surface.
 - **`auth_tools` is stdio-only** — registered in `__init__.py`, never in `remote.py`.
+- **Remote registers through `remote.register_remote_tools()`, and nowhere else.**
+  It routes every module through `garmin_mcp._ToolFilter` — the wrapper stdio
+  uses — so remote tools get upstream's effect annotations and
+  `structured_output=False` (bare FastMCP registration re-wraps every JSON string
+  as `{"result": "<escaped json>"}`, doubling the payload, and attaches no
+  annotations). It also withholds `REMOTE_EXCLUDED_TOOLS` — currently only
+  `delete_activity` — and **fails closed**: an exclusion naming no registered
+  tool (an upstream rename) raises at startup instead of serving the tool. The
+  count and contract tests call this same function, so documented remote counts
+  are what is actually served. Pinned by `test_remote_mode_contract.py`, which
+  asserts the stdio-minus-remote set as a literal: withholding a tool takes an
+  edit to the test as well as to `remote.py`.
 - **`Dockerfile.remote` must not use the `VOLUME` instruction** — Railway rejects it;
   persistence is a Railway volume mounted at `/data`.
 - **`config.port` honors `$PORT`** (then `GARMIN_MCP_PORT`, then 8000) for Railway.
@@ -209,6 +221,16 @@ each divergence so a merge doesn't silently undo a deliberate decision.
   start without tokens and authenticate at runtime. Registering it in `remote.py`
   would expose a redundant, confusing second auth path. _On merge:_ keep it out of
   `remote.py`.
+
+- **`delete_activity` is stdio-only** (added upstream 2026-10). Why: it is
+  irreversible, and an activity is a record, not a plan — Garmin Coach grades it,
+  and training load, acute/chronic balance and every historical analytic here
+  are computed from it. Its `confirm=true` gate stops an accidental call but not
+  a deliberate one, and on the remote server the caller is a model acting on
+  whatever content it was handed. `delete_workout` and `delete_course` stay
+  exposed: a workout or course is recreatable. _On merge:_ keep it in
+  `REMOTE_EXCLUDED_TOOLS`; if upstream renames it, startup fails until the
+  exclusion is updated.
 
 - **Email allowlist, fail-closed.** Why: the remote server is publicly reachable
   (claude.ai); without a gate, anyone who completes a Garmin login could attach an
@@ -355,13 +377,26 @@ taken whole.
   - a **new tool taking a path** fails the path-guard test until it refuses that
     path in remote mode. Do not add it to `_GUARDED` to make the test pass —
     `_GUARDED` records tools that already refuse.
+  - a **new tool** fails `test_tool_annotations.py` until it is classified in
+    `tool_annotations.py`. Fork tools go in the `_FORK_*` sets at the bottom,
+    which union into upstream's, so upstream's own lists keep merging cleanly.
+- **Watch for helper-signature drift — it does not show up as a conflict.**
+  Upstream has been dropping the `client` argument from module helpers (the
+  proxy makes it unnecessary). Taking upstream's side of a hunk that changes a
+  helper's signature, or drops a local our code still uses, leaves code
+  *outside* the hunk inconsistent: it merges cleanly and raises `TypeError` or
+  `NameError` on first call. The 2026-10-14 sync hit this with
+  `_is_already_scheduled`, `_put_activity_update` and `schedule_week`'s
+  `client`; the broken callers of `_put_activity_update` were in no conflict
+  hunk at all. When a hunk changes a helper's signature, grep every call site
+  across the package and adopt upstream's caller text along with the helper.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 168 / remote 166.
+**Definition of done:** suite green, invariants intact, tool counts stdio 172 / remote 169.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (783 at time of writing).
-- Tool counts: **stdio 168**, **remote 166** (auth tools are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1072 at time of writing).
+- Tool counts: **stdio 172**, **remote 169** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.
@@ -372,7 +407,9 @@ Integrated via PRs #1–#6 on this fork, then synced with upstream on 2026-06-17
 (upstream PRs #140/#141/#142, Issues #137/#138/#139), and again on 2026-09-02
 (17 upstream commits: 10 new tools, 7 fixes — the first sync after the
 stdio/remote split was collapsed, and the first needing no tool migration), on
-2026-09-10 (9 upstream commits: 2 new tools, 7 fixes), and on 2026-09-19
-(3 upstream commits: `get_energy_balance` plus docs). See `CHANGELOG.md` for a
+2026-09-10 (9 upstream commits: 2 new tools, 7 fixes), on 2026-09-19
+(3 upstream commits: `get_energy_balance` plus docs), and on 2026-10-14 (54
+upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
+fixes; the first sync to route remote registration through `_ToolFilter`). See `CHANGELOG.md` for a
 categorized list of every change relative to upstream, and `README.md` (Remote
 Mode, Security, Token import / refresh) for operational detail.

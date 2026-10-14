@@ -18,6 +18,7 @@ import pytest
 from unittest.mock import Mock
 from mcp.server.fastmcp import FastMCP
 from garmin_mcp.client_resolver import set_global_client
+from garminconnect import GarminConnectConnectionError
 
 from garmin_mcp import (
     devices,
@@ -31,6 +32,7 @@ from tests.fixtures.garmin_responses import (
     MOCK_DEVICES,
     MOCK_DEVICE_SETTINGS,
     MOCK_DEVICE_LAST_USED,
+    MOCK_DEVICE_SOLAR_DATA,
     MOCK_WEIGH_INS,
     MOCK_DAILY_WEIGH_INS,
     MOCK_USER_PROFILE,
@@ -120,16 +122,72 @@ async def test_get_primary_training_device_tool(app_with_devices, mock_garmin_cl
 
 
 @pytest.mark.asyncio
+async def test_get_primary_training_device_handles_null_nested_sections(
+    app_with_devices, mock_garmin_client
+):
+    """Optional device sections may be present as explicit nulls."""
+    mock_garmin_client.get_primary_training_device.return_value = {
+        "PrimaryTrainingDevice": None,
+        "PrimaryTrainingDevices": None,
+        "WearableDevices": None,
+    }
+
+    result = await app_with_devices.call_tool("get_primary_training_device", {})
+
+    data = json.loads(result[0][0].text)
+    assert data == {"primary_device_id": None}
+
+
+@pytest.mark.asyncio
 async def test_get_device_solar_data_tool(app_with_devices, mock_garmin_client):
-    """Test get_device_solar_data tool"""
-    solar_data = {"solarIntensity": 75, "batteryLevel": 90}
-    mock_garmin_client.get_device_solar_data.return_value = solar_data
+    """Per-minute readings are summarised per day; an int deviceId (as get_devices returns it) is accepted"""
+    mock_garmin_client.get_device_solar_data.return_value = MOCK_DEVICE_SOLAR_DATA
     result = await app_with_devices.call_tool(
         "get_device_solar_data",
-        {"device_id": "abc123456789", "date": "2024-01-15"}
+        {"device_id": 123456789, "date": "2024-01-15"}
     )
-    assert result is not None
-    mock_garmin_client.get_device_solar_data.assert_called_once_with("abc123456789", "2024-01-15")
+    data = json.loads(result[0][0].text)
+    assert data == {
+        "device_id": 123456789,
+        "solar_data": [
+            {
+                "date": "2024-01-15",
+                "activity_time_gained_minutes": 30.0,
+                "solar_utilization_avg_pct": 40.0,
+                "solar_utilization_max_pct": 100.0,
+                "minutes_with_solar_input": 3,
+            }
+        ],
+    }
+    mock_garmin_client.get_device_solar_data.assert_called_once_with(123456789, "2024-01-15")
+
+
+@pytest.mark.asyncio
+async def test_get_device_solar_data_non_solar_device(app_with_devices, mock_garmin_client):
+    """The library's error for a response without solar input maps to a friendly message"""
+    mock_garmin_client.get_device_solar_data.side_effect = GarminConnectConnectionError(
+        "No device solar input data received"
+    )
+    result = await app_with_devices.call_tool(
+        "get_device_solar_data",
+        {"device_id": "123456789", "date": "2024-01-15"}
+    )
+    text = result[0][0].text
+    assert "may not have solar capabilities" in text
+    assert not text.startswith("Error")
+
+
+@pytest.mark.asyncio
+async def test_get_device_solar_data_other_error(app_with_devices, mock_garmin_client):
+    """Other failures still surface as an error"""
+    mock_garmin_client.get_device_solar_data.side_effect = GarminConnectConnectionError(
+        "API Error 500 - "
+    )
+    result = await app_with_devices.call_tool(
+        "get_device_solar_data",
+        {"device_id": "123456789", "date": "2024-01-15"}
+    )
+    assert result[0][0].text == "Error retrieving solar data: API Error 500 - "
 
 
 @pytest.mark.asyncio
@@ -169,6 +227,26 @@ async def test_get_weigh_ins_tool(app_with_weight, mock_garmin_client):
 
 
 @pytest.mark.asyncio
+async def test_get_weigh_ins_handles_null_optional_sections(
+    app_with_weight, mock_garmin_client
+):
+    """Weight summaries can contain null metric and average sections."""
+    mock_garmin_client.get_weigh_ins.return_value = {
+        "dailyWeightSummaries": [{"allWeightMetrics": None}],
+        "totalAverage": None,
+    }
+
+    result = await app_with_weight.call_tool(
+        "get_weigh_ins",
+        {"start_date": "2024-01-08", "end_date": "2024-01-15"},
+    )
+
+    data = json.loads(result[0][0].text)
+    assert data["measurement_count"] == 0
+    assert data["measurements"] == []
+
+
+@pytest.mark.asyncio
 async def test_get_daily_weigh_ins_tool(app_with_weight, mock_garmin_client):
     """Test get_daily_weigh_ins tool"""
     mock_garmin_client.get_daily_weigh_ins.return_value = MOCK_DAILY_WEIGH_INS
@@ -191,6 +269,37 @@ async def test_delete_weigh_ins_tool(app_with_weight, mock_garmin_client):
     )
     assert result is not None
     mock_garmin_client.delete_weigh_ins.assert_called_once_with("2024-01-15", delete_all=True)
+
+
+@pytest.mark.asyncio
+async def test_delete_weigh_ins_nothing_found(app_with_weight, mock_garmin_client):
+    """garminconnect returns None, deleting nothing, when the day has no
+    weigh-ins -- that must not be reported as a successful delete."""
+    mock_garmin_client.delete_weigh_ins.return_value = None
+    result = await app_with_weight.call_tool(
+        "delete_weigh_ins",
+        {"date": "2024-01-15"}
+    )
+    data = json.loads(result[0][0].text)
+    assert data["status"] == "nothing_deleted"
+    assert data["deleted_count"] == 0
+    assert "No weight measurements found" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_delete_weigh_ins_several_without_delete_all(app_with_weight, mock_garmin_client):
+    """garminconnect also returns None, deleting nothing, when the day has
+    several weigh-ins and delete_all is false."""
+    mock_garmin_client.delete_weigh_ins.return_value = None
+    result = await app_with_weight.call_tool(
+        "delete_weigh_ins",
+        {"date": "2024-01-15", "delete_all": False}
+    )
+    data = json.loads(result[0][0].text)
+    assert data["status"] == "nothing_deleted"
+    assert data["deleted_count"] == 0
+    assert "delete_all=true" in data["message"]
+    mock_garmin_client.delete_weigh_ins.assert_called_once_with("2024-01-15", delete_all=False)
 
 
 @pytest.mark.asyncio
@@ -217,6 +326,64 @@ async def test_add_weigh_in_with_timestamps_tool(app_with_weight, mock_garmin_cl
     )
     assert result is not None
     # Note: function has optional date_timestamp and gmt_timestamp parameters
+
+
+@pytest.mark.asyncio
+async def test_add_weigh_in_with_timestamps_keeps_given_local_timestamp(
+    app_with_weight, mock_garmin_client
+):
+    """A caller-supplied date_timestamp is passed through, not replaced with
+    "now" just because gmt_timestamp was omitted -- garminconnect derives the
+    GMT timestamp itself."""
+    mock_garmin_client.add_weigh_in_with_timestamps.return_value = {}
+    result = await app_with_weight.call_tool(
+        "add_weigh_in_with_timestamps",
+        {"weight": 70.5, "unit_key": "kg", "date_timestamp": "2024-01-15T07:30:00"}
+    )
+    data = json.loads(result[0][0].text)
+    assert data["status"] == "success"
+    assert data["timestamp_local"] == "2024-01-15T07:30:00"
+    mock_garmin_client.add_weigh_in_with_timestamps.assert_called_once_with(
+        weight=70.5,
+        unitKey="kg",
+        dateTimestamp="2024-01-15T07:30:00",
+        gmtTimestamp="",
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_weigh_in_with_timestamps_passes_both_timestamps(
+    app_with_weight, mock_garmin_client
+):
+    mock_garmin_client.add_weigh_in_with_timestamps.return_value = {}
+    await app_with_weight.call_tool(
+        "add_weigh_in_with_timestamps",
+        {
+            "weight": 70.5,
+            "date_timestamp": "2024-01-15T07:30:00",
+            "gmt_timestamp": "2024-01-15T15:30:00",
+        }
+    )
+    mock_garmin_client.add_weigh_in_with_timestamps.assert_called_once_with(
+        weight=70.5,
+        unitKey="kg",
+        dateTimestamp="2024-01-15T07:30:00",
+        gmtTimestamp="2024-01-15T15:30:00",
+    )
+
+
+@pytest.mark.asyncio
+async def test_add_weigh_in_with_timestamps_requires_local_with_gmt(
+    app_with_weight, mock_garmin_client
+):
+    """With only gmt_timestamp, garminconnect would record the weigh-in at
+    the current local time, so the tool refuses instead of guessing the day."""
+    result = await app_with_weight.call_tool(
+        "add_weigh_in_with_timestamps",
+        {"weight": 70.5, "gmt_timestamp": "2024-01-15T15:30:00"}
+    )
+    assert "date_timestamp is required" in result[0][0].text
+    mock_garmin_client.add_weigh_in_with_timestamps.assert_not_called()
 
 
 # User Profile module tests
@@ -546,6 +713,57 @@ async def test_get_gear_tool(app_with_gear, mock_garmin_client):
     mock_garmin_client.get_gear_defaults.assert_called_once_with(80653452)
 
 
+@pytest.mark.asyncio
+async def test_get_gear_tool_default_activity_types(app_with_gear, mock_garmin_client):
+    """Default activity types are labelled with Garmin's typeKey for the
+    real typeId (3 is hiking, not swimming; 10 is road biking, ...)."""
+    mock_garmin_client.get_device_last_used.return_value = MOCK_DEVICE_LAST_USED
+    mock_garmin_client.get_gear.return_value = [MOCK_GEAR[0]]
+    mock_garmin_client.connectapi.return_value = []
+    mock_garmin_client.get_gear_defaults.return_value = [
+        {"uuid": MOCK_GEAR[0]["uuid"], "activityTypePk": pk, "defaultGear": True}
+        for pk in (1, 3, 6, 9, 10, 13, 26, 143, 999)
+    ]
+
+    result = await app_with_gear.call_tool("get_gear", {"include_stats": False})
+
+    payload = json.loads(result[0][0].text)
+    assert payload["gear"][0]["is_default_for"] == [
+        "running",
+        "hiking",
+        "trail_running",
+        "walking",
+        "road_biking",
+        "strength_training",
+        "swimming",
+        "gravel_cycling",
+        "activity_999",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_gear_tool_defaults_summary(app_with_gear, mock_garmin_client):
+    """Every default gear item of an activity type is listed, and gear
+    without a nickname (displayName null) is named by its make/model."""
+    unnamed_shoe = {**MOCK_GEAR[1], "gearStatusName": "active", "displayName": None}
+    mock_garmin_client.get_device_last_used.return_value = MOCK_DEVICE_LAST_USED
+    mock_garmin_client.get_gear.return_value = [MOCK_GEAR[0], unnamed_shoe]
+    mock_garmin_client.connectapi.return_value = []
+    mock_garmin_client.get_gear_defaults.return_value = [
+        {"uuid": MOCK_GEAR[0]["uuid"], "activityTypePk": 1, "defaultGear": True},
+        {"uuid": MOCK_GEAR[0]["uuid"], "activityTypePk": 6, "defaultGear": True},
+        {"uuid": unnamed_shoe["uuid"], "activityTypePk": 1, "defaultGear": True},
+    ]
+
+    result = await app_with_gear.call_tool("get_gear", {"include_stats": False})
+
+    payload = json.loads(result[0][0].text)
+    assert payload["defaults"] == {
+        "running": ["Nimbus 25", "ASICS Gel-Nimbus 24"],
+        "trail_running": ["Nimbus 25"],
+    }
+
+
 @pytest.mark.parametrize("notes_value", ["", None], ids=["empty", "null"])
 @pytest.mark.asyncio
 async def test_get_gear_tool_preserves_empty_and_null_notes(
@@ -601,6 +819,26 @@ async def test_add_gear_to_activity_tool(app_with_gear, mock_garmin_client):
 
 
 @pytest.mark.asyncio
+async def test_add_gear_to_activity_missing_gear_is_unavailable(
+    app_with_gear, mock_garmin_client
+):
+    """Test add_gear_to_activity reports missing gear as unavailable data"""
+    mock_garmin_client.add_gear_to_activity.side_effect = GarminConnectConnectionError(
+        "API Error 404 - Gear with uuid: missing doesn't exist."
+    )
+
+    result = await app_with_gear.call_tool(
+        "add_gear_to_activity",
+        {"activity_id": 12345678901, "gear_uuid": "missing"},
+    )
+
+    assert result[0][0].text == (
+        "No gear association changed; gear missing was not found "
+        "for activity 12345678901."
+    )
+
+
+@pytest.mark.asyncio
 async def test_remove_gear_from_activity_tool(app_with_gear, mock_garmin_client):
     """Test remove_gear_from_activity tool"""
     mock_garmin_client.remove_gear_from_activity.return_value = {}
@@ -610,6 +848,26 @@ async def test_remove_gear_from_activity_tool(app_with_gear, mock_garmin_client)
     )
     assert result is not None
     mock_garmin_client.remove_gear_from_activity.assert_called_once_with("abc123", 12345678901)
+
+
+@pytest.mark.asyncio
+async def test_remove_gear_from_activity_missing_gear_is_unavailable(
+    app_with_gear, mock_garmin_client
+):
+    """Test remove_gear_from_activity reports missing gear as unavailable data"""
+    mock_garmin_client.remove_gear_from_activity.side_effect = GarminConnectConnectionError(
+        "API Error 404 - Gear with uuid: missing doesn't exist."
+    )
+
+    result = await app_with_gear.call_tool(
+        "remove_gear_from_activity",
+        {"activity_id": 12345678901, "gear_uuid": "missing"},
+    )
+
+    assert result[0][0].text == (
+        "No gear association changed; gear missing was not found "
+        "for activity 12345678901."
+    )
 
 
 # Women's Health module tests

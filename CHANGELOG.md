@@ -5,6 +5,82 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Upstream sync 2026-10-14 — 54 commits; courses fixed; remote gets annotations
+
+**Course viewing was broken on every course.** `get_course_details` and
+`download_course_gpx` read `data.get("coursePoints", [])`. The default only
+applies when the key is *absent*; Garmin sends `"coursePoints": null` for a
+course with no custom waypoints, so both tools crashed with `'NoneType' object
+is not iterable`. Reproduced live on all four courses on the account, including
+one from 2013. Fixed upstream (`c9cccf5`, their #377) and taken here.
+`upload_course` also saved 5 of its 8 activity types under the wrong Garmin
+sport (walking as "other", road biking as street running); fixed in `3c24deb`.
+
+**Taken from upstream:** 4 new tools (`delete_activity`, `set_activity_exercise_sets`,
+`create_run_interval_workout`, `get_recovery_time_remaining`); tool effect
+annotations; ~30 correctness fixes, several of which change figures already
+being read (lactate-threshold speed units, calendar `distance_meters`, morning
+readiness fields, intensity-minute totals, bike power counted in running power
+curves, wrapped-around negative lap distances, record-timestamp analysis); a
+"may have committed" report for a 5xx after a write; stricter date validation;
+full workout-library paging; urllib3 2.8.0 and PyJWT 2.15.0.
+
+**Kept from this fork:** the `garminconnect==0.3.5` pin (upstream is on 0.3.2);
+the remote-mode GPX path handling (see below); the stdio-only auth tools. Upstream
+replaced the `.dockerignore` → `.gitignore` symlink with a standalone file; taken,
+with this fork's exclusion of captured live-Garmin fixtures (personal data) and
+`.mcp.json` restored, since the stdio `Dockerfile` copies `tests/`. Railway's
+`Dockerfile.remote` copies only `src/` and the lock, so the deploy was unaffected.
+Upstream's `0273d07` independently made the same Coach-curation fix as this
+fork's 2026-09-19 change, so upstream's text was taken and the region no longer
+diverges.
+
+**Remote now registers through `_ToolFilter`, the wrapper stdio uses.** Before,
+`remote.py` registered on the bare FastMCP app, which meant two upstream fixes in
+this range would never have reached the Railway server:
+
+- no effect annotations, so claude.ai could not tell `delete_workout` from
+  `get_activities`;
+- FastMCP's automatic structured output, which re-wraps every JSON string a tool
+  returns as `{"result": "<escaped json>"}` and doubles the payload (upstream
+  `8163e3a`, their #331).
+
+The new `remote.register_remote_tools()` is the single place the remote tool set
+is defined; `main()` and the tests both call it, so documented counts are what is
+served.
+
+**`delete_activity` is stdio-only.** Irreversible, and an activity is training
+history that Coach grades and every load and analytics figure depends on. It is
+withheld through `REMOTE_EXCLUDED_TOOLS`, which fails closed: a name matching no
+tool raises at startup rather than letting a renamed tool through.
+
+**GPX download ordering.** Upstream's `download_course_gpx` resolves the output
+path and runs `os.makedirs()` before anything else. Merged naively, that would
+create directories on the server's disk in remote mode even with no
+`output_path`. The remote check now runs first, and remote returns the GPX
+inline as before. The JSON `name` is now the plain course name; it was
+previously XML-escaped (`Rock &amp; Roll`).
+
+**Merge hazards caught that git did not report.** Taking upstream's side of a
+hunk that changed a helper's signature (`_is_already_scheduled`,
+`_put_activity_update`) or dropped a local our code still used
+(`schedule_week`'s `client`) left code *outside* the hunk inconsistent with it —
+a clean merge that raises `NameError` or `TypeError` on first call. Before
+repair that broke `schedule_week`, `schedule_workouts`, and the activity edits
+that go through `_put_activity_update` (description, event type, feel and
+perceived effort). Found by comparing every merged function against both
+parents and by a call-arity check over the package, and fixed by adopting
+upstream's callers together with each helper.
+
+**Tests that could not fail, made able to.** The DXT manifest test compared the
+manifest against the generator, which both read one hand-kept module list, so it
+passed while omitting this fork's `analytics` and `auth_tools`; a new test pins
+that list to `main()`. A new remote contract test first compared the withheld
+set against `REMOTE_EXCLUDED_TOOLS` itself, and so passed with the exclusion
+emptied; it now asserts a literal.
+
+Tools: stdio 168 → 172, remote 166 → 169. Tests: 783 → 1072.
+
 ## Documented what the new Coach tools actually return — 2026-09-19
 
 A review from a parallel session found a behaviour worth knowing and three

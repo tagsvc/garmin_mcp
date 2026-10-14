@@ -13,17 +13,40 @@ from garmin_mcp.client_resolver import get_client
 garmin_client = None
 logger = logging.getLogger(__name__)
 
-# Activity type mappings for gear defaults
-# This is extrapolated from data and might not be complete or 100% accurate
+# Activity type mappings for gear defaults: Garmin activity typeId -> typeKey,
+# as returned by get_activity_types, for the types gear is usually a default
+# for. Any other typeId is reported as activity_<typeId>.
 ACTIVITY_TYPE_MAPPING = {
-    1: "Running",
-    2: "Cycling",
-    3: "Swimming",
-    4: "Fitness",
-    5: "Walking",
-    6: "Hiking",
-    7: "Strength",
-    8: "Other",
+    1: "running",
+    2: "cycling",
+    3: "hiking",
+    4: "other",
+    5: "mountain_biking",
+    6: "trail_running",
+    7: "street_running",
+    8: "track_running",
+    9: "walking",
+    10: "road_biking",
+    13: "strength_training",
+    15: "casual_walking",
+    16: "speed_walking",
+    18: "treadmill_running",
+    19: "cyclocross",
+    20: "downhill_biking",
+    21: "track_cycling",
+    22: "recumbent_cycling",
+    25: "indoor_cycling",
+    26: "swimming",
+    27: "lap_swimming",
+    28: "open_water_swimming",
+    143: "gravel_cycling",
+    152: "virtual_ride",
+    153: "virtual_run",
+    154: "obstacle_run",
+    156: "indoor_running",
+    175: "e_bike_mountain",
+    176: "e_bike_fitness",
+    181: "ultra_run",
 }
 
 GEAR_V2_LIST_ENDPOINT = "/gear-service/gear/v2/list"
@@ -43,6 +66,14 @@ def _normalize_gear_uuid(uuid: Optional[str]) -> Optional[str]:
     return uuid.replace("-", "").lower()
 
 
+def _is_missing_gear(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "gear" in message
+        and ("doesn't exist" in message or "not found" in message or "404" in message)
+    )
+
+
 def configure(client):
     """Configure the module with the Garmin client instance"""
     global garmin_client
@@ -58,6 +89,8 @@ def register_tools(app):
 
         Returns complete gear inventory including free-text notes, usage statistics,
         and default activity associations. The notes field is null when unavailable.
+        defaults maps each activity type (Garmin typeKey, e.g. "running") to the
+        names of its default gear.
         No parameters required - user profile is fetched automatically.
 
         Args:
@@ -171,14 +204,15 @@ def register_tools(app):
             # Re-sort to ensure active comes first
             curated_gear.sort(key=lambda x: x["status"] != "active")
 
-            # Build defaults summary (activity -> gear name)
-            defaults_summary = {}
+            # Build defaults summary (activity -> gear names; an activity type
+            # can have several default gear items, and displayName is null for
+            # gear without a nickname)
+            defaults_summary: Dict[str, List[str]] = {}
             for uuid, activities in defaults_by_uuid.items():
-                gear_name = next(
-                    (g["name"] for g in curated_gear if g["uuid"] == uuid), None
-                )
+                gear = next((g for g in curated_gear if g["uuid"] == uuid), {})
+                gear_name = gear.get("name") or gear.get("full_name") or uuid
                 for activity in activities:
-                    defaults_summary[activity] = gear_name
+                    defaults_summary.setdefault(activity, []).append(gear_name)
 
             return json.dumps(
                 {
@@ -216,6 +250,11 @@ def register_tools(app):
                 indent=2,
             )
         except Exception as e:
+            if _is_missing_gear(e):
+                return (
+                    f"No gear association changed; gear {gear_uuid} was not found "
+                    f"for activity {activity_id}."
+                )
             return f"Error adding gear to activity: {str(e)}"
 
     @app.tool()
@@ -241,6 +280,11 @@ def register_tools(app):
                 indent=2,
             )
         except Exception as e:
+            if _is_missing_gear(e):
+                return (
+                    f"No gear association changed; gear {gear_uuid} was not found "
+                    f"for activity {activity_id}."
+                )
             return f"Error removing gear from activity: {str(e)}"
 
     @app.tool()

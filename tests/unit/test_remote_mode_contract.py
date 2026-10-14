@@ -368,3 +368,64 @@ async def test_course_gpx_escapes_xml_special_characters(
 
     gpx = _json.loads(await _call(courses, "download_course_gpx", {"course_id": 1}))["gpx"]
     ET.fromstring(gpx)  # raises on malformed XML
+
+
+# --- The remote tool set ---------------------------------------------------------
+
+
+def _remote_tools():
+    return remote.register_remote_tools(FastMCP("remote-set"))._tool_manager.list_tools()
+
+
+def _stdio_tool_names():
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "scripts"))
+    from generate_dxt_tools import MODULES
+
+    app = FastMCP("stdio-set")
+    for module in MODULES:
+        app = module.register_tools(app)
+    return {t.name for t in app._tool_manager.list_tools()}
+
+
+def test_remote_withholds_exactly_the_stdio_only_tools():
+    """Remote = stdio minus auth_tools (module-level) minus REMOTE_EXCLUDED_TOOLS.
+
+    Pins both directions: a new tool cannot go missing from remote by accident,
+    and a withheld one cannot reach it.
+    """
+    withheld = _stdio_tool_names() - {t.name for t in _remote_tools()}
+    # A literal, not REMOTE_EXCLUDED_TOOLS: comparing against the constant would
+    # pass whatever the constant held. Withholding a tool from the network server
+    # is a decision, so it should take an edit here as well as in remote.py.
+    assert withheld == {"check_garmin_auth", "login_to_garmin", "delete_activity"}
+
+
+def test_delete_activity_is_stdio_only():
+    assert "delete_activity" in _stdio_tool_names()
+    assert "delete_activity" not in {t.name for t in _remote_tools()}
+
+
+def test_remote_tools_get_the_stdio_filter_treatment():
+    """Remote registers through _ToolFilter, like stdio.
+
+    Registered on the bare FastMCP app, a `-> str` tool gets an auto output
+    schema, so every result is re-wrapped as {"result": "<escaped json>"} and
+    the payload doubles; and it carries no effect annotations, so a client
+    cannot tell a delete from a read.
+    """
+    tools = _remote_tools()
+    assert tools
+    assert [t.name for t in tools if t.output_schema is not None] == []
+    assert [t.name for t in tools if t.annotations is None] == []
+    destructive = {t.name for t in tools if t.annotations.destructiveHint}
+    assert {"delete_workout", "delete_course"} <= destructive
+
+
+def test_an_unmatched_remote_exclusion_fails_closed(monkeypatch):
+    """A renamed tool must not slip past the exclusion and onto the network."""
+    monkeypatch.setattr(remote, "REMOTE_EXCLUDED_TOOLS", frozenset({"no_such_tool"}))
+    with pytest.raises(RuntimeError, match="no_such_tool"):
+        remote.register_remote_tools(FastMCP("rename"))

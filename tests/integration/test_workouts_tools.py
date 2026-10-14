@@ -4,7 +4,7 @@ Integration tests for workouts module MCP tools
 Tests workout tools using FastMCP integration with mocked Garmin API responses.
 """
 import pytest
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 from mcp.server.fastmcp import FastMCP
 from garmin_mcp.client_resolver import set_global_client
 
@@ -12,6 +12,7 @@ from garmin_mcp import workouts
 from garmin_mcp.workouts import (
     _fix_repeat_group_step,
     _normalize_workout_steps,
+    _validate_date,
 )
 from tests.fixtures.garmin_responses import (
     MOCK_WORKOUTS,
@@ -94,6 +95,62 @@ async def test_get_workouts_tool(app_with_workouts, mock_garmin_client):
 
 
 @pytest.mark.asyncio
+async def test_get_workouts_pages_through_whole_library(app_with_workouts, mock_garmin_client):
+    """get_workouts returns every workout, not just the library's first page of 100."""
+    import json as json_module
+
+    first_page = [{"workoutId": i, "workoutName": f"W{i}"} for i in range(100)]
+    second_page = [{"workoutId": i, "workoutName": f"W{i}"} for i in range(100, 105)]
+    mock_garmin_client.get_workouts.side_effect = [first_page, second_page]
+
+    result = await app_with_workouts.call_tool("get_workouts", {})
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["count"] == 105
+    assert result_data["workouts"][-1]["id"] == 104
+    assert mock_garmin_client.get_workouts.call_args_list == [
+        call(1, 100),
+        call(101, 100),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_workouts_stops_when_garmin_repeats_a_page(
+    app_with_workouts, mock_garmin_client
+):
+    """If Garmin ignores the offset, paging stops instead of looping forever."""
+    import json as json_module
+
+    page = [{"workoutId": i, "workoutName": f"W{i}"} for i in range(100)]
+    mock_garmin_client.get_workouts.return_value = page
+
+    result = await app_with_workouts.call_tool("get_workouts", {})
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["count"] == 100
+    assert mock_garmin_client.get_workouts.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_workouts_handles_null_sport_type(app_with_workouts, mock_garmin_client):
+    """An explicit null sportType on one workout must not fail the whole list."""
+    import json as json_module
+
+    mock_garmin_client.get_workouts.return_value = [
+        {"workoutId": 1, "workoutName": "Easy Run", "sportType": {"sportTypeKey": "running"}},
+        {"workoutId": 2, "workoutName": "Imported", "sportType": None},
+    ]
+
+    result = await app_with_workouts.call_tool("get_workouts", {})
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["count"] == 2
+    assert result_data["workouts"][0]["sport"] == "running"
+    assert result_data["workouts"][1]["name"] == "Imported"
+    assert "sport" not in result_data["workouts"][1]
+
+
+@pytest.mark.asyncio
 async def test_get_workout_by_id_tool(app_with_workouts, mock_garmin_client):
     """Test get_workout_by_id tool returns specific workout with step details (numeric ID)"""
     import json as json_module
@@ -136,6 +193,133 @@ async def test_get_workout_by_id_tool(app_with_workouts, mock_garmin_client):
     assert interval_step["type"] == "interval"
     assert interval_step["target_type"] == "pace.zone"
     assert interval_step["target_zone"] == 4
+
+
+@pytest.mark.asyncio
+async def test_get_workout_by_id_tool_keeps_target_units(app_with_workouts, mock_garmin_client):
+    """Target units survive curation; without them a range in % FTP reads as watts"""
+    import json as json_module
+
+    # Shapes as Garmin Connect returns them for a workout uploaded with these targets
+    power = {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "power.zone", "displayOrder": 2}
+    cadence = {"workoutTargetTypeId": 3, "workoutTargetTypeKey": "cadence", "displayOrder": 3}
+    percent = {"unitId": 253, "unitKey": "percent", "factor": 1.0}
+    mock_garmin_client.get_workout_by_id.return_value = {
+        "workoutId": 1,
+        "workoutName": "Units",
+        "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+        "poolLength": None,
+        "poolLengthUnit": None,
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+            "workoutSteps": [
+                {
+                    "type": "ExecutableStepDTO",
+                    "stepOrder": 1,
+                    "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+                    "targetType": power,
+                    "targetValueOne": 76.0,
+                    "targetValueTwo": 81.0,
+                    "targetValueUnit": percent,
+                    "secondaryTargetType": cadence,
+                    "secondaryTargetValueOne": 85.0,
+                    "secondaryTargetValueTwo": 95.0,
+                    "secondaryTargetValueUnit": None,
+                },
+                {
+                    "type": "ExecutableStepDTO",
+                    "stepOrder": 2,
+                    "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+                    "targetType": cadence,
+                    "targetValueOne": 85.0,
+                    "targetValueTwo": 95.0,
+                    "secondaryTargetType": power,
+                    "secondaryTargetValueOne": 76.0,
+                    "secondaryTargetValueTwo": 81.0,
+                    "secondaryTargetValueUnit": percent,
+                },
+            ],
+        }],
+    }
+
+    result = await app_with_workouts.call_tool("get_workout_by_id", {"workout_id": 1})
+
+    result_data = json_module.loads(result[0][0].text)
+    assert "pool_length" not in result_data
+    power_first, cadence_first = result_data["segments"][0]["steps"]
+    assert power_first["target_value_unit"] == "percent"
+    assert "secondary_target_value_unit" not in power_first
+    assert "target_value_unit" not in cadence_first
+    assert cadence_first["secondary_target_value_unit"] == "percent"
+
+
+@pytest.mark.asyncio
+async def test_get_workout_by_id_tool_keeps_pool_length(app_with_workouts, mock_garmin_client):
+    """Pool length is set on the workout, not the segment"""
+    import json as json_module
+
+    mock_garmin_client.get_workout_by_id.return_value = {
+        "workoutId": 1,
+        "workoutName": "Pool",
+        "sportType": {"sportTypeId": 4, "sportTypeKey": "swimming"},
+        "poolLength": 50.0,
+        "poolLengthUnit": {"unitId": 1, "unitKey": "meter", "factor": 100.0},
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 4, "sportTypeKey": "swimming"},
+            "poolLength": None,
+            "poolLengthUnit": None,
+            "workoutSteps": [],
+        }],
+    }
+
+    result = await app_with_workouts.call_tool("get_workout_by_id", {"workout_id": 1})
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["pool_length"] == 50.0
+    assert result_data["pool_length_unit"] == "meter"
+
+
+@pytest.mark.asyncio
+async def test_get_workout_by_id_tool_raw_returns_garmin_json(app_with_workouts, mock_garmin_client):
+    """raw=True returns Garmin's workout JSON unchanged instead of the curated summary"""
+    import json as json_module
+
+    mock_garmin_client.get_workout_by_id.return_value = MOCK_WORKOUT_DETAILS
+
+    result = await app_with_workouts.call_tool(
+        "get_workout_by_id",
+        {"workout_id": 123456, "raw": True}
+    )
+
+    assert json_module.loads(result[0][0].text) == MOCK_WORKOUT_DETAILS
+
+
+@pytest.mark.asyncio
+async def test_get_workout_by_id_handles_null_optional_sections(
+    app_with_workouts, mock_garmin_client
+):
+    """Partial workout payloads may omit sport and step sections as null."""
+    import copy
+    import json as json_module
+
+    workout_with_null_sections = copy.deepcopy(MOCK_WORKOUT_DETAILS)
+    workout_with_null_sections["sportType"] = None
+    workout_with_null_sections["workoutSegments"][0]["sportType"] = None
+    workout_with_null_sections["workoutSegments"][0]["workoutSteps"] = None
+    mock_garmin_client.get_workout_by_id.return_value = workout_with_null_sections
+
+    result = await app_with_workouts.call_tool(
+        "get_workout_by_id",
+        {"workout_id": 123456},
+    )
+
+    data = json_module.loads(result[0][0].text)
+    assert data["id"] == 123456
+    assert data["segments"][0]["order"] == 1
+    assert "sport" not in data["segments"][0]
+    assert "steps" not in data["segments"][0]
 
 
 @pytest.mark.asyncio
@@ -331,6 +515,63 @@ async def test_upload_workout_tool(app_with_workouts, mock_garmin_client):
     # Verify - dict is passed directly to the API
     assert result is not None
     mock_garmin_client.upload_workout.assert_called_once_with(workout_data)
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_sport_type_ids_match_reference(app_with_workouts):
+    """The sport type IDs upload_workout lists agree with the validated reference map."""
+    import re
+    from garmin_mcp.workout_templates import WORKOUT_STRUCTURE_REFERENCE
+
+    tools = {tool.name: tool for tool in await app_with_workouts.list_tools()}
+    description = tools["upload_workout"].description
+    sport_line = description.split("Sport type IDs for workouts", 1)[1].splitlines()[1]
+    pairs = re.findall(r"(\d+) = (\w+)", sport_line)
+
+    assert ("12", "walking") in pairs
+    reference = WORKOUT_STRUCTURE_REFERENCE["sportType_values"]
+    for sport_type_id, sport_type_key in pairs:
+        assert reference[sport_type_id]["sportTypeKey"] == sport_type_key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["upload_workout", "upload_workouts", "schedule_workouts"])
+async def test_workout_upload_tools_document_pace_units(app_with_workouts, tool_name):
+    """Tools that accept raw target values say pace is in m/s, not min/km."""
+    tools = {tool.name: tool for tool in await app_with_workouts.list_tools()}
+    assert "3.333 m/s" in tools[tool_name].description
+
+
+@pytest.mark.asyncio
+async def test_upload_workout_passes_percent_ftp_range_through(app_with_workouts, mock_garmin_client):
+    """A custom % FTP range reaches Garmin unchanged; without the unit it means watts"""
+    import copy
+
+    mock_garmin_client.upload_workout.return_value = {"workoutId": 1, "workoutName": "Sweet spot"}
+    workout_data = {
+        "workoutName": "Sweet spot",
+        "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+        "workoutSegments": [{
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 2, "sportTypeKey": "cycling"},
+            "workoutSteps": [{
+                "type": "ExecutableStepDTO",
+                "stepOrder": 1,
+                "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+                "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+                "endConditionValue": 600.0,
+                "targetType": {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "power.zone"},
+                "targetValueOne": 76.0,
+                "targetValueTwo": 81.0,
+                "targetValueUnit": {"unitKey": "percent"},
+            }],
+        }],
+    }
+    expected = copy.deepcopy(workout_data)
+
+    await app_with_workouts.call_tool("upload_workout", {"workout_data": workout_data})
+
+    mock_garmin_client.upload_workout.assert_called_once_with(expected)
 
 
 @pytest.mark.asyncio
@@ -1294,7 +1535,14 @@ async def test_get_garmin_coach_workout_tools(
                         "trainingPlanDetailsDTO": {
                             "athletePlanId": 12345,
                             "workoutsPerWeek": 4,
+                            "remainingAtpWorkoutsForWeek": 2,
                             "trainingType": "RUNNING",
+                            "registrationDate": "2024-01-01",
+                            "planCompleted": False,
+                            "athleteRace": {
+                                "raceName": "City 5K",
+                                "raceDay": "2024-03-10",
+                            },
                         },
                         "workoutScheduleSummaries": [
                             {
@@ -1354,7 +1602,12 @@ async def test_get_garmin_coach_workout_tools(
             "training_plan_id": 12345,
             "classification": "FBT_ADAPTIVE",
             "training_type": "RUNNING",
+            "race_name": "City 5K",
+            "race_day": "2024-03-10",
             "workouts_per_week": 4,
+            "remaining_workouts_this_week": 2,
+            "registration_date": "2024-01-01",
+            "plan_completed": False,
         }
     ]
     assert result_data["count"] == 2
@@ -1607,7 +1860,78 @@ async def test_get_garmin_coach_workouts_rejects_invalid_date(
     mock_garmin_client.query_garmin_graphql.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_get_training_plan_workouts_no_active_plan(
+    app_with_workouts, mock_garmin_client
+):
+    """Test get_training_plan_workouts handles Garmin's null no-plan response"""
+    mock_garmin_client.query_garmin_graphql.return_value = {
+        "data": {"trainingPlanScalar": None}
+    }
+
+    result = await app_with_workouts.call_tool(
+        "get_training_plan_workouts",
+        {"calendar_date": "2024-01-15"},
+    )
+
+    assert result[0][0].text == "No training plan workouts scheduled for 2024-01-15."
+    mock_garmin_client.query_garmin_graphql.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_training_plan_workouts_null_schedule_summaries(
+    app_with_workouts, mock_garmin_client
+):
+    """Test get_training_plan_workouts handles completed plans with null schedules"""
+    import json as json_module
+
+    mock_garmin_client.query_garmin_graphql.return_value = {
+        "data": {
+            "trainingPlanScalar": {
+                "trainingPlanWorkoutScheduleDTOS": [
+                    {
+                        "planName": "Completed Garmin Run Coach Plan",
+                        "workoutScheduleSummaries": None,
+                    }
+                ]
+            }
+        }
+    }
+
+    result = await app_with_workouts.call_tool(
+        "get_training_plan_workouts",
+        {"calendar_date": "2024-01-15"},
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["training_plans"] == ["Completed Garmin Run Coach Plan"]
+    assert result_data["count"] == 0
+    assert result_data["workouts"] == []
+
+
 # Delete workout tests
+@pytest.mark.asyncio
+async def test_delete_workout_requires_confirmation(app_with_workouts, mock_garmin_client):
+    """Test delete_workout returns a preview unless confirm=true"""
+    import json as json_module
+
+    mock_garmin_client.get_workout_by_id.return_value = {
+        "workoutId": 123456,
+        "workoutName": "Easy Run",
+        "sportType": {"sportTypeKey": "running"},
+    }
+
+    result = await app_with_workouts.call_tool(
+        "delete_workout",
+        {"workout_id": 123456}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "needs_confirmation"
+    assert result_data["workout"]["name"] == "Easy Run"
+    mock_garmin_client.delete_workout.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_delete_workout_success(app_with_workouts, mock_garmin_client):
     """Test delete_workout tool when the library call succeeds"""
@@ -1616,11 +1940,16 @@ async def test_delete_workout_success(app_with_workouts, mock_garmin_client):
     # The MCP tool now delegates to garmin_client.delete_workout(id)
     # (high-level method). Success is signalled by absence of exception.
     mock_garmin_client.delete_workout.return_value = {}
+    mock_garmin_client.get_workout_by_id.return_value = {
+        "workoutId": 123456,
+        "workoutName": "Easy Run",
+        "sportType": {"sportTypeKey": "running"},
+    }
 
     workout_id = 123456
     result = await app_with_workouts.call_tool(
         "delete_workout",
-        {"workout_id": workout_id}
+        {"workout_id": workout_id, "confirm": True}
     )
 
     assert result is not None
@@ -1637,11 +1966,12 @@ async def test_delete_workout_failure(app_with_workouts, mock_garmin_client):
     import json as json_module
 
     mock_garmin_client.delete_workout.side_effect = Exception("API Error 404")
+    mock_garmin_client.get_workout_by_id.return_value = {"workoutId": 999999}
 
     workout_id = 999999
     result = await app_with_workouts.call_tool(
         "delete_workout",
-        {"workout_id": workout_id}
+        {"workout_id": workout_id, "confirm": True}
     )
 
     assert result is not None
@@ -1657,16 +1987,40 @@ async def test_delete_workout_exception(app_with_workouts, mock_garmin_client):
     import json as json_module
 
     mock_garmin_client.delete_workout.side_effect = Exception("Network error")
+    mock_garmin_client.get_workout_by_id.return_value = {"workoutId": 123456}
 
     result = await app_with_workouts.call_tool(
         "delete_workout",
-        {"workout_id": 123456}
+        {"workout_id": 123456, "confirm": True}
     )
 
     assert result is not None
     result_data = json_module.loads(result[0][0].text)
     assert result_data["status"] == "failed"
     assert "Network error" in result_data["message"]
+
+
+@pytest.mark.asyncio
+async def test_delete_workout_handles_null_sport_type(app_with_workouts, mock_garmin_client):
+    """A workout whose sportType is null can still be previewed and deleted."""
+    import json as json_module
+
+    mock_garmin_client.delete_workout.return_value = {}
+    mock_garmin_client.get_workout_by_id.return_value = {
+        "workoutId": 123456,
+        "workoutName": "Imported",
+        "sportType": None,
+    }
+
+    result = await app_with_workouts.call_tool(
+        "delete_workout",
+        {"workout_id": 123456, "confirm": True}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "success"
+    assert result_data["workout"]["name"] == "Imported"
+    mock_garmin_client.delete_workout.assert_called_once_with(123456)
 
 
 # Error handling tests
@@ -1704,15 +2058,39 @@ async def test_upload_workout_exception(app_with_workouts, mock_garmin_client):
 
 # delete_workouts tests
 @pytest.mark.asyncio
+async def test_delete_workouts_requires_confirmation(app_with_workouts, mock_garmin_client):
+    """Test delete_workouts returns a preview unless confirm=true"""
+    import json as json_module
+
+    mock_garmin_client.get_workout_by_id.return_value = {
+        "workoutId": 123456,
+        "workoutName": "Easy Run",
+        "sportType": {"sportTypeKey": "running"},
+    }
+
+    result = await app_with_workouts.call_tool(
+        "delete_workouts",
+        {"workout_ids": [123456]}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["status"] == "needs_confirmation"
+    assert result_data["total"] == 1
+    assert result_data["workouts"][0]["name"] == "Easy Run"
+    mock_garmin_client.delete_workout.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_delete_workouts_single(app_with_workouts, mock_garmin_client):
     """Test delete_workouts with a single workout ID"""
     import json as json_module
 
     mock_garmin_client.delete_workout.return_value = {}
+    mock_garmin_client.get_workout_by_id.return_value = {"workoutId": 123456}
 
     result = await app_with_workouts.call_tool(
         "delete_workouts",
-        {"workout_ids": [123456]}
+        {"workout_ids": [123456], "confirm": True}
     )
 
     assert result is not None
@@ -1730,10 +2108,15 @@ async def test_delete_workouts_multiple(app_with_workouts, mock_garmin_client):
     import json as json_module
 
     mock_garmin_client.delete_workout.return_value = {}
+    mock_garmin_client.get_workout_by_id.side_effect = [
+        {"workoutId": 111},
+        {"workoutId": 222},
+        {"workoutId": 333},
+    ]
 
     result = await app_with_workouts.call_tool(
         "delete_workouts",
-        {"workout_ids": [111, 222, 333]}
+        {"workout_ids": [111, 222, 333], "confirm": True}
     )
 
     assert result is not None
@@ -1753,10 +2136,14 @@ async def test_delete_workouts_partial_failure(app_with_workouts, mock_garmin_cl
         {},
         Exception("API Error 404"),
     ]
+    mock_garmin_client.get_workout_by_id.side_effect = [
+        {"workoutId": 111},
+        {"workoutId": 999},
+    ]
 
     result = await app_with_workouts.call_tool(
         "delete_workouts",
-        {"workout_ids": [111, 999]}
+        {"workout_ids": [111, 999], "confirm": True}
     )
 
     assert result is not None
@@ -1775,10 +2162,11 @@ async def test_delete_workouts_exception(app_with_workouts, mock_garmin_client):
     import json as json_module
 
     mock_garmin_client.delete_workout.side_effect = Exception("Network error")
+    mock_garmin_client.get_workout_by_id.return_value = {"workoutId": 123456}
 
     result = await app_with_workouts.call_tool(
         "delete_workouts",
-        {"workout_ids": [123456]}
+        {"workout_ids": [123456], "confirm": True}
     )
 
     assert result is not None
@@ -2207,6 +2595,90 @@ async def test_schedule_workouts_idempotent(app_with_workouts, mock_garmin_clien
 
 
 @pytest.mark.asyncio
+async def test_schedule_workouts_string_workout_id_is_idempotent(
+    app_with_workouts, mock_garmin_client
+):
+    """A string workout_id still matches Garmin's int workoutId in the pre-check."""
+    import json as json_module
+
+    mock_garmin_client.query_garmin_graphql.return_value = {
+        "data": {
+            "workoutScheduleSummariesScalar": [
+                {"workoutId": 123456, "scheduleDate": "2024-01-15"}
+            ]
+        }
+    }
+
+    result = await app_with_workouts.call_tool(
+        "schedule_workouts",
+        {"schedules": [{"workout_id": "123456", "calendar_date": "2024-01-15"}]}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    entry = result_data["results"][0]
+    assert entry["status"] == "success"
+    assert entry["idempotent"] is True
+    assert entry["workout_id"] == 123456
+    mock_garmin_client.client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_schedule_workouts_non_string_date_keeps_earlier_results(
+    app_with_workouts, mock_garmin_client
+):
+    """A non-string date fails its own item instead of aborting the batch."""
+    import json as json_module
+    from unittest.mock import MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_garmin_client.client.post.return_value = mock_response
+
+    schedules = [
+        {"workout_id": 111, "calendar_date": "2024-01-15"},
+        {"workout_id": 222, "calendar_date": 20240117},
+    ]
+    result = await app_with_workouts.call_tool(
+        "schedule_workouts",
+        {"schedules": schedules}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["total"] == 2
+    assert result_data["succeeded"] == 1
+    assert result_data["results"][0]["status"] == "success"
+    assert result_data["results"][1]["status"] == "failed"
+    assert "YYYY-MM-DD" in result_data["results"][1]["message"]
+    mock_garmin_client.client.post.assert_called_once_with(
+        "connectapi", "workout-service/schedule/111", json={"date": "2024-01-15"}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("calendar_date", ["2024-02-30", "2024-13-01", "2024-01-15\n"])
+async def test_schedule_workouts_rejects_nonexistent_or_padded_date(
+    app_with_workouts, mock_garmin_client, calendar_date
+):
+    """Dates that only look like YYYY-MM-DD are rejected before any API call."""
+    import json as json_module
+    from unittest.mock import MagicMock
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_garmin_client.client.post.return_value = mock_response
+
+    result = await app_with_workouts.call_tool(
+        "schedule_workouts",
+        {"schedules": [{"workout_id": 123456, "calendar_date": calendar_date}]}
+    )
+
+    result_data = json_module.loads(result[0][0].text)
+    assert result_data["results"][0]["status"] == "failed"
+    assert "YYYY-MM-DD" in result_data["results"][0]["message"]
+    mock_garmin_client.client.post.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_schedule_workouts_inline_upload(app_with_workouts, mock_garmin_client):
     """Test schedule_workouts with inline workout_data uploads-and-schedules in one call"""
     import json as json_module
@@ -2404,6 +2876,24 @@ async def test_schedule_workouts_inline_upload_no_id_returned(app_with_workouts,
     assert result_data["failed"] == 1
     assert result_data["results"][0]["status"] == "failed"
     mock_garmin_client.client.post.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Date validation helper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["2024-02-30", "2024-13-01", "2024-01-15\n", "20240115", 20240115, None],
+)
+def test_validate_date_rejects_invalid_values(value):
+    with pytest.raises(ValueError, match="expected YYYY-MM-DD"):
+        _validate_date(value, "calendar_date")
+
+
+def test_validate_date_accepts_leap_day():
+    assert _validate_date("2024-02-29", "calendar_date") == "2024-02-29"
 
 
 # ---------------------------------------------------------------------------
