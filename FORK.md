@@ -134,6 +134,13 @@ coverage.
   1789330190 over 2026-09-13..09-26: 7 calendar entries against 5 generated
   workouts. Anything answering "how many sessions this week" from the feed
   alone is wrong. Pinned by `test_coach_progress_and_sensors.py`.
+- **Garmin's "completed" means ended, not finished.** A cancelled (quit) plan is
+  listed under `/atp-api/atp/athlete/completed` and carries `planCompleted: true`
+  as well as a non-null `quit` — observed on plan 1789330190 after it was quit,
+  2026-10-14. `get_coach_plans` therefore reports `status` as `active`,
+  `completed`, `quit`, or `ended` (over, but quit could not be read), and never
+  infers "completed" from the list alone. Pinned by
+  `test_coach_progress_and_sensors.py`.
 - **`protected` and `benchmark` are different fields, not aliases.**
   `protected` comes from the GraphQL workout feed, `benchmark` from the ATP
   calendar; neither service sends the other's key. They coincided on the single
@@ -395,7 +402,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1072 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1077 at time of writing).
 - Tool counts: **stdio 172**, **remote 169** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

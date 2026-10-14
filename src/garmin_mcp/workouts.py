@@ -1653,6 +1653,10 @@ def register_tools(app):
         None of this is in get_garmin_coach_workouts, which returns the
         workouts and a little plan metadata but not the plan's intent.
 
+        `plan_completed` is Garmin's "this plan has ended" flag, and it is ALSO
+        true for a plan you quit. Read `quit` to tell a cancelled plan from a
+        finished one.
+
         `pre_plan_training_pace_seconds` is a bare number whose unit Garmin
         does not state. Evidence points to seconds-per-MILE but it is not
         confirmed, so do not convert it or compare it to a per-kilometre pace
@@ -1753,6 +1757,9 @@ def register_tools(app):
                 # default favours per-mile too: 10:17/mi is a plausible
                 # beginner default and 16:33/mi is not a pace anyone would be
                 # defaulted to. Both surviving branches point the same way.
+                #
+                # The plan was quit in 2026-10, so no further evidence can come
+                # from this account; the question is closed as unresolved.
                 #
                 # It stays UNRESOLVED because no branch is directly observed,
                 # NOT because the readings are balanced -- they are not, and
@@ -1862,19 +1869,51 @@ def register_tools(app):
 
     @app.tool()
     async def get_coach_plans(ctx: Context, include_completed: bool = True) -> str:
-        """List your Garmin Coach plans, active and previously completed.
+        """List your Garmin Coach plans: active, completed, and quit.
 
         The entry point: every other Coach tool needs a plan id, and this is
         where one comes from without first fetching a week of workouts.
+
+        `status` is "active", "completed" (ran to the end) or "quit"
+        (cancelled). Garmin files quit plans under its completed list and sets
+        planCompleted on them, so its own "completed" means only "ended" -- a
+        plan cancelled weeks before race day reads as finished unless `quit`
+        is checked, which this does. "ended" means the plan is over but whether
+        it was quit could not be determined.
 
         Note this does NOT use `trainingplan-service`, which returns an empty
         list for adaptive plans even when one is active — see FORK.md.
 
         Args:
-            include_completed: Also return finished plans (default True).
+            include_completed: Also return plans that have ended, whether
+                completed or quit (default True).
         """
         try:
             client = get_client(ctx)
+
+            def _ended_status(plan):
+                # Verified 2026-10-14 on a cancelled plan: the plan-detail payload
+                # carries a non-null `quit`, AND planCompleted=true, AND the plan
+                # is listed under /completed. So "completed" there means ended.
+                # Whether the list entries carry `quit` themselves is not
+                # verified (the list fixture is a trimmed sample), so read it
+                # from the entry when present and from the detail otherwise.
+                if "quit" in plan:
+                    return "quit" if plan.get("quit") is not None else "completed"
+                plan_id = plan.get("athletePlanId")
+                if plan_id is None:
+                    return "ended"
+                try:
+                    detail = client.connectapi(
+                        f"/atp-api/atp/athlete/plan?lang=en&athletePlanId={int(plan_id)}"
+                    )
+                except Exception:
+                    # Don't fail the whole list over one plan, and don't guess:
+                    # "completed" here is exactly the mislabel being fixed.
+                    return "ended"
+                if not isinstance(detail, dict) or "quit" not in detail:
+                    return "ended"
+                return "quit" if detail.get("quit") is not None else "completed"
 
             def _summarise(plan, completed):
                 if not isinstance(plan, dict):
@@ -1887,7 +1926,7 @@ def register_tools(app):
                     goal_time = f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
                 summary = {
                     "plan_id": plan.get("athletePlanId"),
-                    "status": "completed" if completed else "active",
+                    "status": _ended_status(plan) if completed else "active",
                     "race_name": race.get("raceName"),
                     "race_day": race.get("raceDay"),
                     "goal_time": goal_time,

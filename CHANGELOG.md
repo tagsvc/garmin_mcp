@@ -5,6 +5,30 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## A cancelled Coach plan no longer reads as completed; course activity type — 2026-10-14
+
+**`get_coach_plans` reported a quit plan as `"status": "completed"`.** The first
+cancelled plan these tools have seen (1789330190, quit before its 2026-11-26
+race day) showed Garmin files quit plans under its `/completed` list and sets
+`planCompleted: true` on them; only a non-null `quit` tells them apart. The tool
+took its status from which list a plan came from, so a cancelled plan read as
+finished. It now reports `active`, `completed`, `quit`, or `ended` — the last
+when a plan is over but `quit` cannot be read, rather than guessing "completed".
+`quit` is read from the list entry when present; the list's shape is unverified
+(its fixture is a trimmed sample), so otherwise it comes from the plan-detail
+payload, where it was observed. `get_coach_plan_details` now documents that its
+`plan_completed` is also true for a quit plan.
+
+**`get_course_details` returned `activity: null`** for a course `get_courses`
+lists as running. The list carries an `activityType` object; the detail
+evidently does not, and the course save response carries a numeric
+`activityTypePk` instead. The tool now reads either shape, adds the raw
+`activity_type_id`, and names the type only when the id is one `upload_course`
+knows. Which shape the detail payload uses is confirmed once this deploys.
+
+The pace-unit note now records that the plan was quit, so the unit can no longer
+be settled from this account.
+
 ## oauthlib 3.3.1 → 4.0.0 (CVE-2026-49265) — 2026-10-14
 
 The weekly audit went red on `oauthlib 3.3.1` (PYSEC-2026-4114 /
