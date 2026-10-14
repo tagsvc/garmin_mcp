@@ -142,7 +142,7 @@ async def test_lists_active_plans_with_goal_and_confidence(mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_completed_plans_are_labelled_and_skippable(mock_garmin_client):
-    finished = [dict(_LIVE_ACTIVE[0], athletePlanId=111, planCompleted=True)]
+    finished = [dict(_LIVE_ACTIVE[0], athletePlanId=111, planCompleted=True, quit=None)]
     mock_garmin_client.connectapi.side_effect = [_LIVE_ACTIVE, finished]
     payload = json.loads(
         await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
@@ -155,6 +155,59 @@ async def test_completed_plans_are_labelled_and_skippable(mock_garmin_client):
                     {"include_completed": False})
     )
     assert payload["count"] == 1 and payload["plans"][0]["status"] == "active"
+
+
+# Observed 2026-10-14 on plan 1789330190 after it was cancelled: the plan-detail
+# payload carried a non-null `quit` AND planCompleted=true, and the plan was
+# listed under /completed. Only quit's non-null-ness is relied on; the value's
+# own shape was not observed, hence the placeholder.
+_QUIT_MARKER = "non-null"
+
+
+@pytest.mark.asyncio
+async def test_a_quit_plan_is_not_reported_as_completed(mock_garmin_client):
+    """Garmin's /completed list holds cancelled plans too; status must say quit."""
+    quit_plan = [dict(_LIVE_ACTIVE[0], planCompleted=True, quit=_QUIT_MARKER)]
+    mock_garmin_client.connectapi.side_effect = [[], quit_plan]
+    payload = json.loads(
+        await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
+    )
+    assert payload["plans"][0]["status"] == "quit"
+
+
+@pytest.mark.asyncio
+async def test_quit_is_read_from_the_detail_when_the_list_entry_lacks_it(
+    mock_garmin_client,
+):
+    """The list entry's shape is unverified; fall back to the detail, which carries quit."""
+    entry = [dict(_LIVE_ACTIVE[0], planCompleted=True)]  # no `quit` key at all
+    assert "quit" not in entry[0]
+    detail = {"athletePlanId": 1789330190, "planCompleted": True, "quit": _QUIT_MARKER}
+    mock_garmin_client.connectapi.side_effect = [[], entry, detail]
+    payload = json.loads(
+        await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
+    )
+    assert payload["plans"][0]["status"] == "quit"
+    assert "athletePlanId=1789330190" in mock_garmin_client.connectapi.call_args_list[2].args[0]
+
+    detail_finished = dict(detail, quit=None)
+    mock_garmin_client.connectapi.side_effect = [[], entry, detail_finished]
+    payload = json.loads(
+        await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
+    )
+    assert payload["plans"][0]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_an_undeterminable_ended_plan_is_not_called_completed(mock_garmin_client):
+    """If quit cannot be read, say "ended" -- "completed" is the mislabel being fixed."""
+    entry = [dict(_LIVE_ACTIVE[0], planCompleted=True)]
+    mock_garmin_client.connectapi.side_effect = [[], entry, RuntimeError("503")]
+    payload = json.loads(
+        await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
+    )
+    assert payload["count"] == 1
+    assert payload["plans"][0]["status"] == "ended"
 
 
 @pytest.mark.asyncio

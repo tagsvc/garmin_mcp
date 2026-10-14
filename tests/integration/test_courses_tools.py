@@ -92,6 +92,39 @@ async def test_get_courses_error_is_caught(app_with_courses, mock_garmin_client)
 # --- get_course_details ---------------------------------------------------
 
 @pytest.mark.asyncio
+async def test_get_course_details_reads_a_numeric_activity_type(app_with_courses, mock_garmin_client):
+    """FORK: a detail payload with activityTypePk and no activityType object.
+
+    Live, get_course_details returned activity: null for a course the list
+    calls running. The save response uses activityTypePk, so read it.
+    """
+    mock_garmin_client.client.connectapi.return_value = {
+        "courseId": 522511675,
+        "courseName": "Westvale Park",
+        "distanceMeter": 3782.16,
+        "activityTypePk": 1,
+        "coursePoints": None,
+        "geoPoints": [{"latitude": 41.0, "longitude": -74.0}],
+    }
+    result = await app_with_courses.call_tool("get_course_details", {"course_id": 522511675})
+    payload = json.loads(result[0][0].text)
+    assert payload["activity"] == "running"
+    assert payload["activity_type_id"] == 1
+    assert payload["waypoints_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_get_course_details_unknown_activity_id_is_not_guessed(app_with_courses, mock_garmin_client):
+    mock_garmin_client.client.connectapi.return_value = {
+        "courseId": 1, "courseName": "X", "activityTypePk": 99999, "geoPoints": [],
+    }
+    result = await app_with_courses.call_tool("get_course_details", {"course_id": 1})
+    payload = json.loads(result[0][0].text)
+    assert payload["activity"] is None
+    assert payload["activity_type_id"] == 99999
+
+
+@pytest.mark.asyncio
 async def test_get_course_details_success(app_with_courses, mock_garmin_client):
     """get_course_details returns full course structure with custom waypoints."""
     mock_garmin_client.client.connectapi.return_value = {

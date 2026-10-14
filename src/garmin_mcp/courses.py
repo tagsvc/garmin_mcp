@@ -219,6 +219,24 @@ def _course_preview(client: Any, course_id: int) -> Dict[str, Any]:
     return {key: value for key, value in preview.items() if value is not None}
 
 
+def _course_activity(data: Dict[str, Any]) -> Dict[str, Any]:
+    """The course's activity type, from whichever shape the payload uses.
+
+    FORK: the course LIST carries an ``activityType`` object with a typeKey
+    (verified live). The course DETAIL endpoint returned none on a live
+    course 2026-10-14, so get_course_details reported ``activity: null`` for a
+    course the list calls running. The save response carries a numeric
+    ``activityTypePk`` instead, so read that too and name it where the id is
+    one upload_course knows. Neither present -> both null, not guessed.
+    """
+    activity_type = data.get("activityType")
+    type_key = activity_type.get("typeKey") if isinstance(activity_type, dict) else None
+    type_id = data.get("activityTypePk")
+    if type_key is None and isinstance(type_id, int):
+        type_key = {pk: key for key, pk in _ACTIVITY_TYPE_IDS.items()}.get(type_id)
+    return {"activity": type_key, "activity_type_id": type_id}
+
+
 def register_tools(app):
     """Register course management tools"""
 
@@ -285,7 +303,7 @@ def register_tools(app):
                 "distance_m": data.get("distanceInMeters") or data.get("distanceMeter"),
                 "elevation_gain_m": data.get("elevationGainInMeters") or data.get("elevationGainMeter"),
                 "elevation_loss_m": data.get("elevationLossInMeters") or data.get("elevationLossMeter"),
-                "activity": (data.get("activityType") or {}).get("typeKey"),
+                **_course_activity(data),
                 "waypoints_count": len(course_points),
                 "waypoints": course_points,
                 "geo_points_count": len(geo_points),
