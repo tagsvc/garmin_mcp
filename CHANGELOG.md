@@ -5,6 +5,23 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Recorded a pip-audit exception for oauthlib — 2026-10-14
+
+The weekly audit went red on `oauthlib 3.3.1` (PYSEC-2026-4114 / CVE-2026-49265,
+fixed in 4.0.0) — present on `main` before the 2026-10-14 sync, so a newly
+published advisory rather than a regression. It is a timing side-channel in
+oauthlib's OAuth2 authorization-*server* PKCE check. Nothing here reaches it:
+the repo never imports oauthlib, its only consumer is garth → requests-oauthlib
+using it as an OAuth1 *client*, and no installed package calls the affected
+functions.
+
+Recorded as `--ignore-vuln PYSEC-2026-4114` with that reasoning beside it,
+rather than bumped: 4.0.0 is a major version on the Garmin login and
+token-refresh path, which CI cannot exercise because tests mock Garmin. Ends when
+garth or requests-oauthlib supports oauthlib 4 and a live login and refresh pass
+on it. Verified the exception is narrow: the audit passes with it, fails without
+it, and still fails on a known-vulnerable package with the flag in place.
+
 ## Upstream sync 2026-10-14 — 54 commits; courses fixed; remote gets annotations
 
 **Course viewing was broken on every course.** `get_course_details` and

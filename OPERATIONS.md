@@ -153,9 +153,19 @@ published advisory with no fix available blocks every unrelated PR until someone
 intervenes. A red `dependency-check` is a stop-and-look signal you have to
 actually look at, not an automatic block.
 
-If an advisory has no fixed version, add an explicit `--ignore-vuln <ID>` to the
-audit step with a comment explaining why, rather than weakening the step. The
-exception then lives in version control as a decision someone made.
+If an advisory has no fixed version, or provably does not reach this code, add
+an explicit `--ignore-vuln <ID>` to the audit step with a comment explaining why
+and what ends it, rather than weakening the step. The exception then lives in
+version control as a decision someone made.
+
+**Active exceptions** (reasoning in full beside the flag in `security.yml`):
+
+| ID | Package | Why not reachable | Ends when |
+|---|---|---|---|
+| `PYSEC-2026-4114` (CVE-2026-49265) | oauthlib 3.3.1 | Flaw is in oauthlib's OAuth2 *server* PKCE check; oauthlib is used here only as an OAuth1 *client*, via garth → requests-oauthlib | garth or requests-oauthlib supports oauthlib 4, and a live Garmin login + token refresh is verified on it |
+
+Review this table whenever the audit step changes. An exception whose end
+condition has been met is a vulnerability nobody is looking at.
 
 A dependency PR that edits `pyproject.toml` without regenerating `uv.lock` fails
 the lock check. The fix is `uv lock` locally, then push to that PR branch.

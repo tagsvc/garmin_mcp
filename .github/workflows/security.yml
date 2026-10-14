@@ -51,15 +51,33 @@ jobs:
     # and it opens fix PRs) and depends on GitHub's dependency graph; pip-audit
     # is synchronous, reports on the PR that introduces the problem, and reads
     # PyPI advisories directly. See OPERATIONS.md.
+    #
+    # Recorded exceptions -- each one a decision, with the condition that ends it:
+    #
+    #   PYSEC-2026-4114 (CVE-2026-49265, GHSA-xpv3-w29h-x7cv) -- oauthlib 3.3.1,
+    #   fixed in 4.0.0. A timing side-channel in oauthlib's OAuth2 *authorization
+    #   server* PKCE check (code_challenge_method_plain / _s256). Not reachable
+    #   here: nothing in this repo imports oauthlib, and its only consumer is
+    #   garth -> requests-oauthlib, which uses it as an OAuth1 *client*
+    #   (OAuth1Session) for Garmin's login. No installed package calls the
+    #   affected functions. This server's own OAuth endpoints come from the MCP
+    #   SDK, not oauthlib.
+    #   Not bumped yet because 4.0.0 is a major version on the Garmin login and
+    #   token-refresh path, which CI cannot exercise (tests mock Garmin); a
+    #   break there would fail every user's session refresh in production.
+    #   REMOVE when garth or requests-oauthlib supports oauthlib 4 and a live
+    #   login + refresh has been verified on it.
     - name: Audit locked dependencies for known vulnerabilities
       run: |
         uv export --frozen --no-dev --no-emit-project -o requirements-audit.txt
-        uvx pip-audit -r requirements-audit.txt --disable-pip
+        uvx pip-audit -r requirements-audit.txt --disable-pip \
+          --ignore-vuln PYSEC-2026-4114
 
     # A scanner that cannot fail is the placeholder this step replaced. If an
-    # advisory has no fixed version available, do NOT weaken this step --
-    # add an explicit `--ignore-vuln <ID>` with a comment saying why, so the
-    # exception is a recorded decision rather than an invisible one.
+    # advisory has no fixed version available, or provably does not reach this
+    # code, do NOT weaken this step -- add an explicit `--ignore-vuln <ID>`
+    # above with a comment saying why and what ends it, so the exception is a
+    # recorded decision rather than an invisible one.
 
   code-quality:
     runs-on: ubuntu-latest
