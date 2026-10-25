@@ -1463,6 +1463,8 @@ def register_tools(app):
             limit: Maximum number of activities to return (default 20, max 100)
         """
         try:
+            if start < 0:
+                return "Error retrieving activities: start must be non-negative"
             # Cap limit at 100 for safety and performance
             limit = min(max(1, limit), 100)
 
