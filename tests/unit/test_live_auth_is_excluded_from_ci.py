@@ -33,12 +33,34 @@ def _without_comments(text: str) -> str:
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
 
 
+# The one exemption: the installed library exercised with its transport mocked.
+# A no-argument Garmin() holds no credentials and cannot log in; when the very
+# next statement replaces connectapi with a Mock, nothing can reach Garmin.
+# Upstream uses this to test the library's own request shaping (2026-10 sync).
+_MOCKED_TRANSPORT = re.compile(
+    r"^(?P<ind>[ \t]*)(?P<var>\w+)\s*=\s*Garmin\(\)[ \t]*\n"
+    r"(?P=ind)(?P=var)\.connectapi\s*=\s*(?:Mock|MagicMock)\(",
+    re.M,
+)
+
+
+def _performs_live_auth(text: str) -> bool:
+    code = _without_comments(text)
+    if not _LIVE_CALL.search(code):
+        return False
+    # Only a module that never logs in may use the exemption at all.
+    if ".login(" in code:
+        return True
+    return bool(_LIVE_CALL.search(_MOCKED_TRANSPORT.sub("", code)))
+
+
 def _modules_doing_live_auth():
-    found = []
-    for path in sorted(TESTS.rglob("test_*.py")):
-        if _LIVE_CALL.search(_without_comments(path.read_text())):
-            found.append(path)
-    return found
+    # This file is excluded: its own test cases spell out live-login snippets.
+    me = pathlib.Path(__file__).resolve()
+    return [
+        p for p in sorted(TESTS.rglob("test_*.py"))
+        if p.resolve() != me and _performs_live_auth(p.read_text())
+    ]
 
 
 def test_the_detector_still_finds_something():
@@ -75,3 +97,21 @@ def test_no_live_auth_module_is_collected_by_the_ci_selection():
         "the default CI selection collects a module that performs a real Garmin "
         f"login:\n{result.stdout[-1500:]}"
     )
+
+
+@pytest.mark.parametrize("snippet, live", [
+    # exempt: credential-free client, transport mocked on the next statement
+    ("    client = Garmin()\n    client.connectapi = Mock(return_value=[])\n", False),
+    # still live: credentials passed
+    ("    client = Garmin(email, password)\n    client.connectapi = Mock()\n", True),
+    # still live: unmocked client
+    ("    client = Garmin()\n    client.get_activities(0, 5)\n", True),
+    # still live: mocked, but the module also logs in
+    ("    client = Garmin()\n    client.connectapi = Mock()\n    client.login()\n", True),
+    # still live: mock assigned to a different object
+    ("    client = Garmin()\n    other.connectapi = Mock()\n", True),
+    ("    g = Garmin()\n    g.login(token_dir)\n", True),
+])
+def test_the_mocked_transport_exemption_is_narrow(snippet, live):
+    assert _performs_live_auth(snippet) is live
+

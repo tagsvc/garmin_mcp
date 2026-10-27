@@ -6,6 +6,7 @@ getting detailed course waypoints/metadata, downloading course GPX files, and de
 """
 
 import datetime
+from decimal import Decimal
 import io
 import json
 import math
@@ -31,6 +32,10 @@ def configure(client):
     global garmin_client
     garmin_client = client
 
+
+def _gpx_decimal(value: Any) -> str:
+    """GPX uses xsd:decimal; expand exponent notation without rounding."""
+    return format(Decimal(str(value)), "f")
 
 
 _EARTH_RADIUS_M = 6371000.0
@@ -367,7 +372,7 @@ def register_tools(app):
                 if lat is not None and lon is not None:
                     cp_name = cp.get("name") or cp.get("pointType") or "Waypoint"
                     cp_type = cp.get("pointType") or "GENERIC"
-                    lines.append(f"  <wpt lat='{lat}' lon='{lon}'>")
+                    lines.append(f"  <wpt lat='{_gpx_decimal(lat)}' lon='{_gpx_decimal(lon)}'>")
                     lines.append(f"    <name>{escape(cp_name)}</name>")
                     lines.append(f"    <type>{escape(cp_type)}</type>")
                     lines.append("  </wpt>")
@@ -380,8 +385,8 @@ def register_tools(app):
                 lon = p.get("longitude")
                 ele = p.get("elevation")
                 if lat is not None and lon is not None:
-                    ele_tag = f"<ele>{ele}</ele>" if ele is not None else ""
-                    lines.append(f"      <trkpt lat='{lat}' lon='{lon}'>{ele_tag}</trkpt>")
+                    ele_tag = f"<ele>{_gpx_decimal(ele)}</ele>" if ele is not None else ""
+                    lines.append(f"      <trkpt lat='{_gpx_decimal(lat)}' lon='{_gpx_decimal(lon)}'>{ele_tag}</trkpt>")
             lines.append("    </trkseg>")
             lines.append("  </trk>")
             lines.append("</gpx>")

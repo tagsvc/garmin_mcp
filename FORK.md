@@ -77,6 +77,15 @@ coverage.
 - **No live-Garmin validation of imported tokens.** Validation is structural only — a live
   check would make the server a good/bad token oracle and re-introduce the 429 surface.
 - **`auth_tools` is stdio-only** — registered in `__init__.py`, never in `remote.py`.
+- **Each tool call keeps its caller's identity on the worker thread.** Since the
+  2026-10-27 sync, `_ToolFilter` runs every tool body as
+  `anyio.to_thread.run_sync(lambda: asyncio.run(...))` (upstream #449), so the
+  remote server's per-request auth contextvar must cross onto a worker thread
+  and into a fresh event loop for `get_client()` to resolve the right user.
+  anyio carries it; a plain `threading.Thread` does not. If it is ever lost,
+  remote calls fail closed ("client not available") rather than leak a client,
+  but every call breaks. Pinned by `test_remote_mode_contract.py` with concurrent
+  callers holding different tokens; it was confirmed to fail on a plain thread.
 - **Remote registers through `remote.register_remote_tools()`, and nowhere else.**
   It routes every module through `garmin_mcp._ToolFilter` — the wrapper stdio
   uses — so remote tools get upstream's effect annotations and
@@ -398,12 +407,12 @@ taken whole.
   hunk at all. When a hunk changes a helper's signature, grep every call site
   across the package and adopt upstream's caller text along with the helper.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 172 / remote 169.
+**Definition of done:** suite green, invariants intact, tool counts stdio 174 / remote 171.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1077 at time of writing).
-- Tool counts: **stdio 172**, **remote 169** (`auth_tools` and `delete_activity` are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1445 at time of writing).
+- Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.
@@ -417,6 +426,8 @@ stdio/remote split was collapsed, and the first needing no tool migration), on
 2026-09-10 (9 upstream commits: 2 new tools, 7 fixes), on 2026-09-19
 (3 upstream commits: `get_energy_balance` plus docs), and on 2026-10-14 (54
 upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
-fixes; the first sync to route remote registration through `_ToolFilter`). See `CHANGELOG.md` for a
+fixes; the first sync to route remote registration through `_ToolFilter`), and
+on 2026-10-27 (33 upstream commits: 2 new tools, tool bodies moved off the event
+loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). See `CHANGELOG.md` for a
 categorized list of every change relative to upstream, and `README.md` (Remote
 Mode, Security, Token import / refresh) for operational detail.

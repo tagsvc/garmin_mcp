@@ -17,7 +17,7 @@ import io
 import json
 import os
 import zipfile
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from garmin_mcp.activity_management import sanitize_lap_distance
 
@@ -762,6 +762,83 @@ def _record_seconds(records: List[Dict]) -> List[int]:
 
 
 # ---------------------------------------------------------------------------
+# Grade derivation (devices that don't write the record `grade` field)
+# ---------------------------------------------------------------------------
+
+# Derive grade over a distance window centred on each record: long enough to
+# smooth barometric/GPS altitude noise, short enough to follow real terrain.
+_GRADE_WINDOW_M = 100.0
+# Skip records whose window covers less distance than this (stopped, or the
+# very start of the ride) -- a tiny distance turns altitude noise into huge grades.
+_GRADE_MIN_SPAN_M = 20.0
+_GRADE_CLAMP_PCT = 40.0
+# Below this share of records carrying a device grade, treat it as absent.
+_MIN_DEVICE_GRADE_SHARE = 0.05
+
+
+def _derive_grades(records: List[Dict]) -> Optional[str]:
+    """Fill missing record grade_pct from altitude and cumulative distance.
+
+    Device-provided grade is kept when present on enough records. Otherwise
+    each record without a grade gets delta-altitude / delta-distance over a
+    _GRADE_WINDOW_M window centred on it, clamped to +/-_GRADE_CLAMP_PCT.
+
+    Returns "device" or "derived" for where record grades came from, or None
+    when no record ends up with a grade (e.g. no altitude or distance).
+    """
+    device_count = sum(1 for r in records if r.get("grade_pct") is not None)
+    if records and device_count >= _MIN_DEVICE_GRADE_SHARE * len(records):
+        return "device"
+
+    points = [
+        (i, float(r["distance_m"]), float(r["altitude_m"]))
+        for i, r in enumerate(records)
+        if r.get("distance_m") is not None and r.get("altitude_m") is not None
+    ]
+    half = _GRADE_WINDOW_M / 2
+    derived = 0
+    lo = hi = 0
+    for idx, dist, _alt in points:
+        while lo < len(points) - 1 and points[lo][1] < dist - half:
+            lo += 1
+        hi = max(hi, lo)
+        while hi + 1 < len(points) and points[hi + 1][1] <= dist + half:
+            hi += 1
+        span = points[hi][1] - points[lo][1]
+        if span < _GRADE_MIN_SPAN_M or records[idx].get("grade_pct") is not None:
+            continue
+        grade = (points[hi][2] - points[lo][2]) / span * 100
+        records[idx]["grade_pct"] = round(
+            max(-_GRADE_CLAMP_PCT, min(_GRADE_CLAMP_PCT, grade)), 2
+        )
+        derived += 1
+
+    if derived:
+        return "derived"
+    return "device" if device_count else None
+
+
+def _fill_shift_grades(shift_record_counts: List[tuple], records: List[Dict]) -> None:
+    """Set grade_at_shift_pct from the nearest preceding record with a grade.
+
+    shift_record_counts pairs each shift with how many records had been
+    parsed when it occurred. Shifts that already carry a grade are kept.
+    """
+    last_grades: List[Optional[float]] = []
+    last: Optional[float] = None
+    for rec in records:
+        if rec.get("grade_pct") is not None:
+            last = rec["grade_pct"]
+        last_grades.append(last)
+    for shift, n_records in shift_record_counts:
+        if "grade_at_shift_pct" in shift or n_records == 0:
+            continue
+        grade = last_grades[n_records - 1]
+        if grade is not None:
+            shift["grade_at_shift_pct"] = round(grade, 1)
+
+
+# ---------------------------------------------------------------------------
 # Climb detection + VAM
 # ---------------------------------------------------------------------------
 
@@ -1035,8 +1112,8 @@ def _compute_temperature_stats(records: List[Dict]) -> Optional[Dict]:
 
     cool_hr = _safe_round(_safe_avg([r["heart_rate_bpm"] for r in coolest if r.get("heart_rate_bpm")]))
     hot_hr = _safe_round(_safe_avg([r["heart_rate_bpm"] for r in hottest if r.get("heart_rate_bpm")]))
-    cool_power = _safe_round(_safe_avg([r["power_w"] for r in coolest if r.get("power_w")]))
-    hot_power = _safe_round(_safe_avg([r["power_w"] for r in hottest if r.get("power_w")]))
+    cool_power = _safe_round(_safe_avg([r["power_w"] for r in coolest if r.get("power_w") is not None]))
+    hot_power = _safe_round(_safe_avg([r["power_w"] for r in hottest if r.get("power_w") is not None]))
 
     result: Dict[str, Any] = {
         "avg_temp_c": _safe_round(avg_temp),
@@ -1060,27 +1137,35 @@ def _compute_temperature_stats(records: List[Dict]) -> Optional[Dict]:
 # Weight / W/kg lookup
 # ---------------------------------------------------------------------------
 
-def _get_rider_weight_kg(client, activity_date_str: str) -> Optional[float]:
-    """Fetch rider weight from Garmin body composition for the given date."""
-    if client is None:
+# Look this far back for a weigh-in: most people don't weigh in on ride days.
+_WEIGHT_LOOKBACK_DAYS = 90
+
+
+def _get_rider_weight_kg(activity_date_str: str) -> Optional[Tuple[float, str]]:
+    """Return (weight_kg, weigh_in_date) of the latest weigh-in on or before
+    the activity date, looking back up to _WEIGHT_LOOKBACK_DAYS days."""
+    if garmin_client is None:
         return None
     try:
-        data = client.get_body_composition(activity_date_str)
-        if not data:
+        activity_date = datetime.date.fromisoformat(activity_date_str)
+        start_date = activity_date - datetime.timedelta(days=_WEIGHT_LOOKBACK_DAYS)
+        data = garmin_client.get_body_composition(
+            start_date.isoformat(), activity_date.isoformat()
+        )
+        weight_list = (data or {}).get("dateWeightList") or []
+        readings = [
+            (entry.get("calendarDate"), entry.get("weight"))
+            for entry in weight_list
+            if isinstance(entry, dict)
+        ]
+        readings = [
+            (day, weight_g) for day, weight_g in readings
+            if day and weight_g and day <= activity_date_str
+        ]
+        if not readings:
             return None
-        # Response is typically {"startDate": ..., "endDate": ..., "dateWeightList": [...]}
-        weight_list = data.get("dateWeightList") or data.get("totalAverage") and [data]
-        if not weight_list:
-            # Try flat dict
-            weight_g = data.get("weight") or data.get("totalWeightInGrams")
-            if weight_g:
-                return round(weight_g / 1000.0, 2)
-            return None
-        # Find closest entry to the activity date
-        for entry in reversed(weight_list):
-            weight_g = entry.get("weight") or entry.get("totalWeightInGrams")
-            if weight_g:
-                return round(weight_g / 1000.0, 2)
+        day, weight_g = max(readings)
+        return round(weight_g / 1000.0, 2), day
     except Exception:
         pass
     return None
@@ -1244,15 +1329,97 @@ def _compute_hrv_metrics(rr_intervals_s: List[float]) -> Optional[Dict]:
     }
 
 
+def _curate_session(message) -> Dict[str, Any]:
+    """Curate one FIT ``session`` message into the tool's session summary."""
+    session = {
+        "sport": _get_field(message, "sport"),
+        "sub_sport": _get_field(message, "sub_sport"),
+        "start_time": str(_get_field(message, "start_time") or ""),
+        "total_elapsed_time_s": _get_field(message, "total_elapsed_time"),
+        "total_timer_time_s": _get_field(message, "total_timer_time"),
+        "total_distance_m": _get_field(message, "total_distance"),
+        "total_calories": _get_field(message, "total_calories"),
+        "avg_speed_mps": _get_field(message, "enhanced_avg_speed", "avg_speed"),
+        "max_speed_mps": _get_field(message, "enhanced_max_speed", "max_speed"),
+        "avg_power_w": _get_field(message, "avg_power"),
+        "max_power_w": _get_field(message, "max_power"),
+        "normalized_power_w": _get_field(message, "normalized_power"),
+        "avg_cadence_rpm": _get_field(message, "avg_cadence"),
+        "max_cadence_rpm": _get_field(message, "max_cadence"),
+        "avg_heart_rate_bpm": _get_field(message, "avg_heart_rate"),
+        "max_heart_rate_bpm": _get_field(message, "max_heart_rate"),
+        "total_ascent_m": _get_field(message, "total_ascent"),
+        "total_descent_m": _get_field(message, "total_descent"),
+        "total_training_effect": _get_field(message, "total_training_effect"),
+        "avg_left_pco_mm": _get_field(message, "avg_left_pco"),
+        "avg_right_pco_mm": _get_field(message, "avg_right_pco"),
+        "avg_left_torque_effectiveness_pct": _get_field(message, "avg_left_torque_effectiveness"),
+        "avg_right_torque_effectiveness_pct": _get_field(message, "avg_right_torque_effectiveness"),
+        "avg_left_pedal_smoothness_pct": _get_field(message, "avg_left_pedal_smoothness"),
+        "avg_right_pedal_smoothness_pct": _get_field(message, "avg_right_pedal_smoothness"),
+    }
+    # FIT power_phase_type indexes 0/1 are the start/end angles.
+    for side in ("left", "right"):
+        phase = _get_field(message, f"avg_{side}_power_phase")
+        if isinstance(phase, (list, tuple)):
+            if phase:
+                session[f"avg_{side}_power_phase_start_deg"] = phase[0]
+            if len(phase) > 1:
+                session[f"avg_{side}_power_phase_end_deg"] = phase[1]
+        elif phase is not None:
+            session[f"avg_{side}_power_phase_start_deg"] = phase
+    balance_raw = _get_field(message, "left_right_balance")
+    session["avg_left_power_pct"] = _decode_left_right_balance(balance_raw)
+    if session["avg_left_power_pct"] is not None:
+        session["avg_right_power_pct"] = round(100.0 - session["avg_left_power_pct"], 1)
+    session = {k: v for k, v in session.items() if v is not None}
+
+    # Variability Index
+    np_w = session.get("normalized_power_w")
+    avg_w = session.get("avg_power_w")
+    if np_w and avg_w and avg_w > 0:
+        session["variability_index"] = round(np_w / avg_w, 3)
+    return session
+
+
+def _primary_session_index(sessions: List[Dict]) -> int:
+    """Leg of a multisport file to analyse: the only cycling leg, else the longest."""
+    cycling = [i for i, s in enumerate(sessions) if s.get("sport") == "cycling"]
+    if len(cycling) == 1:
+        return cycling[0]
+    return max(
+        range(len(sessions)),
+        key=lambda i: sessions[i].get("total_elapsed_time_s") or 0,
+    )
+
+
+def _records_in_session(records: List[Dict], session: Dict) -> Optional[List[Dict]]:
+    """Records within the session's [start_time, start_time + elapsed) window.
+
+    Returns None when the window or any record timestamp cannot be determined.
+    """
+    start = _parse_fit_timestamp(session.get("start_time"))
+    elapsed = session.get("total_elapsed_time_s")
+    if start is None or not elapsed:
+        return None
+    end = start + datetime.timedelta(seconds=float(elapsed))
+    times = [_parse_fit_timestamp(r.get("timestamp")) for r in records]
+    if any(t is None for t in times):
+        return None
+    return [r for r, t in zip(records, times) if start <= t < end]
+
+
 def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
     """Parse a FIT file and extract structured cycling data."""
     fit_bytes = _extract_fit_bytes(fit_bytes)
     fitfile = fitparse.FitFile(io.BytesIO(fit_bytes))
 
-    session: Dict[str, Any] = {}
+    sessions: List[Dict] = []
     laps: List[Dict] = []
     shifts: List[Dict] = []
     records: List[Dict] = []
+    # (shift, number of records parsed before it) -- to fill derived grades
+    shift_record_counts: List[tuple] = []
     # R-R intervals from the FIT 'hrv' message type, paired with the timestamp
     # of the most recent record message so we can bucket them per lap later.
     # Requires "Log HRV" enabled on the watch AND a chest strap paired.
@@ -1270,40 +1437,7 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
         # Session summary
         # ------------------------------------------------------------------
         if msg_type == "session":
-            session = {
-                "sport": _get_field(message, "sport"),
-                "sub_sport": _get_field(message, "sub_sport"),
-                "start_time": str(_get_field(message, "start_time") or ""),
-                "total_elapsed_time_s": _get_field(message, "total_elapsed_time"),
-                "total_timer_time_s": _get_field(message, "total_timer_time"),
-                "total_distance_m": _get_field(message, "total_distance"),
-                "total_calories": _get_field(message, "total_calories"),
-                "avg_speed_mps": _get_field(message, "enhanced_avg_speed", "avg_speed"),
-                "max_speed_mps": _get_field(message, "enhanced_max_speed", "max_speed"),
-                "avg_power_w": _get_field(message, "avg_power"),
-                "max_power_w": _get_field(message, "max_power"),
-                "normalized_power_w": _get_field(message, "normalized_power"),
-                "avg_cadence_rpm": _get_field(message, "avg_cadence"),
-                "max_cadence_rpm": _get_field(message, "max_cadence"),
-                "avg_heart_rate_bpm": _get_field(message, "avg_heart_rate"),
-                "max_heart_rate_bpm": _get_field(message, "max_heart_rate"),
-                "total_ascent_m": _get_field(message, "total_ascent"),
-                "total_descent_m": _get_field(message, "total_descent"),
-                "total_training_effect": _get_field(message, "total_training_effect"),
-                "avg_left_power_phase_start_deg": _get_field(message, "avg_left_power_phase"),
-                "avg_right_power_phase_start_deg": _get_field(message, "avg_right_power_phase"),
-                "avg_left_pco_mm": _get_field(message, "avg_left_pco"),
-                "avg_right_pco_mm": _get_field(message, "avg_right_pco"),
-                "avg_left_torque_effectiveness_pct": _get_field(message, "avg_left_torque_effectiveness"),
-                "avg_right_torque_effectiveness_pct": _get_field(message, "avg_right_torque_effectiveness"),
-                "avg_left_pedal_smoothness_pct": _get_field(message, "avg_left_pedal_smoothness"),
-                "avg_right_pedal_smoothness_pct": _get_field(message, "avg_right_pedal_smoothness"),
-            }
-            balance_raw = _get_field(message, "left_right_balance")
-            session["avg_left_power_pct"] = _decode_left_right_balance(balance_raw)
-            if session["avg_left_power_pct"] is not None:
-                session["avg_right_power_pct"] = round(100.0 - session["avg_left_power_pct"], 1)
-            session = {k: v for k, v in session.items() if v is not None}
+            sessions.append(_curate_session(message))
 
         # ------------------------------------------------------------------
         # Lap data
@@ -1391,6 +1525,7 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
 
                 shift_entry = {k: v for k, v in shift_entry.items() if v is not None}
                 shifts.append(shift_entry)
+                shift_record_counts.append((shift_entry, len(records)))
 
         # ------------------------------------------------------------------
         # Per-second records
@@ -1474,20 +1609,47 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
     # Post-parse enrichment
     # ------------------------------------------------------------------
 
-    # Variability Index for session
-    np_w = session.get("normalized_power_w")
-    avg_w = session.get("avg_power_w")
-    if np_w and avg_w and avg_w > 0:
-        session["variability_index"] = round(np_w / avg_w, 3)
+    # A multisport FIT file (triathlon, duathlon) has one session per leg,
+    # transitions included, while records and laps span every leg. Summarise
+    # one leg and run the record-based analytics on that leg's records only,
+    # so e.g. run records never enter the bike power curve.
+    multisport = len(sessions) > 1
+    analysis_records = records
+    if multisport:
+        analyzed_index = _primary_session_index(sessions)
+        session = dict(sessions[analyzed_index])
+        leg = f"leg {analyzed_index} ({session.get('sport', 'unknown')})"
+        analysis_records = _records_in_session(records, session)
+        if analysis_records is None:
+            analysis_records = records
+            analysis_note = (
+                f"Multisport file: session summarises {leg}, but record "
+                "timestamps or the session window are missing, so record-based "
+                "analyses cover all legs."
+            )
+        else:
+            analysis_note = (
+                f"Multisport file: session and record-based analyses (power "
+                f"curve, climbs, grade, HR drift, temperature) cover {leg} "
+                "only. See sessions for every leg."
+            )
+    else:
+        session = sessions[0] if sessions else {}
+
+    # Devices that don't write the record grade field: derive it from
+    # altitude + distance so climbs, grade bins and shift terrain still work.
+    grade_source = _derive_grades(records) if records else None
+    if grade_source == "derived":
+        _fill_shift_grades(shift_record_counts, records)
 
     shift_summary = _compute_shift_summary(shifts)
 
     # Record-based analytics (computed from per-second data regardless of include_records flag)
-    grade_stats = _grade_analysis(records) if records else None
-    hr_drift = _compute_hr_drift(records) if records else None
-    temp_stats = _compute_temperature_stats(records) if records else None
-    climbs = _detect_climbs(records) if records else []
-    pdc = _compute_power_duration_curve(records) if records else None
+    grade_stats = _grade_analysis(analysis_records) if analysis_records else None
+    hr_drift = _compute_hr_drift(analysis_records) if analysis_records else None
+    temp_stats = _compute_temperature_stats(analysis_records) if analysis_records else None
+    climbs = _detect_climbs(analysis_records) if analysis_records else []
+    pdc = _compute_power_duration_curve(analysis_records) if analysis_records else None
 
     if grade_stats:
         session["grade_analysis"] = grade_stats
@@ -1503,11 +1665,20 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
         "shifts": shifts,
     }
 
+    if multisport:
+        result["multisport"] = True
+        result["sessions"] = sessions
+        result["analyzed_session_index"] = analyzed_index
+        result["analysis_note"] = analysis_note
+
     if climbs:
         result["climbs"] = climbs
 
     if pdc:
         result["power_duration_curve"] = pdc
+
+    if grade_source:
+        result["grade_source"] = grade_source
 
     # HRV (time-domain) — always include summary if R-R data exists.
     # Raw R-R array only included when include_records=True (can be large).
@@ -1732,12 +1903,23 @@ def register_tools(app):
           balance, torque effectiveness, pedal smoothness
         - Variability Index (NP / avg_power) per session and lap
         - Climb detection with VAM (vertical ascent rate), avg power/cadence/HR per climb,
-          and W/kg per climb (using auto-fetched body weight from Garmin)
+          and W/kg per climb (using the latest Garmin weigh-in on or before the ride,
+          up to 90 days back; rider_weight_date says which weigh-in was used)
         - Grade-correlated stats: avg power, cadence, HR broken down by terrain steepness
+        - Grade comes from the device's per-record grade field when present; otherwise
+          it is derived from altitude and distance (~100 m window). grade_source
+          ("device" | "derived") says which
         - HR drift / cardiac drift coefficient (aerobic decoupling for rides ≥60 min)
         - Temperature correlation: avg HR/power in hottest vs. coolest portions of ride
         - Power Duration Curve: best mean maximal power at 5s, 30s, 1min, 5min, 10min, 20min, 60min
         - Optional full per-second time series when include_records=True
+
+        Multisport files (triathlon, duathlon) contain one session per leg. For
+        these, the response adds multisport=true and a sessions list with every
+        leg; session and the record-based analyses (power curve, climbs, grade,
+        HR drift, temperature) describe one leg only — the cycling leg if there
+        is exactly one, else the longest — given by analyzed_session_index and
+        explained in analysis_note. Laps and records still cover all legs.
 
         Shift quality:
         - proactive: shifted at 70-100 rpm (ideal cadence range)
@@ -1763,8 +1945,7 @@ def register_tools(app):
             activity_id = int(activity_id)
             from garminconnect import Garmin
 
-            client = get_client(ctx)
-            fit_bytes = client.download_activity(
+            fit_bytes = garmin_client.download_activity(
                 activity_id,
                 dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
             )
@@ -1791,14 +1972,16 @@ def register_tools(app):
 
             parsed["activity_id"] = activity_id
 
-            # W/kg: fetch body weight matched to activity date
+            # W/kg: latest weigh-in on or before the activity date
             session = parsed.get("session") or {}
             start_time_str = session.get("start_time", "")
             activity_date = start_time_str[:10] if start_time_str else None
             if activity_date:
-                weight_kg = _get_rider_weight_kg(client, activity_date)
-                if weight_kg:
+                weight = _get_rider_weight_kg(activity_date)
+                if weight:
+                    weight_kg, weigh_in_date = weight
                     parsed["rider_weight_kg"] = weight_kg
+                    parsed["rider_weight_date"] = weigh_in_date
                     # W/kg for session avg power and NP
                     avg_w = session.get("avg_power_w")
                     np_w = session.get("normalized_power_w")
@@ -1825,7 +2008,7 @@ def register_tools(app):
     ) -> str:
         """Get season-best Power Duration Curve across recent activities.
 
-        Downloads FIT files for recent cycling activities and computes best mean maximal
+        Downloads FIT files for recent activities of the requested type and computes best mean maximal
         power at each standard duration. Returns season bests with which activity and date
         each best came from.
 
@@ -1836,7 +2019,8 @@ def register_tools(app):
         Warning: downloads multiple FIT files — may take 30-60 seconds for 20 activities.
 
         Args:
-            num_activities: Number of recent activities to analyze (default 20, max 50)
+            num_activities: Number of recent activities matching activity_type to request
+                            (default 20, max 50)
             activity_type: Activity type to filter (default "cycling")
         """
         if not FITPARSE_AVAILABLE:
@@ -1848,22 +2032,27 @@ def register_tools(app):
         try:
             from garminconnect import Garmin
 
-            client = get_client(ctx)
-            # Fetch recent activities
-            activities = client.get_activities(0, num_activities)
+            # Filter before applying the count so other sports do not consume
+            # the requested window on multi-sport accounts.
+            requested_type = activity_type.lower()
+            activities = garmin_client.get_activities(
+                0, num_activities, activitytype=requested_type
+            )
             if not activities:
                 return "No activities found."
 
-            # Filter by sport type. "cycling" also matches the *_biking typeKeys
-            # (road_biking, mountain_biking); other types must not pull in bike power.
-            requested_type = activity_type.lower()
+            # Keep a local sport guard too. Cycling's parent type includes
+            # virtual_ride, cyclocross, and e-bike types without either substring.
             cycling_activities = [
                 a for a in activities
                 if requested_type in str((a.get("activityType") or {}).get("typeKey", "")).lower()
-                or requested_type in str((a.get("activityType") or {}).get("parentTypeId", "")).lower()
+                or requested_type == str((a.get("activityType") or {}).get("parentTypeId", ""))
                 or (
                     requested_type == "cycling"
-                    and "biking" in str((a.get("activityType") or {}).get("typeKey", "")).lower()
+                    and (
+                        str((a.get("activityType") or {}).get("parentTypeId", "")) == "2"
+                        or "biking" in str((a.get("activityType") or {}).get("typeKey", "")).lower()
+                    )
                 )
             ]
 
@@ -1882,7 +2071,7 @@ def register_tools(app):
                     continue
 
                 try:
-                    fit_bytes = client.download_activity(
+                    fit_bytes = garmin_client.download_activity(
                         act_id,
                         dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL,
                     )

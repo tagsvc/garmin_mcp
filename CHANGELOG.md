@@ -5,6 +5,57 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Upstream sync 2026-10-27 — 33 commits
+
+Syncs Taxuspt/garmin_mcp through `a2ca5fc` (2026-10-14 .. 10-20).
+
+**Taken from upstream:** `push_workout_to_device` and `reschedule_workout`;
+confirmation previews on `delete_weigh_ins`, `delete_custom_food` and
+`delete_food_log`; ~20 correctness fixes, including zero values no longer
+dropped from training metrics, `get_endurance_score` no longer crashing on a day
+without a score, VO2 measurement dates kept, Garmin HTTP failures classified
+before hints are added, cycling data kept in analysis, and GPX coordinates
+written as plain decimals; auth robustness (saved tokens survive a failed
+optional export, `garmin-mcp-auth --diagnose`); recovery snapshots labelled with
+`as_of` and `value_type` (#469); tool profiles (`GARMIN_TOOL_PROFILE`) and bearer
+auth for upstream's own single-user HTTP mode.
+
+**Not fixed upstream, and not by this sync:** `get_training_readiness` and
+`get_recovery_time_remaining` report 0 recovery hours whenever Garmin's
+`recoveryTimeChangePhrase` is `REACHED_ZERO`, discarding the real value. Seen
+live on 2026-10-27: 72h reported as 0h after a run. Fixed separately.
+
+**Worker threads and per-caller identity.** Upstream now runs every tool body on
+an anyio worker thread inside a fresh event loop (#449), and the remote server
+registers through the same `_ToolFilter`, so every remote call now does too. The
+remote server identifies the caller from a per-request context variable, which
+has to cross both hops. Tested before merging: four concurrent calls from two
+callers each saw their own token, while a plain `threading.Thread` lost it. A new
+contract test pins this and was confirmed to fail on the plain thread.
+
+**Merge breakage git did not report**, fixed by adopting upstream's text:
+`get_power_duration_curve` kept a call to a local `client` that upstream's side of
+a hunk had removed (`NameError` on every power-curve request). Upstream also
+dropped the `client` argument from `_get_rider_weight_kg` and
+`_get_activity_type_mapping`; all callers were aligned and checked with a
+call-arity scan.
+
+**Two upstream tests adjusted for this fork:**
+
+- `test_garmin_proxy` expected garminconnect 0.3.2's exception type for a 401 or
+  429. Under the 0.3.5 pin the library already narrows those to
+  `GarminConnectAuthenticationError` and `GarminConnectTooManyRequestsError`, so
+  the expected type is now a parameter. The proxy's hints were already correct.
+- `test_live_auth_is_excluded_from_ci` flagged two upstream modules as doing a
+  real Garmin login. Both build a credential-free `Garmin()` and mock its
+  transport on the next statement, so they never contact Garmin. The detector
+  now exempts exactly that pattern and nothing else (parametrized cases pin it),
+  rather than those tests being pushed out of CI.
+
+Kept from this fork: the `garminconnect==0.3.5` pin, remote-mode GPX handling
+(upstream's decimal fix ported into it), stdio-only auth tools and
+`delete_activity`. Tools: stdio 172 → 174, remote 169 → 171. Tests: 1077 → 1445.
+
 ## A cancelled Coach plan no longer reads as completed; course activity type — 2026-10-14
 
 **`get_coach_plans` reported a quit plan as `"status": "completed"`.** The first
