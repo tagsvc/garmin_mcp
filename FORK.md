@@ -143,6 +143,19 @@ coverage.
   1789330190 over 2026-09-13..09-26: 7 calendar entries against 5 generated
   workouts. Anything answering "how many sessions this week" from the feed
   alone is wrong. Pinned by `test_coach_progress_and_sensors.py`.
+- **Recovery hours come from `recoveryTime`; `recoveryTimeChangePhrase` is not a
+  reading.** Upstream zeroed recovery whenever the phrase was `REACHED_ZERO`. A
+  live post-run snapshot (2026-10-27, `AFTER_POST_EXERCISE_RESET`) carried
+  `REACHED_ZERO` with `recoveryTime` 4320 — the 72h Garmin's app showed — and a
+  recovery factor of 10 (POOR); the tools reported 0h and "recovered". The phrase
+  describes what changed at the snapshot's event; when recovery has drained,
+  Garmin sends the low minute value itself (that morning: 1). Garmin Connect's
+  web client has no display text for the phrase and shows hours from
+  `recoveryTime`. Snapshots are event-driven (wake, activity, nap) and hold until
+  the next event, so values are reported with `as_of` and `input_context`, never
+  as a live countdown. _On merge:_ do not take an upstream change that lets the
+  phrase alter the hours. Pinned by `test_recovery_live_snapshots.py`, built from
+  the real payload and confirmed to fail on the upstream rule.
 - **Garmin's "completed" means ended, not finished.** A cancelled (quit) plan is
   listed under `/atp-api/atp/athlete/completed` and carries `planCompleted: true`
   as well as a non-null `quit` — observed on plan 1789330190 after it was quit,
@@ -411,7 +424,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1445 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1447 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

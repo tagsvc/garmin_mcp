@@ -10,19 +10,20 @@ from garmin_mcp.health_wellness import (
 )
 
 
-def test_hours_from_recovery_minutes_and_reached_zero():
+def test_hours_from_recovery_minutes():
     assert _hours_from_recovery_minutes(1728) == 28.8
-    assert _hours_from_recovery_minutes(106, "REACHED_ZERO") == 0.0
+    assert _hours_from_recovery_minutes(4320) == 72.0
+    assert _hours_from_recovery_minutes(1) == 0.0
     assert _hours_from_recovery_minutes(None) is None
     assert _hours_from_recovery_minutes(True) is None
 
 
 def test_recovery_state_bands():
-    assert _recovery_state(0, None) == "recovered"
-    assert _recovery_state(3, None) == "nearly_recovered"
-    assert _recovery_state(12, None) == "recovering"
-    assert _recovery_state(36, None) == "not_recovered"
-    assert _recovery_state(12, "REACHED_ZERO") == "recovered"
+    assert _recovery_state(0) == "recovered"
+    assert _recovery_state(3) == "nearly_recovered"
+    assert _recovery_state(12) == "recovering"
+    assert _recovery_state(36) == "not_recovered"
+    assert _recovery_state(None) == "unknown"
 
 
 def test_recovery_from_readiness_uses_latest_snapshot():
@@ -46,7 +47,7 @@ def test_recovery_from_readiness_uses_latest_snapshot():
     ]
     curated = _recovery_from_readiness(payload, "training_readiness")
     assert curated["remaining_hours"] == 1.8
-    assert curated["recovery_score"] == 72
+    assert curated["readiness_score"] == 72
     assert curated["state"] == "nearly_recovered"
     assert curated["source"] == "training_readiness"
 
@@ -82,7 +83,7 @@ def test_collect_prefers_training_readiness():
     curated = _collect_recovery_time(client, "2026-09-12")
     assert curated["source"] == "training_readiness"
     assert curated["remaining_hours"] == 10.0
-    assert curated["recovery_score"] == 80
+    assert curated["readiness_score"] == 80
 
 
 def test_collect_falls_back_to_decayed_activity_recovery():

@@ -1332,11 +1332,16 @@ async def test_get_morning_training_readiness_tool(app_with_health_wellness, moc
 
 
 @pytest.mark.asyncio
-async def test_get_morning_training_readiness_recovery_reached_zero(
+async def test_get_morning_training_readiness_recovery_ignores_change_phrase(
     app_with_health_wellness, mock_garmin_client
 ):
-    """REACHED_ZERO means the recovery clock has drained even though Garmin
-    keeps the last assigned minutes in recoveryTime."""
+    """FORK: recoveryTimeChangePhrase is not a reading; recoveryTime is.
+
+    Upstream asserted 0.0 here on the premise that REACHED_ZERO comes with a
+    stale minute value. A live post-run snapshot carried REACHED_ZERO with
+    72h (see test_recovery_live_snapshots.py), so the phrase may not zero the
+    value. 106 minutes is 1.8 hours.
+    """
     mock_garmin_client.get_morning_training_readiness.return_value = {
         **MOCK_MORNING_TRAINING_READINESS,
         "recoveryTime": 106,
@@ -1349,7 +1354,7 @@ async def test_get_morning_training_readiness_recovery_reached_zero(
     )
 
     data = json.loads(result[0][0].text)
-    assert data["recovery_time_hours"] == 0.0
+    assert data["recovery_time_hours"] == 1.8
 
 
 # Error handling tests
@@ -1529,7 +1534,7 @@ async def test_get_recovery_time_remaining_from_readiness(
 
     data = json.loads(result[0][0].text)
     assert data["remaining_hours"] == 12.0
-    assert data["recovery_score"] == 64
+    assert data["readiness_score"] == 64
     assert data["state"] == "recovering"
     assert data["source"] == "training_readiness"
     mock_garmin_client.get_training_readiness.assert_called_once_with("2026-09-12")

@@ -5,6 +5,47 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Recovery hours no longer zeroed by Garmin's change phrase — 2026-10-27
+
+**72 hours of recovery was reported as 0.** After a run, Garmin Connect showed
+"Recovery Time 72h, High Need" while `get_training_readiness` reported
+`recovery_time_hours: 0.0` and `get_recovery_time_remaining` reported
+`remaining_hours: 0.0`, `state: "recovered"`. Anything reading those tools would
+have cleared a hard session the day after hill repeats.
+
+The cause came in with upstream's recovery-time feature (`f4fc10b`) and is still
+present upstream after #469: when a snapshot's `recoveryTimeChangePhrase` was
+`REACHED_ZERO`, the hours were set to 0 whatever `recoveryTime` said, on the
+premise that Garmin then keeps a stale minute value.
+
+The real payload, captured from Garmin Connect's web client, shows otherwise:
+
+| snapshot | `inputContext` | `recoveryTime` | phrase | recovery factor |
+|---|---|---|---|---|
+| 08:03 | `AFTER_WAKEUP_RESET` | 1 min | `NO_CHANGE_SLEEP` | 99 (GOOD) |
+| 15:01 | `AFTER_POST_EXERCISE_RESET` | **4320 min = 72h** | `REACHED_ZERO` | 10 (POOR) |
+
+The phrase describes what changed at the event that produced the snapshot — the
+morning's last minute running out before the run — not the value now. When
+recovery has drained, Garmin sends the low value itself. Garmin Connect has no
+display text for the phrase and shows hours from `recoveryTime`. The athlete
+confirmed waking with zero recovery needed, so the morning value was right both
+before and after this change.
+
+**Fix:** recovery hours always come from `recoveryTime`, and the coarse `state`
+from the hours alone. The phrase is still reported as `change_phrase`.
+
+**Also:** `recovery_score` is renamed `readiness_score` — it was always the
+Training Readiness score (20 on a day with 72h to go). `get_recovery_time_remaining`
+now reports `input_context`, the event behind the snapshot: Garmin recomputes
+recovery at wake-up, after activities and after naps, and the value holds until
+the next one. It is deliberately not decayed into a live countdown between
+events, since Garmin revises it at each.
+
+Tests: two built from the real snapshots (IDs replaced), confirmed to fail on the
+old rule with `0.0 == 72.0`; upstream's tests that encoded the rule now assert the
+phrase is ignored. Suite: 1447 passed.
+
 ## Upstream sync 2026-10-27 — 33 commits
 
 Syncs Taxuspt/garmin_mcp through `a2ca5fc` (2026-10-14 .. 10-20).

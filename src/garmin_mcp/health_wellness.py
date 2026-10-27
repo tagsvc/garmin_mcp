@@ -26,12 +26,16 @@ def _as_snapshot_list(payload: Any) -> List[Dict[str, Any]]:
     return []
 
 
-def _recovery_state(remaining_hours: Optional[float], phrase: Any) -> str:
-    """Map remaining hours / Garmin change phrase to a coarse state."""
-    if phrase == "REACHED_ZERO" or remaining_hours == 0:
-        return "recovered"
+def _recovery_state(remaining_hours: Optional[float]) -> str:
+    """Map remaining recovery hours to a coarse state.
+
+    FORK: from the hours alone. recoveryTimeChangePhrase is not consulted --
+    see _hours_from_recovery_minutes for why it is not a reading.
+    """
     if remaining_hours is None:
         return "unknown"
+    if remaining_hours == 0:
+        return "recovered"
     if remaining_hours <= 6:
         return "nearly_recovered"
     if remaining_hours <= 24:
@@ -39,14 +43,22 @@ def _recovery_state(remaining_hours: Optional[float], phrase: Any) -> str:
     return "not_recovered"
 
 
-def _hours_from_recovery_minutes(minutes: Any, phrase: Any = None) -> Optional[float]:
-    """Convert Garmin recovery minutes to hours.
+def _hours_from_recovery_minutes(minutes: Any) -> Optional[float]:
+    """Convert a snapshot's ``recoveryTime`` (minutes) to hours.
 
-    When ``recoveryTimeChangePhrase`` is ``REACHED_ZERO``, Garmin keeps the last
-    assigned minute value even though the clock has drained to zero.
+    FORK: ``recoveryTimeChangePhrase`` deliberately plays no part. Upstream
+    returned 0.0 whenever it was ``REACHED_ZERO``, on the premise that Garmin
+    then keeps a stale minute value. Observed 2026-10-27, it does not: a
+    snapshot taken straight after a run (inputContext AFTER_POST_EXERCISE_RESET)
+    carried recoveryTime 4320 -- the 72h Garmin's own app showed -- with
+    recoveryTimeChangePhrase REACHED_ZERO and recoveryTimeFactorPercent 10
+    (POOR). The phrase describes what changed at the event that produced the
+    snapshot (the morning's last minute running out before the run), not the
+    value now. When recovery really has drained, Garmin sends the low value
+    itself: that morning's wake snapshot carried recoveryTime 1 with phrase
+    NO_CHANGE_SLEEP. Garmin Connect's web client has no display text for the
+    phrase at all and shows hours from recoveryTime, as this does.
     """
-    if phrase == "REACHED_ZERO":
-        return 0.0
     if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
         return None
     if minutes < 0:
@@ -64,7 +76,7 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         key=lambda item: str(item.get("timestampLocal") or item.get("timestamp") or ""),
     )
     phrase = latest.get("recoveryTimeChangePhrase")
-    hours = _hours_from_recovery_minutes(latest.get("recoveryTime"), phrase)
+    hours = _hours_from_recovery_minutes(latest.get("recoveryTime"))
     if hours is None:
         return None
     score = latest.get("score")
@@ -75,8 +87,15 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         "remaining_hours_at_snapshot": hours,
         "value_type": "snapshot",
         "as_of": latest.get("timestampLocal") or latest.get("timestamp"),
-        "recovery_score": score,
-        "state": _recovery_state(hours, phrase),
+        # FORK: was "recovery_score". This is the Training Readiness score
+        # (0-100), not a recovery measure -- 20 on a day with 72h to go.
+        "readiness_score": score,
+        "state": _recovery_state(hours),
+        # Which event produced the snapshot: Garmin recomputes readiness and
+        # recovery at wake-up, after an activity, and after a nap. The values
+        # hold from as_of until the next such event; the watch counts down
+        # in between, Garmin Connect does not.
+        "input_context": latest.get("inputContext"),
         "source": source,
         "date": latest.get("calendarDate"),
         "timestamp": latest.get("timestampLocal") or latest.get("timestamp"),
@@ -108,9 +127,7 @@ def _curate_training_readiness(r: Dict[str, Any]) -> Dict[str, Any]:
         "sleep_factor_percent": r.get('sleepScoreFactorPercent'),
         "sleep_factor_feedback": r.get('sleepScoreFactorFeedback'),
 
-        "recovery_time_hours": _hours_from_recovery_minutes(
-            r.get('recoveryTime'), r.get('recoveryTimeChangePhrase')
-        ),
+        "recovery_time_hours": _hours_from_recovery_minutes(r.get('recoveryTime')),
         "recovery_factor_percent": r.get('recoveryTimeFactorPercent'),
         "recovery_factor_feedback": r.get('recoveryTimeFactorFeedback'),
 
@@ -180,8 +197,7 @@ def _recovery_from_recent_activities(
             best_end = end
             best = {
                 "remaining_hours": remaining_hours,
-                "recovery_score": None,
-                "state": _recovery_state(remaining_hours, None),
+                "state": _recovery_state(remaining_hours),
                 "source": "recent_activity",
                 "value_type": "estimate",
                 "as_of": now.isoformat(),
@@ -251,7 +267,6 @@ def _collect_recovery_time(
 
     return {
         "remaining_hours": None,
-        "recovery_score": None,
         "state": "unavailable",
         "date": date_str,
         "message": (
@@ -1837,6 +1852,15 @@ def register_tools(app):
         assignments and reports the estimate's as_of time. Today uses the server's
         local date. Request failures are reported as errors, or source_errors when
         another source supplies usable data.
+
+        Garmin recomputes recovery at events -- waking, finishing an activity,
+        a nap -- and `input_context` names the event behind the snapshot (e.g.
+        AFTER_POST_EXERCISE_RESET). The value holds until the next event: an
+        afternoon run's 72h is still 72h in Garmin Connect that evening, while
+        the watch counts down. `change_phrase` (recoveryTimeChangePhrase) says
+        what changed at that event and is NOT a reading: REACHED_ZERO has been
+        seen on a snapshot carrying 72h. `readiness_score` is the Training
+        Readiness score, not a recovery measure.
 
         Args:
             date: Date in YYYY-MM-DD format. Defaults to today.
