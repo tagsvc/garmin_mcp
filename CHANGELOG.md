@@ -5,6 +5,31 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Wrong values fixed: progress units, two record labels, empty FTP — 2026-10-28
+
+Found by auditing every read-only tool against a live account.
+
+- **`get_progress_summary_between_dates` reported Garmin's raw units.**
+  Measured against a run with known totals, the endpoint sends distance and
+  elevation gain in **centimeters** and duration, moving duration and elapsed
+  duration in **milliseconds**. Read as meters, a month of running (40.45 mi)
+  looked like 6,510 km. Values are now converted to meters and seconds, and a
+  new `unit` field names the unit. Distance gets `sum_miles`/`avg_miles`/...
+  on a statute account (`sum_km` on a metric one), elevation `sum_feet`, and
+  durations `sum_hms`. A metric the tool has not verified is passed through
+  with `unit: "unknown"`. Calories were already corrected.
+- **Personal record type 10 was "Fastest 100K Cycling" as a time**, so a 2014
+  ride showed 100 km in "2:57". The value, 177.19, is an average over 1,200
+  one-second samples: it is the **best 20-minute power**, now shown as
+  "177 W". **Type 16**, the weekly goal streak, is counted in weeks, not days.
+- **`get_cycling_ftp`** returned a bare `{}` when Garmin's answer held no FTP;
+  it now says "No cycling FTP data found".
+
+Tests: the progress-summary test that asserted durations pass through
+unchanged encoded the wrong unit (its fixture value was invented); it is
+replaced by tests built from the live run's raw values. 12 deliberate
+breakages were each caught. Suite: 1545 passed.
+
 ## Account units beside the metric values; pace text for workouts — 2026-10-28
 
 Garmin's API sends meters, m/s, meters of elevation and grams or kilograms
