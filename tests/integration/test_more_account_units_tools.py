@@ -319,9 +319,9 @@ async def test_nutrition_weight_targets_in_pounds(app, mock_garmin_client):
 async def test_personal_record_distances_and_elevation_get_companions(app, mock_garmin_client):
     _units(mock_garmin_client)
     mock_garmin_client.get_personal_record.return_value = [
-        {"typeId": 7, "value": 7260.52978515625, "prStartTimeLocalFormatted": "2026-10-24 10:37:12"},
-        {"typeId": 9, "value": 2466.0, "prStartTimeLocalFormatted": "2013-09-08 08:00:00"},
-        {"typeId": 17, "value": 1000.0, "prStartTimeLocalFormatted": "2020-01-01 08:00:00"},
+        {"typeId": 7, "value": 7260.52978515625, "prStartTimeLocalFormatted": "2026-10-24T10:37:12.0"},
+        {"typeId": 9, "value": 2466.0, "prStartTimeLocalFormatted": "2013-09-08T08:00:00.0"},
+        {"typeId": 17, "value": 1000.0, "prStartTimeLocalFormatted": "2020-01-01T08:00:00.0"},
     ]
 
     data = await _call(app, "get_personal_record")

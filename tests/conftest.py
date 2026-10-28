@@ -8,6 +8,35 @@ from mcp.server.fastmcp import FastMCP
 from garmin_mcp.client_resolver import set_global_client
 
 
+@pytest.fixture(autouse=True)
+def units_and_times_contract(request, monkeypatch):
+    """FORK: check every tool call a test makes for a US account.
+
+    A statute_us account must get an account-unit companion beside each
+    metric field and a zone on each curated time (tests/units_times_contract.py).
+    Tests that never set the mock's unit system to statute_us are unaffected.
+    """
+    if "mock_garmin_client" not in request.fixturenames:
+        yield
+        return
+    from tests.units_times_contract import output_violations, result_json
+
+    client = request.getfixturevalue("mock_garmin_client")
+    original = FastMCP.call_tool
+
+    async def checked_call_tool(self, name, arguments):
+        result = await original(self, name, arguments)
+        if client.get_unit_system.return_value == "statute_us":
+            violations = output_violations(result_json(result))
+            assert not violations, (
+                f"{name} breaks the units/times contract:\n  " + "\n  ".join(violations)
+            )
+        return result
+
+    monkeypatch.setattr(FastMCP, "call_tool", checked_call_tool)
+    yield
+
+
 @pytest.fixture
 def mock_garmin_client():
     """Create a mock Garmin client with common methods stubbed"""

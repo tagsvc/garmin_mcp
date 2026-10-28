@@ -1322,7 +1322,8 @@ def register_tools(app):
             # Curate each readiness entry (usually 1-2 per day)
             curated = [_curate_training_readiness(r) for r in readiness_list]
 
-            return json.dumps(curated, indent=2)
+            # Decimal hours get h:mm text: 10.2 h is 10:12.
+            return json.dumps(add_account_units(curated, account_unit_system(garmin_client)), indent=2)
         except Exception as e:
             return f"Error retrieving training readiness data: {str(e)}"
 
@@ -1585,7 +1586,10 @@ def register_tools(app):
 
             summary = _extract_sleep_summary(sleep_data)
 
-            return json.dumps(summary, indent=2)
+            # Decimal hours get h:mm text: 6.37 h is 6:22.
+            return json.dumps(
+                add_account_units(summary, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving sleep summary: {str(e)}"
 
@@ -1642,13 +1646,13 @@ def register_tools(app):
         if not nights:
             return f"No sleep data found between {start_date} and {end_date}."
 
-        return json.dumps({
+        return json.dumps(add_account_units({
             "start_date": start_date,
             "end_date": end_date,
             "nights_requested": days,
             "nights_returned": len(nights),
             "nights": nights,
-        }, indent=2)
+        }, account_unit_system(garmin_client)), indent=2)
 
     @app.tool()
     async def get_stress_data(ctx: Context, date: str) -> str:
@@ -2061,7 +2065,9 @@ def register_tools(app):
             curated = _curate_training_readiness(readiness)
             curated.setdefault("date", date)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving morning training readiness: {str(e)}"
 
@@ -2236,7 +2242,8 @@ def register_tools(app):
                 _collect_recovery_time(garmin_client, date) if date
                 else _collect_latest_recovery_time(garmin_client)
             )
-            return json.dumps(curated, indent=2)
+            # Decimal hours get h:mm text: 10.2 h is 10:12, not 10:20.
+            return json.dumps(add_account_units(curated, account_unit_system(garmin_client)), indent=2)
         except Exception as e:
             return f"Error retrieving recovery time remaining: {str(e)}"
 

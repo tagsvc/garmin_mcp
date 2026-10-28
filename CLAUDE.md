@@ -33,3 +33,5 @@ required checks must pass before it can merge.
    with local from the record's own offset before the profile zone, no `VOLUME` in
    `Dockerfile.remote`, `$PORT` handling).
 3. Re-enumerate tool counts if registration changed (expect stdio 174 / remote 171).
+4. A new read-only tool goes in `tests/integration/test_units_times_sweep.py`'s
+   table; a units/times contract failure is fixed, not allowlisted without a reason.
