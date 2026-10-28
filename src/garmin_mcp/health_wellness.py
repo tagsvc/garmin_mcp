@@ -3,9 +3,20 @@ Health & Wellness Data functions for Garmin Connect MCP Server
 """
 import json
 import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Union
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import (
+    gmt_iso,
+    local_from_offset,
+    local_from_zone,
+    local_today,
+    offset_from_ms,
+    offset_from_pair,
+    profile_time_zone,
+    put_times,
+)
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -86,7 +97,6 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         "remaining_hours": hours,
         "remaining_hours_at_snapshot": hours,
         "value_type": "snapshot",
-        "as_of": latest.get("timestampLocal") or latest.get("timestamp"),
         # FORK: was "recovery_score". This is the Training Readiness score
         # (0-100), not a recovery measure -- 20 on a day with 72h to go.
         "readiness_score": score,
@@ -100,10 +110,14 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         "input_context": latest.get("inputContext"),
         "source": source,
         "date": latest.get("calendarDate"),
-        "timestamp": latest.get("timestampLocal") or latest.get("timestamp"),
         "change_phrase": phrase,
         "level": latest.get("level") or latest.get("readinessLevel"),
     }
+    # FORK: was "as_of" and "timestamp", both Garmin's local timestamp with
+    # no zone (and the GMT one under the same name when the local was
+    # missing). Garmin's `timestamp` is GMT; `timestampLocal` beside it
+    # gives the offset.
+    put_times(curated, "as_of", latest.get("timestamp"), latest.get("timestampLocal"))
     return {key: value for key, value in curated.items() if value is not None}
 
 
@@ -116,7 +130,6 @@ def _curate_training_readiness(r: Dict[str, Any]) -> Dict[str, Any]:
     """
     entry = {
         "date": r.get('calendarDate'),
-        "timestamp": r.get('timestampLocal'),
         "context": r.get('inputContext'),
 
         # Overall readiness
@@ -148,6 +161,7 @@ def _curate_training_readiness(r: Dict[str, Any]) -> Dict[str, Any]:
         "sleep_history_feedback": r.get('sleepHistoryFactorFeedback'),
     }
     # Remove None values
+    put_times(entry, "timestamp", r.get('timestamp'), r.get('timestampLocal'))
     return {k: v for k, v in entry.items() if v is not None}
 
 
@@ -202,7 +216,7 @@ def _recovery_from_recent_activities(
                 "state": _recovery_state(remaining_hours),
                 "source": "recent_activity",
                 "value_type": "estimate",
-                "as_of": now.isoformat(),
+                "as_of_gmt": gmt_iso(now),
                 "activity_id": item.get("activityId"),
                 "activity_name": item.get("activityName"),
             }
@@ -320,9 +334,13 @@ def _collect_recovery_time(
 
     if now is None:
         now = datetime.datetime.now(datetime.timezone.utc)
-    # The tool's default date is server-local today. A current estimate from
-    # recent activities cannot establish the recovery clock on another day.
-    is_today = date_str == now.astimezone().date().isoformat()
+    # A current estimate from recent activities cannot establish the recovery
+    # clock on another day. FORK: "today" is the athlete's (the profile's
+    # zone), not the server's -- UTC on Railway, already tomorrow from 8 PM
+    # in New York.
+    zone = profile_time_zone(client)
+    local_now = now.astimezone(ZoneInfo(zone)) if zone else now.astimezone()
+    is_today = date_str == local_now.date().isoformat()
     if is_today:
         curated = _recovery_from_recent_activities(client, now, source_errors)
         if curated:
@@ -366,8 +384,14 @@ def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
         # Sleep duration and timing
         summary['sleep_seconds'] = daily_sleep.get('sleepTimeSeconds')
         summary['nap_seconds'] = daily_sleep.get('napTimeSeconds')
-        summary['sleep_start'] = daily_sleep.get('sleepStartTimestampGMT')
-        summary['sleep_end'] = daily_sleep.get('sleepEndTimestampGMT')
+        # FORK: were sleep_start/sleep_end, bare GMT epoch milliseconds.
+        # Garmin's *Local epochs beside them give the offset.
+        for stem, key in (("sleep_start", "sleepStart"), ("sleep_end", "sleepEnd")):
+            put_times(
+                summary, stem,
+                daily_sleep.get(f"{key}TimestampGMT"),
+                daily_sleep.get(f"{key}TimestampLocal"),
+            )
 
         # Sleep score and quality. Guard each level with `or {}`: a sleep record
         # can exist while `sleepScores` (or its `overall` block) is an explicit
@@ -572,6 +596,106 @@ def _body_comp_gate_failure(xs: List[float]) -> Optional[str]:
     return None
 
 
+
+# ---------------------------------------------------------------------------
+# FORK: time labels for Garmin payloads these tools return as-is. The payload
+# keeps its shape; siblings are added in its own camelCase style. Series
+# arrays hold bare [UTC epoch ms, value] pairs, so each payload gets the day's
+# own utcOffsetHours (from Garmin's GMT/local pair) to read them locally.
+# ---------------------------------------------------------------------------
+
+def _offset_hours(offset: Any) -> Optional[float]:
+    return offset.total_seconds() / 3600 if offset is not None else None
+
+
+def _label_day_series(payload: Any) -> Any:
+    """Stress, heart rate, respiration, floors: add the day's utcOffsetHours."""
+    if isinstance(payload, dict):
+        offset = offset_from_pair(
+            payload.get("startTimestampGMT"), payload.get("startTimestampLocal")
+        )
+        if offset is not None:
+            payload["utcOffsetHours"] = _offset_hours(offset)
+    return payload
+
+
+def _label_sleep_payload(payload: Any) -> Any:
+    """Sleep: ISO GMT/local beside Garmin's epochs, whose *Local values are
+    the local wall clock written as if UTC (not real epochs)."""
+    if not isinstance(payload, dict):
+        return payload
+    daily = payload.get("dailySleepDTO")
+    if isinstance(daily, dict):
+        for stem in ("sleepStart", "sleepEnd"):
+            labelled: Dict[str, Any] = {}
+            put_times(
+                labelled, stem,
+                daily.get(f"{stem}TimestampGMT"), daily.get(f"{stem}TimestampLocal"),
+            )
+            for suffix, camel in (("_gmt", "Gmt"), ("_local", "Local")):
+                if f"{stem}{suffix}" in labelled:
+                    daily[f"{stem}{camel}"] = labelled[f"{stem}{suffix}"]
+        offset = offset_from_pair(
+            daily.get("sleepStartTimestampGMT"), daily.get("sleepStartTimestampLocal")
+        )
+        if offset is not None:
+            payload["utcOffsetHours"] = _offset_hours(offset)
+    return payload
+
+
+def _label_body_battery_events(events: Any) -> Any:
+    """Body battery events: each event's local start, from its own offset."""
+    for item in events if isinstance(events, list) else []:
+        event = item.get("event") if isinstance(item, dict) else None
+        if not isinstance(event, dict):
+            continue
+        offset = offset_from_ms(event.get("timezoneOffset"))
+        if offset is None:
+            continue
+        local = local_from_offset(event.get("eventStartTimeGmt"), offset)
+        if local:
+            event["eventStartTimeLocal"] = local
+        event["utcOffsetHours"] = _offset_hours(offset)
+    return events
+
+
+def _label_steps(steps: Any, client: Any) -> Any:
+    """15-minute step buckets carry GMT only: local from the profile zone."""
+    if not isinstance(steps, list) or not steps:
+        return steps
+    zone = profile_time_zone(client)
+    if not zone:
+        return steps
+    for bucket in steps:
+        if not isinstance(bucket, dict):
+            continue
+        for key, local_key in (("startGMT", "startLocal"), ("endGMT", "endLocal")):
+            local = local_from_zone(bucket.get(key), zone)
+            if local:
+                bucket[local_key] = local
+        bucket["localTimeZone"] = zone
+    return steps
+
+
+def _label_body_composition(payload: Any) -> Any:
+    """Weigh-ins: ISO times beside Garmin's epochs. `date` is a local
+    pseudo-epoch (the wall clock as UTC); `timestampGMT` a real one."""
+    entries = payload.get("dateWeightList") if isinstance(payload, dict) else None
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        local = entry.get("date")
+        labelled: Dict[str, Any] = {}
+        put_times(
+            labelled, "measured_at", entry.get("timestampGMT"),
+            local if isinstance(local, (int, float)) and not isinstance(local, bool) else None,
+        )
+        if "measured_at_gmt" in labelled:
+            entry["measuredAtGmt"] = labelled["measured_at_gmt"]
+        if "measured_at_local" in labelled:
+            entry["measuredAtLocal"] = labelled["measured_at_local"]
+    return payload
+
 def register_tools(app):
     """Register all health and wellness tools with the MCP server app"""
 
@@ -714,7 +838,8 @@ def register_tools(app):
             for entry in (steps_resp or {}).get("values") or []
         }
 
-        today = datetime.date.today().isoformat()
+        # The athlete's today, not the server's (UTC on Railway).
+        today = local_today(get_client()).isoformat()
         daily = []
         current = start
         while current <= end:
@@ -857,7 +982,8 @@ def register_tools(app):
         except Exception as e:
             return f"Error retrieving energy balance data: {str(e)}"
 
-        today = datetime.date.today().isoformat()
+        # The athlete's today, not the server's (UTC on Railway).
+        today = local_today(get_client()).isoformat()
 
         logged_days = [
             (date_str, v["calories"]) for date_str, v in intake_by_date.items()
@@ -1046,6 +1172,10 @@ def register_tools(app):
     async def get_body_composition(ctx: Context, start_date: str, end_date: Optional[str] = None) -> str:
         """Get body composition data for a single date or date range
 
+        Each weigh-in also gets measuredAtGmt and measuredAtLocal (ISO). Garmin's
+        `date` is a local pseudo-epoch (the wall clock written as UTC) and
+        `timestampGMT` a real epoch; weights are grams.
+
         Args:
             start_date: Date in YYYY-MM-DD format or start date if end_date provided
             end_date: Optional end date in YYYY-MM-DD format for date range
@@ -1060,7 +1190,7 @@ def register_tools(app):
                 if not composition:
                     return f"No body composition data found for {start_date}"
 
-            return json.dumps(composition, indent=2)
+            return json.dumps(_label_body_composition(composition), indent=2)
         except Exception as e:
             return f"Error retrieving body composition data: {str(e)}"
 
@@ -1087,6 +1217,9 @@ def register_tools(app):
         Note: This returns full interval data (~14KB). For a compact summary,
         use get_stats() which includes total_steps.
 
+        Buckets are Garmin's, with startGMT/endGMT in GMT; startLocal/endLocal
+        are added in the Garmin profile's time zone (localTimeZone).
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1095,7 +1228,7 @@ def register_tools(app):
             if not steps_data:
                 return f"No steps data found for {date}"
 
-            return json.dumps(steps_data, indent=2)
+            return json.dumps(_label_steps(steps_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving steps data: {str(e)}"
 
@@ -1122,6 +1255,9 @@ def register_tools(app):
 
         Returns training readiness score and contributing factors.
 
+        Each snapshot's time: timestamp_gmt, and timestamp_local with its UTC
+        offset.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1140,6 +1276,9 @@ def register_tools(app):
     @app.tool()
     async def get_body_battery(ctx: Context, start_date: str, end_date: str) -> str:
         """Get body battery data with events
+
+        Event times: start_time_gmt, and start_time_local from the event's own
+        UTC offset (where the watch was).
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -1165,10 +1304,19 @@ def register_tools(app):
                 for event in (day.get('bodyBatteryActivityEvent') or []):
                     curated_event = {
                         "type": event.get('eventType'),
-                        "start_time": event.get('eventStartTimeGmt'),
                         "body_battery_impact": event.get('bodyBatteryImpact'),
                         "feedback": event.get('shortFeedback'),
                     }
+                    # FORK: was "start_time", Garmin's GMT value with the
+                    # "Gmt" dropped, so a 2:37 PM run read as 6:37 PM. Each
+                    # event carries its own offset (timezoneOffset, ms).
+                    offset = offset_from_ms(event.get('timezoneOffset'))
+                    zone = None if offset else profile_time_zone(get_client(ctx))
+                    if put_times(
+                        curated_event, "start_time", event.get('eventStartTimeGmt'),
+                        offset=offset, zone=zone,
+                    ):
+                        curated_event["local_time_zone"] = zone
                     duration = event.get('durationInMilliseconds')
                     if duration is not None:
                         curated_event['duration_minutes'] = round(duration / 60000, 1)
@@ -1190,6 +1338,11 @@ def register_tools(app):
     async def get_body_battery_events(ctx: Context, date: str) -> str:
         """Get body battery events data
 
+        Garmin's payload as-is, plus event.eventStartTimeLocal and
+        event.utcOffsetHours from the event's own offset. eventStartTimeGmt is
+        GMT, and the stress/body-battery arrays are [UTC epoch ms, ...] pairs:
+        add utcOffsetHours for local time.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1198,7 +1351,7 @@ def register_tools(app):
             if not events:
                 return f"No body battery events found for {date}"
 
-            return json.dumps(events, indent=2)
+            return json.dumps(_label_body_battery_events(events), indent=2)
         except Exception as e:
             return f"Error retrieving body battery events: {str(e)}"
 
@@ -1223,6 +1376,9 @@ def register_tools(app):
     async def get_floors(ctx: Context, date: str) -> str:
         """Get floors climbed data
 
+        floorValuesArray times are GMT; add utcOffsetHours (the day's own offset)
+        for local time.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1231,7 +1387,7 @@ def register_tools(app):
             if not floors_data:
                 return f"No floors data found for {date}"
 
-            return json.dumps(floors_data, indent=2)
+            return json.dumps(_label_day_series(floors_data), indent=2)
         except Exception as e:
             return f"Error retrieving floors data: {str(e)}"
 
@@ -1258,6 +1414,9 @@ def register_tools(app):
         Note: This returns detailed 2-minute interval data (~25KB).
         For a compact summary, use get_heart_rates_summary().
 
+        heartRateValues timestamps are UTC epoch milliseconds; add utcOffsetHours
+        (the day's own offset) for local time.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1266,7 +1425,7 @@ def register_tools(app):
             if not hr_data:
                 return f"No heart rate data found for {date}"
 
-            return json.dumps(hr_data, indent=2)
+            return json.dumps(_label_day_series(hr_data), indent=2)
         except Exception as e:
             return f"Error retrieving heart rate data: {str(e)}"
 
@@ -1331,6 +1490,11 @@ def register_tools(app):
         Note: This returns detailed sleep data (~50KB).
         For a compact summary, use get_sleep_summary().
 
+        Garmin's payload as-is, plus dailySleepDTO.sleepStartGmt/sleepStartLocal/
+        sleepEndGmt/sleepEndLocal as ISO times and a top-level utcOffsetHours.
+        Garmin's *TimestampLocal epochs are the local wall clock written as if it
+        were UTC, not real epochs; the *GMT epochs and series timestamps are UTC.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1339,7 +1503,7 @@ def register_tools(app):
             if not sleep_data:
                 return f"No sleep data found for {date}"
 
-            return json.dumps(sleep_data, indent=2)
+            return json.dumps(_label_sleep_payload(sleep_data), indent=2)
         except Exception as e:
             return f"Error retrieving sleep data: {str(e)}"
 
@@ -1350,6 +1514,9 @@ def register_tools(app):
         This endpoint returns a compact summary of sleep data (~350 bytes) instead of
         the full granular data (~50KB). Ideal for daily health checkups and LLM integrations
         where the full time-series data would overwhelm the context window.
+
+        Sleep window: sleep_start_gmt/sleep_end_gmt, and sleep_start_local/
+        sleep_end_local with the night's own UTC offset.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1379,6 +1546,9 @@ def register_tools(app):
         few weeks for quick checks. Maximum: 90 nights per call.
         Empty nights are skipped; a failed request stops the range and returns
         an error identifying the failed date.
+
+        Each night's sleep_start_gmt/_local and sleep_end_gmt/_local carry the
+        night's own UTC offset.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -1430,6 +1600,9 @@ def register_tools(app):
         Note: This returns detailed interval data (~35KB) including body battery.
         For a compact summary, use get_stress_summary().
 
+        Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
+        day's own offset, from Garmin's GMT/local pair) for local time.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1438,7 +1611,7 @@ def register_tools(app):
             if not stress_data:
                 return f"No stress data found for {date}"
 
-            return json.dumps(stress_data, indent=2)
+            return json.dumps(_label_day_series(stress_data), indent=2)
         except Exception as e:
             return f"Error retrieving stress data: {str(e)}"
 
@@ -1494,6 +1667,9 @@ def register_tools(app):
         Note: This returns detailed interval data (~20KB).
         For a compact summary, use get_respiration_summary().
 
+        Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
+        day's own offset) for local time.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1502,7 +1678,7 @@ def register_tools(app):
             if not respiration_data:
                 return f"No respiration data found for {date}"
 
-            return json.dumps(respiration_data, indent=2)
+            return json.dumps(_label_day_series(respiration_data), indent=2)
         except Exception as e:
             return f"Error retrieving respiration data: {str(e)}"
 
@@ -1539,6 +1715,10 @@ def register_tools(app):
     async def get_spo2_data(ctx: Context, date: str) -> str:
         """Get SpO2 (blood oxygen) data
 
+        latest_reading_time_gmt/_local are explicit; hourly_averages rows carry
+        hour_start_gmt and hour_start_local (the day's own offset, else the
+        profile zone named in local_time_zone).
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1553,15 +1733,39 @@ def register_tools(app):
                 "avg_spo2_percent": spo2_data.get('averageSpO2'),
                 "lowest_spo2_percent": spo2_data.get('lowestSpO2'),
                 "latest_spo2_percent": spo2_data.get('latestSpO2'),
-                "latest_reading_time": spo2_data.get('latestSpO2TimestampLocal'),
                 "last_7_days_avg_spo2": spo2_data.get('lastSevenDaysAvgSpO2'),
                 "avg_sleep_spo2_percent": spo2_data.get('avgSleepSpO2'),
             }
 
-            # Include hourly averages if available
+            # FORK: was latest_reading_time, Garmin's local time with no zone.
+            put_times(
+                summary, "latest_reading_time",
+                spo2_data.get('latestSpO2TimestampGMT'),
+                spo2_data.get('latestSpO2TimestampLocal'),
+            )
+
+            # Include hourly averages if available. FORK: Garmin sends bare
+            # [GMT epoch ms, percent] pairs; each becomes a labelled row, local
+            # time from the day's own offset (its GMT/local start pair).
             hourly = spo2_data.get('spO2HourlyAverages')
             if hourly:
-                summary["hourly_averages"] = hourly
+                offset = offset_from_pair(
+                    spo2_data.get('startTimestampGMT'), spo2_data.get('startTimestampLocal')
+                ) or offset_from_pair(
+                    spo2_data.get('latestSpO2TimestampGMT'),
+                    spo2_data.get('latestSpO2TimestampLocal'),
+                )
+                zone = None if offset else profile_time_zone(get_client(ctx))
+                rows = []
+                for pair in hourly:
+                    if not (isinstance(pair, (list, tuple)) and len(pair) >= 2):
+                        continue
+                    row: Dict[str, Any] = {}
+                    if put_times(row, "hour_start", pair[0], offset=offset, zone=zone):
+                        summary["local_time_zone"] = zone
+                    row["avg_spo2_percent"] = pair[1]
+                    rows.append(row)
+                summary["hourly_averages"] = rows
 
             # Remove None values
             summary = {k: v for k, v in summary.items() if v is not None}
@@ -1574,6 +1778,9 @@ def register_tools(app):
     async def get_all_day_stress(ctx: Context, date: str) -> str:
         """Get all-day stress data
 
+        Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
+        day's own offset) for local time.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1582,7 +1789,7 @@ def register_tools(app):
             if not stress_data:
                 return f"No all-day stress data found for {date}"
 
-            return json.dumps(stress_data, indent=2)
+            return json.dumps(_label_day_series(stress_data), indent=2)
         except Exception as e:
             return f"Error retrieving all-day stress data: {str(e)}"
 
@@ -1778,6 +1985,8 @@ def register_tools(app):
         Fields match one get_training_readiness entry (the snapshot taken
         right after waking).
 
+        Snapshot time: timestamp_gmt, and timestamp_local with its UTC offset.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1916,14 +2125,15 @@ def register_tools(app):
         This is the Firstbeat recovery clock shown on-device, distinct from
         Training Readiness score (missing on some devices such as Forerunner 255)
         and from Training Status ACWR. Training Readiness values are snapshots:
-        remaining_hours and state describe the snapshot at as_of (Garmin's local
-        timestamp when available), not a live countdown. remaining_hours_at_snapshot
+        remaining_hours and state describe the snapshot taken at as_of_gmt
+        (as_of_local is the same moment in the watch's local time, with its
+        UTC offset), not a live countdown. remaining_hours_at_snapshot
         retains the same value explicitly. Request failures are reported as
         errors, or source_errors when another source supplies usable data.
 
         Omit `date` for the current value: the most recent snapshot, whichever
         day it was taken (reported with `resolved_as: latest_snapshot`; its own
-        `date` and `as_of` say when). This does not depend on the server's
+        `date` and `as_of_local` say when). This does not depend on the server's
         timezone -- in the evening in the Americas a UTC server is already on
         tomorrow's date, which has no snapshot yet. Only when no snapshot exists
         within the last day does it fall back to estimating remaining recovery by
@@ -1935,7 +2145,7 @@ def register_tools(app):
         UPDATE_REALTIME_VARIABLES, a mid-day update that records the countdown
         (e.g. 10.2h right after a run, 5.8h four hours later). A value holds
         until the next snapshot; the watch counts down live in between, so
-        subtract the hours since `as_of` for a live estimate. `change_phrase` (recoveryTimeChangePhrase) says
+        subtract the hours since `as_of_gmt` for a live estimate. `change_phrase` (recoveryTimeChangePhrase) says
         what changed at that event and is NOT a reading: REACHED_ZERO has been
         seen on a snapshot carrying 72h. `readiness_score` is the Training
         Readiness score, not a recovery measure.

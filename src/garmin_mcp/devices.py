@@ -3,11 +3,11 @@ Device-related functions for Garmin Connect MCP Server
 """
 
 import json
-import datetime
 from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import profile_time_zone, put_times
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -63,7 +63,11 @@ def register_tools(app):
 
     @app.tool()
     async def get_device_last_used(ctx: Context) -> str:
-        """Get information about the last used Garmin device"""
+        """Get information about the last used Garmin device
+
+        last_upload_time_gmt is the last sync; last_upload_time_local uses the
+        Garmin profile's time zone (named in local_time_zone).
+        """
         try:
             device = get_client(ctx).get_device_last_used()
             if not device:
@@ -77,11 +81,14 @@ def register_tools(app):
                 "user_profile_id": device.get("userProfileNumber"),
             }
 
-            # Format last upload time if available
+            # FORK: was "last_upload_time", formatted in the SERVER's clock
+            # zone with no label -- UTC on Railway, local on a desktop. The
+            # epoch carries no offset, so local uses the profile's zone.
             upload_time_ms = device.get("lastUsedDeviceUploadTime")
             if upload_time_ms:
-                dt = datetime.datetime.fromtimestamp(upload_time_ms / 1000.0)
-                curated["last_upload_time"] = dt.strftime("%Y-%m-%d %H:%M:%S")
+                zone = profile_time_zone(get_client(ctx))
+                if put_times(curated, "last_upload_time", upload_time_ms, zone=zone):
+                    curated["local_time_zone"] = zone
 
             # Add image URL if available
             if device.get("imageUrl"):

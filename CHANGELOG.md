@@ -5,6 +5,88 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Times name their zone; local from the record, then the profile — 2026-10-28
+
+The read-only audit found 27 tools returning times with no zone, and the
+same key meaning different zones across tools. Body battery printed its GMT
+event start as a bare `start_time`, so a 2:37 PM run read as 6:37 PM. The
+activity lists used `start_time` for local time while `get_activity_fit_data`
+used it for UTC, four hours apart for the same run. `sleep_start` was a GMT
+epoch in the sleep summaries and local text in the HRV tool. Several tools
+used the server's clock, which is UTC on Railway.
+
+**The rule** (`times.py`):
+- **GMT** goes under `*_gmt`, as ISO ending in `Z`.
+- **Local time** goes under `*_local`, as ISO with its UTC offset. It comes
+  from the record's own offset when Garmin gives one: `timezoneOffset`, a
+  `*Local` beside the `*GMT`, or the FIT activity message.
+- **Otherwise it comes from the Garmin profile's `timeZone`**, named in
+  `local_time_zone`.
+- **"Today"** for defaults is the profile zone's date.
+
+The profile zone is read once per Garmin session; `tzdata` is now a
+dependency.
+
+**Renamed or reformatted fields** (old name, then new):
+- **Body battery:** `start_time` → `start_time_gmt` + `start_time_local`.
+- **Activity lists** (`get_activities`, `get_activities_by_date`,
+  `get_activities_fordate`, `get_gear_activities`, and the delete preview):
+  `start_time` (local) → `start_time_gmt` + `start_time_local`.
+- **`get_activity`:** `start_time_gmt`/`start_time_local` are now ISO with
+  `Z` and the offset.
+- **Laps and lengths:** `start_time_gmt` is ISO `Z`, and `start_time_local`
+  is new (profile zone).
+- **`get_activity_fit_data`:**
+  - `start_time`/`end_time` → `*_gmt` + `*_local` (the watch's own offset).
+  - Per-sample `timestamp` → `timestamp_gmt`.
+  - `utc_offset_hours` is new.
+- **Sleep summaries:** `sleep_start`/`sleep_end` (GMT epochs) →
+  `sleep_start_gmt`/`_local`, `sleep_end_gmt`/`_local`.
+- **`get_hrv_data`:**
+  - `sleep_start`/`sleep_end` (local text) → `*_gmt` + `*_local`.
+  - Readings' `time` → `time_gmt` + `time_local`.
+- **Recovery:** `as_of` and its duplicate `timestamp` → `as_of_gmt` +
+  `as_of_local`.
+- **Readiness:** `timestamp` → `timestamp_gmt` + `timestamp_local`.
+- **SpO2:**
+  - `latest_reading_time` → `*_gmt` + `*_local`.
+  - `hourly_averages` are labelled rows: `hour_start_gmt`/`_local`,
+    `avg_spo2_percent`.
+- **Weigh-ins:** `timestamp_gmt` (epoch ms) → ISO, plus `timestamp_local`.
+- **Weather:** `issue_time` → `issue_time_gmt` + `issue_time_local`.
+- **Device:** `last_upload_time`, which was in the server's zone with no
+  label → `last_upload_time_gmt` + `_local`.
+
+**Raw payloads** keep their shape and gain siblings:
+- **Body battery events:** `eventStartTimeLocal` and `utcOffsetHours` per
+  event.
+- **Sleep data:** `sleepStartGmt`/`Local` and `sleepEndGmt`/`Local`. Garmin's
+  `*TimestampLocal` epochs are the wall clock written as UTC.
+- **Body composition:** `measuredAtGmt`/`Local`.
+- **Step buckets:** `startLocal`/`endLocal`.
+- **Stress, heart rate, respiration and floors:** `utcOffsetHours`.
+
+**Fixed along the way:**
+- **FIT weigh-in date.** The W/kg weigh-in lookup used the UTC date, so a
+  run after 8 PM in New York took the next day's weight.
+- **New weigh-in timestamp.** `add_weigh_in_with_timestamps` with no
+  timestamp stamped "local" with the server's clock, so an evening weigh-in
+  landed on tomorrow.
+- **Analytics default end date.** It is now the athlete's today.
+- **Daily stats.** `get_stats_range`'s partial-day flag and
+  `get_energy_balance`'s today exclusion follow the athlete's day.
+- **Recovery fallback.** Its "today" check follows the athlete's day too.
+
+**Left as they were, because their zone is not established:**
+- workout `created_date`/`updated_date`
+- sensor `last_connected`
+- lactate threshold `speed_hr_date`/`power_date`
+- fitness age `last_updated`
+- badge `earned_date`
+
+Tests: `test_times.py` and `test_explicit_times_tools.py`, built from the
+athlete's real values. 38 deliberate breakages of the new code were each caught. Suite: 1615 passed.
+
 ## Wrong values fixed: progress units, two record labels, empty FTP — 2026-10-28
 
 Found by auditing every read-only tool against a live account.

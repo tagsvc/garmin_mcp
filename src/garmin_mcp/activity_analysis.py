@@ -32,6 +32,7 @@ except ImportError:
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client, is_remote_mode
+from garmin_mcp.times import gmt_iso, offset_from_pair, profile_time_zone, put_times
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -1430,8 +1431,17 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
     last_cadence: Optional[float] = None
     last_grade: Optional[float] = None
 
+    # The watch's own UTC offset: the activity message carries both its UTC
+    # timestamp and local_timestamp.
+    utc_offset = None
+
     for message in fitfile.get_messages():
         msg_type = message.name
+
+        if msg_type == "activity" and utc_offset is None:
+            utc_offset = offset_from_pair(
+                _get_field(message, "timestamp"), _get_field(message, "local_timestamp")
+            )
 
         # ------------------------------------------------------------------
         # Session summary
@@ -1788,7 +1798,40 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
     if include_records:
         result["records"] = records
 
+    result["_utc_offset"] = utc_offset
     return result
+
+
+def _label_fit_times(result: Dict[str, Any], offset: Any, zone: Optional[str]) -> bool:
+    """Name the FIT output's UTC times as such, and add local ones.
+
+    FORK: FIT timestamps are UTC, and the output wrote them as bare
+    "2026-10-27 18:37:26" under start_time -- the key the activity lists use
+    for local time, so one run read four hours apart across tools. Session,
+    lap and climb times get *_gmt and *_local (from the watch's own offset,
+    else the profile zone); the per-sample streams get timestamp_gmt, with
+    utc_offset_hours at the top for converting them. Returns True when the
+    profile zone was used.
+    """
+    used_zone = False
+    session = result.get("session")
+    groups = [[session] if isinstance(session, dict) else []]
+    groups += [result.get(key) or [] for key in ("sessions", "laps", "climbs")]
+    for group in groups:
+        for item in group:
+            if not isinstance(item, dict):
+                continue
+            for stem in ("start_time", "end_time"):
+                if stem in item:
+                    value = item.pop(stem)
+                    used_zone |= put_times(item, stem, value or None, offset=offset, zone=zone)
+    for key in ("shifts", "records", "rr_intervals_seconds"):
+        for item in result.get(key) or []:
+            if isinstance(item, dict) and "timestamp" in item:
+                item["timestamp_gmt"] = gmt_iso(item.pop("timestamp"))
+    if offset is not None:
+        result["utc_offset_hours"] = offset.total_seconds() / 3600
+    return used_zone
 
 
 # ---------------------------------------------------------------------------
@@ -1930,6 +1973,11 @@ def register_tools(app):
         Note: DI2 data requires Shimano Di2 / SRAM eTap. Cycling dynamics require a
         compatible power meter (e.g., Garmin Rally, Favero Assioma, PowerTap P1 pedals).
 
+        FIT times are UTC. Session, lap and climb times are start_time_gmt/
+        end_time_gmt plus start_time_local/end_time_local, from the watch's own
+        offset (utc_offset_hours) or, failing that, the profile zone named in
+        local_time_zone. Per-sample streams carry timestamp_gmt.
+
         Args:
             activity_id: Garmin activity ID
             include_records: Include full per-second time series (default False).
@@ -1971,10 +2019,16 @@ def register_tools(app):
                 }, indent=2)
 
             parsed["activity_id"] = activity_id
+            offset = parsed.pop("_utc_offset", None)
+            zone = None if offset is not None else profile_time_zone(get_client(ctx))
+            if _label_fit_times(parsed, offset, zone):
+                parsed["local_time_zone"] = zone
 
-            # W/kg: latest weigh-in on or before the activity date
+            # W/kg: latest weigh-in on or before the activity's LOCAL date.
+            # FORK: this sliced the UTC start, so a run after 8 PM in New York
+            # used the next day's weigh-in.
             session = parsed.get("session") or {}
-            start_time_str = session.get("start_time", "")
+            start_time_str = session.get("start_time_local") or session.get("start_time_gmt") or ""
             activity_date = start_time_str[:10] if start_time_str else None
             if activity_date:
                 weight = _get_rider_weight_kg(activity_date)

@@ -126,7 +126,11 @@ def test_readiness_recovery_explicitly_labels_snapshot_time():
     }, "training_readiness")
     assert curated["value_type"] == "snapshot"
     assert curated["remaining_hours_at_snapshot"] == 28.8
-    assert curated["as_of"] == "2026-09-12T06:30:00"
+    # Local only, no GMT beside it: written as the wall clock, with no
+    # offset it could invent.
+    assert curated["as_of_local"] == "2026-09-12T06:30:00"
+    assert "as_of_gmt" not in curated
+    assert "as_of" not in curated and "timestamp" not in curated
     assert curated["remaining_hours"] == 28.8
 
 

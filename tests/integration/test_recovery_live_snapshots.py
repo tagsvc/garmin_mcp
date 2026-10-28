@@ -76,7 +76,10 @@ async def test_recovery_time_remaining_after_a_run(app):
     assert data["remaining_hours"] == 72.0
     assert data["state"] == "not_recovered"
     assert data["input_context"] == "AFTER_POST_EXERCISE_RESET"
-    assert data["as_of"] == "2026-10-27T15:01:16.0"
+    # Garmin's `timestamp` is GMT; `timestampLocal` beside it gives -4h.
+    assert data["as_of_gmt"] == "2026-10-27T19:01:16Z"
+    assert data["as_of_local"] == "2026-10-27T15:01:16-04:00"
+    assert "as_of" not in data and "timestamp" not in data
     # The phrase is still reported, as what it is: what changed at the event.
     assert data["change_phrase"] == "REACHED_ZERO"
     # 20 is the readiness score, and is labelled as one.
@@ -124,7 +127,7 @@ def test_evening_in_the_americas_finds_the_afternoon_snapshot():
     assert data["remaining_hours"] == 72.0
     assert data["state"] == "not_recovered"
     assert data["date"] == "2026-10-27"
-    assert data["as_of"] == "2026-10-27T15:01:16.0"
+    assert data["as_of_local"] == "2026-10-27T15:01:16-04:00"
     assert data["resolved_as"] == "latest_snapshot"
     assert client.asked == ["2026-10-29", "2026-10-28", "2026-10-27"]
 

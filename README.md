@@ -74,6 +74,23 @@ in to Garmin. After you change it in Garmin Connect, the remote server picks it
 up within the hour, when it next restores your session, or on a redeploy; a
 stdio server picks it up on restart. The metric fields never change with it.
 
+### Times
+
+Every time a curated tool returns names its zone: `*_gmt` is GMT, written as
+ISO 8601 ending in `Z`, and `*_local` is the same moment in local time with
+its UTC offset, e.g. `start_time_gmt: 2026-10-27T18:37:26Z` and
+`start_time_local: 2026-10-27T14:37:26-04:00`.
+
+Local time comes from the record's own offset whenever Garmin sends one,
+which is where the watch was; a run while travelling shows that place's time,
+as in the Garmin app. When a record carries no offset (laps, weather reports,
+device sync times, 15-minute step buckets) local time uses the time zone in
+your Garmin Connect profile, and the tool names it in `local_time_zone`.
+Tools that return Garmin's own payload keep it as-is and add local siblings
+(`eventStartTimeLocal`, `sleepStartLocal`) and `utcOffsetHours`, the day's
+offset for reading their `[UTC epoch ms, value]` series. Date defaults
+("today") use the profile's time zone, not the server's clock.
+
 ### Gear Notes
 
 Each item in the `gear` array returned by `get_gear` includes a `notes` field

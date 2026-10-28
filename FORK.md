@@ -45,6 +45,7 @@ coverage.
 | Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` — battery level and last-connected, which `get_devices` omits. |
 | Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
+| Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
 ## Invariants that must NOT regress
@@ -200,6 +201,26 @@ coverage.
   _On merge:_ an upstream rewrite of one of these tools' `json.dumps` returns
   must keep the `add_account_units(...)` wrap. Pinned by
   `test_account_units_tools.py` and `test_units.py`.
+- **Times name their zone; local comes from the record before the profile.**
+  Garmin mixes GMT, the watch's local time and epoch milliseconds, often
+  under keys that do not say which: body battery printed its GMT start as a
+  bare `start_time` (6:37 PM for a 2:37 PM run), the activity lists and the
+  FIT tool used `start_time` for local and UTC respectively, and several
+  tools used the server's own clock (UTC on Railway). The rule (`times.py`):
+  GMT under `*_gmt` as ISO ending in `Z`; local under `*_local` as ISO with
+  its UTC offset, taken from the record's own offset when Garmin gives one
+  (`timezoneOffset`, a `*Local` beside the `*GMT`, the FIT activity message),
+  else from the profile's `timeZone` with a `local_time_zone` field saying
+  so. Garmin's `*Local` epochs are the wall clock written as UTC, not real
+  epochs (`times.wall_clock`). "Today" for defaults is the profile zone's
+  (`local_today`). The profile zone is read once per Garmin client and cached
+  on it -- never on the module proxy, which every remote user shares
+  (`test_the_shared_proxy_is_never_the_cache_key`). Raw payloads keep their
+  shape and gain camelCase siblings (`eventStartTimeLocal`, `sleepStartLocal`,
+  `utcOffsetHours`). `tzdata` is a dependency: Windows has no system zone
+  database. _On merge:_ keep the `_gmt`/`_local` names and do not reintroduce
+  a bare time key or a server-clock "today". Pinned by `test_times.py` and
+  `test_explicit_times_tools.py`.
 - **The fitnessstats endpoint is not in its documented units.** Behind
   `get_progress_summary_between_dates`, Garmin sends distance and elevation
   gain in centimeters, durations in milliseconds and calories pre-scaled by
@@ -468,7 +489,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1545 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1615 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

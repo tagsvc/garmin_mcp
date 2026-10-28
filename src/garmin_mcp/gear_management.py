@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import put_times
 from garmin_mcp.units import (
     METERS_PER_MILE,
     account_unit_system,
@@ -323,6 +324,9 @@ def register_tools(app):
         companion in the account's units: distance_miles for a US account,
         distance_km for a metric one.
 
+        Start times: start_time_gmt, and start_time_local with the activity's own
+        UTC offset.
+
         Args:
             gear_uuid: UUID of the gear (get UUIDs from get_gear).
             limit: Maximum activities to return (default 1000).
@@ -332,17 +336,20 @@ def register_tools(app):
             if not isinstance(data, list):
                 return json.dumps(data, indent=2)
 
-            curated = [
-                {
+            curated = []
+            for a in data:
+                item = {
                     "activity_id": a.get("activityId"),
                     "name": a.get("activityName"),
-                    "start_time": a.get("startTimeLocal"),
+                }
+                # FORK: was "start_time", local time with no zone.
+                put_times(item, "start_time", a.get("startTimeGMT"), a.get("startTimeLocal"))
+                item.update({
                     "distance_m": a.get("distance"),
                     "duration_s": a.get("duration"),
                     "activity_type": (a.get("activityType") or {}).get("typeKey"),
-                }
-                for a in data
-            ]
+                })
+                curated.append(item)
             total_m = sum(c["distance_m"] or 0 for c in curated)
             return json.dumps(
                 add_account_units(

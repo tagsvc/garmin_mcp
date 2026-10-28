@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import profile_time_zone, put_times
 from garmin_mcp.units import account_unit_system, add_account_units
 from garmin_mcp.write_errors import WriteTracker
 
@@ -67,10 +68,14 @@ def _activity_preview(client: Any, activity_id: int) -> Dict[str, Any]:
             {
                 "name": activity.get("activityName"),
                 "type": type_dto.get("typeKey"),
-                "start_time": summary.get("startTimeLocal") or activity.get("startTimeLocal"),
                 "distance_meters": summary.get("distance") or activity.get("distance"),
                 "duration_seconds": summary.get("duration") or activity.get("duration"),
             }
+        )
+        put_times(
+            preview, "start_time",
+            summary.get("startTimeGMT") or activity.get("startTimeGMT"),
+            summary.get("startTimeLocal") or activity.get("startTimeLocal"),
         )
         return {key: value for key, value in preview.items() if value is not None}
 
@@ -94,11 +99,11 @@ def _activity_preview(client: Any, activity_id: int) -> Dict[str, Any]:
             {
                 "name": item.get("activityName"),
                 "type": type_info.get("typeKey"),
-                "start_time": item.get("startTimeLocal"),
                 "distance_meters": item.get("distance"),
                 "duration_seconds": item.get("duration"),
             }
         )
+        put_times(preview, "start_time", item.get("startTimeGMT"), item.get("startTimeLocal"))
         break
     return {key: value for key, value in preview.items() if value is not None}
 
@@ -226,6 +231,9 @@ def register_tools(app):
         avg_speed_mph and elevation_gain_feet for a US account; distance_km and
         avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
+        Start times: start_time_gmt, and start_time_local with the activity's own
+        UTC offset.
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
@@ -285,7 +293,6 @@ def register_tools(app):
                     "name": a.get('activityName'),
                     "type": (a.get('activityType') or {}).get('typeKey'),
                     "event_type": (a.get('eventType') or {}).get('typeKey'),
-                    "start_time": a.get('startTimeLocal'),
                     "distance_meters": a.get('distance'),
                     "duration_seconds": a.get('duration'),
                     "avg_speed_mps": a.get('averageSpeed'),
@@ -296,6 +303,10 @@ def register_tools(app):
                     "elevation_gain_meters": a.get('elevationGain'),
                     "elevation_loss_meters": a.get('elevationLoss'),
                 }
+                # FORK: was "start_time", local time with no zone -- the same
+                # key get_activity_fit_data used for UTC. Garmin's GMT/local
+                # pair gives the activity's own offset.
+                put_times(activity, "start_time", a.get('startTimeGMT'), a.get('startTimeLocal'))
                 # Remove None values
                 activity = {k: v for k, v in activity.items() if v is not None}
                 curated["activities"].append(activity)
@@ -315,6 +326,8 @@ def register_tools(app):
         a companion in the account's units: distance_miles, avg_pace_per_mile,
         avg_speed_mph and elevation_gain_feet for a US account; distance_km and
         avg_pace_per_km for a metric one. Quote the companion; do not convert.
+
+        Start times: start_time_local (and start_time_gmt when Garmin sends it).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -343,7 +356,6 @@ def register_tools(app):
                     "name": a.get('activityName'),
                     "type": (a.get('activityType') or {}).get('typeKey'),
                     "event_type": (a.get('eventType') or {}).get('typeKey'),
-                    "start_time": a.get('startTimeLocal'),
                     "distance_meters": a.get('distance'),
                     "duration_seconds": a.get('duration'),
                     "avg_speed_mps": a.get('averageSpeed'),
@@ -354,6 +366,10 @@ def register_tools(app):
                     "moderate_intensity_minutes": a.get('moderateIntensityMinutes'),
                     "vigorous_intensity_minutes": a.get('vigorousIntensityMinutes'),
                 }
+                # FORK: was "start_time", local time with no zone -- the same
+                # key get_activity_fit_data used for UTC. Garmin's GMT/local
+                # pair gives the activity's own offset.
+                put_times(activity, "start_time", a.get('startTimeGMT'), a.get('startTimeLocal'))
                 # Remove None values
                 activity = {k: v for k, v in activity.items() if v is not None}
                 curated["activities"].append(activity)
@@ -379,6 +395,9 @@ def register_tools(app):
         avg_speed_mph and elevation_gain_feet for a US account; distance_km and
         avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
+        Times are explicit: *_gmt is GMT (ends in Z) and *_local is local time
+        with its UTC offset (e.g. 2026-10-27T14:37:26-04:00).
+
         Args:
             activity_id: ID of the activity to retrieve
         """
@@ -402,8 +421,6 @@ def register_tools(app):
                 "parent_type": activity_type.get('parentTypeId'),
 
                 # Timing
-                "start_time_local": summary.get('startTimeLocal'),
-                "start_time_gmt": summary.get('startTimeGMT'),
                 "duration_seconds": summary.get('duration'),
                 "moving_duration_seconds": summary.get('movingDuration'),
                 "elapsed_duration_seconds": summary.get('elapsedDuration'),
@@ -465,6 +482,8 @@ def register_tools(app):
                 "has_splits": metadata.get('hasSplits'),
                 "device_manufacturer": metadata.get('manufacturer'),
             }
+
+            put_times(curated, "start_time", summary.get('startTimeGMT'), summary.get('startTimeLocal'))
 
             # Remove None values
             curated = {k: v for k, v in curated.items() if v is not None}
@@ -712,6 +731,10 @@ def register_tools(app):
         """Get splits for an activity
 
         Lap and nested length start_time_gmt timestamps are GMT (UTC).
+        Garmin's laps carry no offset, so start_time_local uses the Garmin
+        profile's time zone, named in local_time_zone; a run while travelling
+        is shown in that zone, not the one it was run in (get_activity has the
+        activity's own local start).
 
         Distances, speeds and elevations are Garmin's metric values
         (distance_meters, avg_speed_mps, elevation_gain_meters). Each also gets
@@ -736,11 +759,13 @@ def register_tools(app):
                 "lap_count": len(laps),
                 "laps": []
             }
+            zone = profile_time_zone(get_client(ctx))
+            if zone:
+                curated["local_time_zone"] = zone
 
             for lap in laps:
                 lap_data = {
                     "lap_number": lap.get('lapIndex'),
-                    "start_time_gmt": lap.get('startTimeGMT'),
                     "distance_meters": lap.get('distance'),
                     "duration_seconds": lap.get('duration'),
                     "moving_duration_seconds": lap.get('movingDuration'),
@@ -765,6 +790,7 @@ def register_tools(app):
                     "elevation_loss_meters": lap.get('elevationLoss'),
                     "workout_step_index": lap.get('wktStepIndex'),
                 }
+                put_times(lap_data, "start_time", lap.get('startTimeGMT'), zone=zone)
                 if lap.get('distance') is not None and sanitize_lap_distance(lap.get('distance')) is None:
                     lap_data["distance_meters"] = None
                     lap_data["distance_invalid"] = True
@@ -775,7 +801,6 @@ def register_tools(app):
                     for length in length_dtos:
                         length_data = {
                             "length_number": length.get('lengthIndex'),
-                            "start_time_gmt": length.get('startTimeGMT'),
                             "distance_meters": length.get('distance'),
                             "duration_seconds": length.get('duration'),
                             "avg_speed_mps": length.get('averageSpeed'),
@@ -787,6 +812,7 @@ def register_tools(app):
                             "avg_swolf": length.get('averageSWOLF'),
                             "stroke": length.get('swimStroke'),
                         }
+                        put_times(length_data, "start_time", length.get('startTimeGMT'), zone=zone)
                         length_data = {
                             k: v for k, v in length_data.items() if v is not None
                         }
@@ -883,6 +909,9 @@ def register_tools(app):
         display unit (km/h for metric, mph for statute_us), so it is passed
         through unconverted and labeled via the wind_speed_unit field.
 
+        issue_time_gmt is when the report was issued; issue_time_local uses the
+        Garmin profile's time zone (named in local_time_zone).
+
         Args:
             activity_id: ID of the activity to retrieve weather data for
         """
@@ -947,8 +976,12 @@ def register_tools(app):
                 "location": weather.get('issueLocation'),
                 "station_id": station_dto.get('id'),
                 "station_name": station_dto.get('name'),
-                "issue_time": weather.get('issueDate'),
             }
+            # FORK: was "issue_time". Garmin's issueDate carries +00:00; the
+            # report has no local offset, so local uses the profile's zone.
+            zone = profile_time_zone(get_client(ctx))
+            if put_times(curated, "issue_time", weather.get('issueDate'), zone=zone):
+                curated["local_time_zone"] = zone
 
             # Remove None values
             curated = {k: v for k, v in curated.items() if v is not None}
@@ -1155,6 +1188,9 @@ def register_tools(app):
         avg_speed_mph and elevation_gain_feet for a US account; distance_km and
         avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
+        Start times: start_time_gmt, and start_time_local with the activity's own
+        UTC offset.
+
         Args:
             start: Starting index (default 0)
             limit: Maximum number of activities to return (default 20, max 100)
@@ -1183,7 +1219,6 @@ def register_tools(app):
                     "name": a.get('activityName'),
                     "type": (a.get('activityType') or {}).get('typeKey'),
                     "event_type": (a.get('eventType') or {}).get('typeKey'),
-                    "start_time": a.get('startTimeLocal'),
                     "distance_meters": a.get('distance'),
                     "duration_seconds": a.get('duration'),
                     "avg_speed_mps": a.get('averageSpeed'),
@@ -1196,6 +1231,10 @@ def register_tools(app):
                     "elevation_loss_meters": a.get('elevationLoss'),
                     "owner_display_name": a.get('ownerDisplayName'),
                 }
+                # FORK: was "start_time", local time with no zone -- the same
+                # key get_activity_fit_data used for UTC. Garmin's GMT/local
+                # pair gives the activity's own offset.
+                put_times(activity, "start_time", a.get('startTimeGMT'), a.get('startTimeLocal'))
                 # Remove None values
                 activity = {k: v for k, v in activity.items() if v is not None}
                 curated["activities"].append(activity)

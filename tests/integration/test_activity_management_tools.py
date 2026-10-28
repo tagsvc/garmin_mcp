@@ -470,7 +470,7 @@ async def test_get_activity_splits_includes_swim_lengths(app_with_activity_manag
     data = json.loads(result[0][0].text)
     assert data["activity_id"] == 22526515067
     assert data["lap_count"] == 1
-    assert data["laps"][0]["start_time_gmt"] == "2026-04-14T17:19:08.0"
+    assert data["laps"][0]["start_time_gmt"] == "2026-04-14T17:19:08Z"
     assert "start_time" not in data["laps"][0]
     assert data["laps"][0]["avg_swim_cadence"] == 22.0
     assert data["laps"][0]["active_length_count"] == 92
@@ -485,7 +485,7 @@ async def test_get_activity_splits_includes_swim_lengths(app_with_activity_manag
     assert data["laps"][0]["workout_step_index"] == 0
     assert len(data["laps"][0]["lengths"]) == 2
     assert data["laps"][0]["lengths"][0]["length_number"] == 1
-    assert data["laps"][0]["lengths"][0]["start_time_gmt"] == "2026-04-14T17:19:08.0"
+    assert data["laps"][0]["lengths"][0]["start_time_gmt"] == "2026-04-14T17:19:08Z"
     assert "start_time" not in data["laps"][0]["lengths"][0]
     assert data["laps"][0]["lengths"][0]["distance_meters"] == 22.0
     assert data["laps"][0]["lengths"][0]["duration_seconds"] == 31.0

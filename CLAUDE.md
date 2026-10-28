@@ -29,6 +29,7 @@ required checks must pass before it can merge.
    import-secret gating, `garminconnect==0.3.5` pin (security floor, CVE-2026-54447), `mcp>=1.30.0`
    floor (CVE-2026-59951), remote server stateless, `auth_tools` stdio-only, `delete_activity` withheld
    from remote, recovery hours from `recoveryTime` (never the change phrase), account-unit
-   companions added beside metric fields (never replacing them), no `VOLUME` in
+   companions added beside metric fields (never replacing them), times as `*_gmt`/`*_local`
+   with local from the record's own offset before the profile zone, no `VOLUME` in
    `Dockerfile.remote`, `$PORT` handling).
 3. Re-enumerate tool counts if registration changed (expect stdio 174 / remote 171).
