@@ -429,3 +429,54 @@ def test_an_unmatched_remote_exclusion_fails_closed(monkeypatch):
     monkeypatch.setattr(remote, "REMOTE_EXCLUDED_TOOLS", frozenset({"no_such_tool"}))
     with pytest.raises(RuntimeError, match="no_such_tool"):
         remote.register_remote_tools(FastMCP("rename"))
+
+
+# --- Per-caller identity survives the off-event-loop tool runner ----------------
+
+
+@pytest.mark.asyncio
+async def test_tool_bodies_on_worker_threads_still_see_their_own_callers_token():
+    """Remote resolves the calling user from the MCP auth contextvar.
+
+    Upstream #449 made _ToolFilter run every tool body as
+    anyio.to_thread.run_sync(lambda: asyncio.run(...)), and remote registers
+    through _ToolFilter. So the caller's context must cross two hops -- onto
+    an anyio worker thread, then into a fresh event loop there -- for
+    get_client() to find the right user. Verified with anyio 4.14.2; a plain
+    threading.Thread loses it. This fails if a dependency change ever stops
+    carrying context across, which would make every remote call fail closed.
+    """
+    import asyncio
+    import threading
+
+    from mcp.server.auth.middleware.auth_context import auth_context_var, get_access_token
+    from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+    from mcp.server.auth.provider import AccessToken
+
+    import garmin_mcp
+
+    app = FastMCP("identity")
+    tool_app = garmin_mcp._ToolFilter(app, set(), set())
+    loop_thread = threading.current_thread().name
+
+    @tool_app.tool()
+    async def whoami() -> str:
+        token = get_access_token()
+        return f"{threading.current_thread().name}|{token.token if token else None}"
+
+    def _text(result):
+        content = result[0] if isinstance(result, tuple) else result
+        return content[0].text
+
+    async def one_request(token):
+        auth_context_var.set(
+            AuthenticatedUser(AccessToken(token=token, client_id="c", scopes=[]))
+        )
+        return token, _text(await app.call_tool("whoami", {}))
+
+    tokens = ["user-a", "user-b", "user-a-again", "user-b-again"]
+    results = await asyncio.gather(*(asyncio.create_task(one_request(t)) for t in tokens))
+    for sent, text in results:
+        thread, seen = text.split("|", 1)
+        assert seen == sent, f"{sent!r}'s tool call saw {seen!r}"
+        assert thread != loop_thread, "tool body is expected off the event-loop thread"

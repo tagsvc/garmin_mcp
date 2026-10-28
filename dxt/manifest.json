@@ -245,7 +245,7 @@
     },
     {
       "name": "get_badge_challenges",
-      "description": "Get all badge challenges the user has joined (completed and in-progress)"
+      "description": "Get badge challenges the user has completed."
     },
     {
       "name": "get_blood_pressure",
@@ -652,12 +652,20 @@
       "description": "Log in to Garmin Connect and save reusable OAuth tokens."
     },
     {
+      "name": "push_workout_to_device",
+      "description": "Send a workout from the workout library to a Garmin device"
+    },
+    {
       "name": "remove_gear_from_activity",
       "description": "Remove gear association from an activity"
     },
     {
       "name": "request_reload",
       "description": "Request reload of epoch data"
+    },
+    {
+      "name": "reschedule_workout",
+      "description": "Move a scheduled workout to another date on the Garmin Connect calendar"
     },
     {
       "name": "run_custom_health_report",

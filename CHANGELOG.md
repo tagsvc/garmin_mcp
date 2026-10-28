@@ -5,6 +5,136 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## mcp 1.30.0 and certifi 2026.10.23; remote runs stateless — 2026-10-28
+
+Five advisories published after the 2026-10-14 audit, all already present on
+`main` (none introduced by the 2026-10-27 sync):
+
+| package | advisory | reaches this server? |
+|---|---|---|
+| mcp 1.29.0 | CVE-2026-59951 — stateful Streamable HTTP never reclaimed sessions | **yes**: remote ran stateful Streamable HTTP. OAuth limits who can open sessions, not how many a token holder can |
+| certifi 2026.7.22 | PYSEC-2026-4320 — compromised emSign root CA | **yes**: every outbound Garmin call trusts the bundle (exploitation needs an on-path attacker) |
+| mcp 1.29.0 | CVE-2026-116684 — bearer token audience unchecked | no: combined authorization + resource server, issuing tokens only for itself |
+| mcp 1.29.0 | CVE-2026-116685 — client follows cross-origin redirects | no: client-side; the server is never an MCP client |
+| mcp 1.29.0 | CVE-2026-116686 — client fetches output-schema `$ref`s | no: client-side |
+
+**Fix:** `mcp` 1.30.0 (floored in `pyproject.toml`) and `certifi` 2026.10.23.
+`remote.py` now passes `stateless_http=True`: no sessions are kept, so there is
+nothing to accumulate, and 1.30.0's 30-minute idle expiry — which upstream saw
+make claude.ai report the first call after a quiet spell as failed — cannot
+occur. No tool uses session state; callers are identified per request by bearer
+token.
+
+**Verified before committing,** on 1.30.0:
+
+- `oauth_claude` monkeypatches SDK internals, the main risk in an SDK bump. Over
+  HTTP against the real app: the authorization-server metadata still advertises
+  `none`, an unauthenticated `/mcp` request still gets 401 with the
+  `resource_metadata` challenge, a bad token gets `invalid_token`, and the
+  security headers are present.
+- A new end-to-end test, `tests/integration/test_remote_end_to_end.py`, boots
+  the real remote `main()` in a subprocess and drives authenticated MCP requests
+  — two users, four concurrent sessions, one tool through `get_client(ctx)` and
+  one through the module-level proxy — through the OAuth middleware, transport,
+  worker threads and client resolution. Each caller got only their own data;
+  handing every caller the same client fails it, and so does turning stateless
+  off. It also pins both claude.ai OAuth behaviours above.
+
+`test_project_dependencies` now checks the `<2` cap and the 1.30.0 floor rather
+than one literal constraint string. Suite: 1452 passed; `pip-audit` clean.
+
+## Recovery hours no longer zeroed by Garmin's change phrase — 2026-10-27
+
+**72 hours of recovery was reported as 0.** After a run, Garmin Connect showed
+"Recovery Time 72h, High Need" while `get_training_readiness` reported
+`recovery_time_hours: 0.0` and `get_recovery_time_remaining` reported
+`remaining_hours: 0.0`, `state: "recovered"`. Anything reading those tools would
+have cleared a hard session the day after hill repeats.
+
+The cause came in with upstream's recovery-time feature (`f4fc10b`) and is still
+present upstream after #469: when a snapshot's `recoveryTimeChangePhrase` was
+`REACHED_ZERO`, the hours were set to 0 whatever `recoveryTime` said, on the
+premise that Garmin then keeps a stale minute value.
+
+The real payload, captured from Garmin Connect's web client, shows otherwise:
+
+| snapshot | `inputContext` | `recoveryTime` | phrase | recovery factor |
+|---|---|---|---|---|
+| 08:03 | `AFTER_WAKEUP_RESET` | 1 min | `NO_CHANGE_SLEEP` | 99 (GOOD) |
+| 15:01 | `AFTER_POST_EXERCISE_RESET` | **4320 min = 72h** | `REACHED_ZERO` | 10 (POOR) |
+
+The phrase describes what changed at the event that produced the snapshot — the
+morning's last minute running out before the run — not the value now. When
+recovery has drained, Garmin sends the low value itself. Garmin Connect has no
+display text for the phrase and shows hours from `recoveryTime`. The athlete
+confirmed waking with zero recovery needed, so the morning value was right both
+before and after this change.
+
+**Fix:** recovery hours always come from `recoveryTime`, and the coarse `state`
+from the hours alone. The phrase is still reported as `change_phrase`.
+
+**Also:** `recovery_score` is renamed `readiness_score` — it was always the
+Training Readiness score (20 on a day with 72h to go). `get_recovery_time_remaining`
+now reports `input_context`, the event behind the snapshot: Garmin recomputes
+recovery at wake-up, after activities and after naps, and the value holds until
+the next one. It is deliberately not decayed into a live countdown between
+events, since Garmin revises it at each.
+
+Tests: two built from the real snapshots (IDs replaced), confirmed to fail on the
+old rule with `0.0 == 72.0`; upstream's tests that encoded the rule now assert the
+phrase is ignored. Suite: 1447 passed.
+
+## Upstream sync 2026-10-27 — 33 commits
+
+Syncs Taxuspt/garmin_mcp through `a2ca5fc` (2026-10-14 .. 10-20).
+
+**Taken from upstream:** `push_workout_to_device` and `reschedule_workout`;
+confirmation previews on `delete_weigh_ins`, `delete_custom_food` and
+`delete_food_log`; ~20 correctness fixes, including zero values no longer
+dropped from training metrics, `get_endurance_score` no longer crashing on a day
+without a score, VO2 measurement dates kept, Garmin HTTP failures classified
+before hints are added, cycling data kept in analysis, and GPX coordinates
+written as plain decimals; auth robustness (saved tokens survive a failed
+optional export, `garmin-mcp-auth --diagnose`); recovery snapshots labelled with
+`as_of` and `value_type` (#469); tool profiles (`GARMIN_TOOL_PROFILE`) and bearer
+auth for upstream's own single-user HTTP mode.
+
+**Not fixed upstream, and not by this sync:** `get_training_readiness` and
+`get_recovery_time_remaining` report 0 recovery hours whenever Garmin's
+`recoveryTimeChangePhrase` is `REACHED_ZERO`, discarding the real value. Seen
+live on 2026-10-27: 72h reported as 0h after a run. Fixed separately.
+
+**Worker threads and per-caller identity.** Upstream now runs every tool body on
+an anyio worker thread inside a fresh event loop (#449), and the remote server
+registers through the same `_ToolFilter`, so every remote call now does too. The
+remote server identifies the caller from a per-request context variable, which
+has to cross both hops. Tested before merging: four concurrent calls from two
+callers each saw their own token, while a plain `threading.Thread` lost it. A new
+contract test pins this and was confirmed to fail on the plain thread.
+
+**Merge breakage git did not report**, fixed by adopting upstream's text:
+`get_power_duration_curve` kept a call to a local `client` that upstream's side of
+a hunk had removed (`NameError` on every power-curve request). Upstream also
+dropped the `client` argument from `_get_rider_weight_kg` and
+`_get_activity_type_mapping`; all callers were aligned and checked with a
+call-arity scan.
+
+**Two upstream tests adjusted for this fork:**
+
+- `test_garmin_proxy` expected garminconnect 0.3.2's exception type for a 401 or
+  429. Under the 0.3.5 pin the library already narrows those to
+  `GarminConnectAuthenticationError` and `GarminConnectTooManyRequestsError`, so
+  the expected type is now a parameter. The proxy's hints were already correct.
+- `test_live_auth_is_excluded_from_ci` flagged two upstream modules as doing a
+  real Garmin login. Both build a credential-free `Garmin()` and mock its
+  transport on the next statement, so they never contact Garmin. The detector
+  now exempts exactly that pattern and nothing else (parametrized cases pin it),
+  rather than those tests being pushed out of CI.
+
+Kept from this fork: the `garminconnect==0.3.5` pin, remote-mode GPX handling
+(upstream's decimal fix ported into it), stdio-only auth tools and
+`delete_activity`. Tools: stdio 172 → 174, remote 169 → 171. Tests: 1077 → 1445.
+
 ## A cancelled Coach plan no longer reads as completed; course activity type — 2026-10-14
 
 **`get_coach_plans` reported a quit plan as `"status": "completed"`.** The first

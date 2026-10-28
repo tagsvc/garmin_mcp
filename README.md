@@ -24,13 +24,13 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~172 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
+This MCP server implements **~174 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
 
 - ✅ Activity Management (23 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only)
 - ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining
 - ✅ Training & Performance (18 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
-- ✅ Workouts (17 tools) - Garmin Coach plan listing, detail (race goal, confidence, training week) and per-workout grades
-- ✅ Devices (7 tools) - includes paired-sensor battery levels
+- ✅ Workouts (18 tools) - Garmin Coach plan listing, detail (race goal, confidence, training week) and per-workout grades; moving a scheduled workout to another date
+- ✅ Devices (8 tools) - includes paired-sensor battery levels and sending a workout to a device
 - ✅ Gear Management (4 tools) - includes per-gear activity lists for mileage auditing
 - ✅ Weight Tracking (5 tools)
 - ✅ Challenges & Badges (9 tools)
@@ -142,20 +142,54 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~172 tools by default, which can be a lot of context for
+This server registers ~174 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
-two optional environment variables:
+three optional environment variables:
 
 | Env var | Effect |
 |---|---|
-| `GARMIN_ENABLED_TOOLS` | Comma-separated **allowlist** — if set, *only* these tools are registered. |
-| `GARMIN_DISABLED_TOOLS` | Comma-separated **denylist** — listed tools are skipped. Ignored if an allowlist is set. |
+| `GARMIN_TOOL_PROFILE` | A built-in subset by area: `minimal`, `health`, `activities`, `workouts`, `training`, `nutrition`, or `all` (the default). Combine several with commas, e.g. `health,training`. |
+| `GARMIN_ENABLED_TOOLS` | Comma-separated **allowlist** — if set, *only* these tools are registered. With a profile, these are **added** to it instead. |
+| `GARMIN_DISABLED_TOOLS` | Comma-separated **denylist** — listed tools are skipped. Ignored if an allowlist is set, unless a profile is also set; then it removes tools from the profile. |
 
-Tool names are case-insensitive. With neither variable set, all tools register
+Tool names are case-insensitive. With none of them set, all tools register
 (unchanged default behaviour). Names that match no tool are ignored with a
-warning on stderr, which makes typos easy to spot.
+warning on stderr, which makes typos easy to spot. An unknown profile name
+stops the server at startup with the list of known profiles.
 
-Example — expose only sleep, stress, and recent activities:
+### Profiles
+
+| Profile | Tools | What it covers |
+|---|---:|---|
+| `minimal` | 20 | Recent activities with splits, daily stats, sleep, HRV, stress, body battery, training readiness and status |
+| `health` | 53 | Every health_wellness tool plus weight, body composition, blood pressure, hydration, women's health, fitness age, HRV and respiration trends |
+| `activities` | 41 | Activity list, detail, splits and edits; FIT analysis and power curve; gear; courses |
+| `workouts` | 26 | Workout library, upload, schedule and delete; the high-level builders; the calendar |
+| `training` | 38 | Training status, load, effect, VO2max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, personal records, race predictions, goals, badges |
+| `nutrition` | 23 | Food log, custom foods, daily nutrition settings, hydration, energy balance |
+
+Every profile also includes the identity and unit tools (`get_full_name`, `get_heart_rate_zones`, `get_unit_system`, `get_user_profile`, `get_userprofile_settings`), so the
+client can label the numbers it gets back.
+
+Example — a coaching session that needs training metrics and the workout tools:
+
+```json
+"env": {
+  "GARMIN_TOOL_PROFILE": "training,workouts"
+}
+```
+
+Example — the health profile plus recent activities, without the write tools:
+
+```json
+"env": {
+  "GARMIN_TOOL_PROFILE": "health",
+  "GARMIN_ENABLED_TOOLS": "get_activities,get_activity",
+  "GARMIN_DISABLED_TOOLS": "add_weigh_in,add_weigh_in_with_timestamps,delete_weigh_ins,add_body_composition,add_hydration_data,set_blood_pressure"
+}
+```
+
+Example — hand-pick tools without a profile:
 
 ```json
 "env": {
@@ -538,9 +572,10 @@ Trying to login to Garmin Connect using token data from directory '/home/you/.ga
 #### Notes
 
 - **No silent fallback.** If `GARMINTOKENS` points at a directory with no valid
-  tokens, startup fails with `GarminConnectAuthenticationError` rather than
-  falling back to the default store. A misconfigured second server cannot
-  silently reuse the first account's session.
+  tokens and login fails, the server logs the failure and tool calls fail;
+  HTTP `/readyz` remains unavailable (503). The server does not switch to the
+  default token store, so a misconfigured second server cannot silently reuse
+  the first account's session.
 - **`${HOME}` is expanded** even when an MCP client passes it through
   unresolved, and `~` works on Windows via `USERPROFILE`.
 - **Restrict write tools on secondary accounts.** Tools such as
@@ -588,8 +623,9 @@ File-based secrets are useful in certain environments, such as inside a Docker c
 By default the server communicates over **stdio**, which is what Claude Desktop, the MCP Inspector, and most local clients expect. To serve over **HTTP** instead (e.g. when running in a container or Kubernetes), set the transport via environment variables:
 
 - `GARMIN_MCP_TRANSPORT`: `stdio` (default), `streamable-http`, or `sse`
-- `GARMIN_MCP_HOST`: bind address for HTTP transports (default `127.0.0.1`; set to `0.0.0.0` only when the endpoint is fronted by an authenticating reverse proxy)
+- `GARMIN_MCP_HOST`: bind address for HTTP transports (default `127.0.0.1`; set to `0.0.0.0` only together with `GARMIN_MCP_HTTP_TOKEN` or behind an authenticating reverse proxy)
 - `GARMIN_MCP_PORT`: bind port for HTTP transports (default `8000`)
+- `GARMIN_MCP_HTTP_TOKEN`: shared secret for the HTTP transports. When set, every request to `/mcp`, `/sse` and `/messages/` must carry `Authorization: Bearer <token>`; anything else gets `401`. `/healthz` and `/readyz` stay open for probes. See [Protecting the HTTP endpoint](#protecting-the-http-endpoint).
 - `GARMIN_MCP_STATELESS_HTTP`: set to `true` to run `streamable-http` without sessions (default `false`). The MCP SDK drops a stateful session after 30 minutes idle, so the first call after an idle gap gets `404 Session not found`; some clients (including claude.ai custom connectors) report that as a failed tool call rather than re-initializing and retrying. Stateless mode has no sessions to expire. No tool in this server depends on session state, so nothing is lost. Recommended for long-lived remote deployments.
 - `GARMIN_MCP_CALL_TIMEOUT`: per-request timeout in seconds for calls to Garmin (default `90`). Garmin's API occasionally stalls a single request indefinitely; without this bound the call hangs until the MCP client's own timeout fires and reports the whole server as unresponsive. On timeout the tool returns a clear, retry-able error instead. Set to `0` to disable the bound.
 
@@ -603,7 +639,35 @@ When an HTTP transport is selected:
 - **`GET /healthz`** returns `ok` as soon as the server is up — use it as a **liveness** probe.
 - **`GET /readyz`** reports whether Garmin login has finished — use it as a **readiness** probe. It returns `200 {"status": "ready"}` once login succeeded, and `503` with `{"status": "pending"}` while login is still running or `{"status": "failed"}` if it failed (re-run `garmin-mcp-auth` and restart).
 
-The server itself performs **no authentication** on the HTTP endpoint — put it behind a reverse proxy (nginx, Traefik, Authelia, etc.) if it is reachable beyond localhost.
+#### Protecting the HTTP endpoint
+
+The HTTP transports expose full read/write access to the Garmin account, so
+the server binds to loopback by default. For anything reachable from other
+machines, set a shared secret and have the client send it as a bearer token:
+
+```bash
+export GARMIN_MCP_HTTP_TOKEN="$(openssl rand -hex 32)"
+GARMIN_MCP_TRANSPORT=streamable-http GARMIN_MCP_HOST=0.0.0.0 garmin-mcp
+```
+
+```bash
+# rejected: 401 {"error": "unauthorized", ...}
+curl -i http://localhost:8000/mcp
+# accepted (the MCP handshake then proceeds as usual)
+curl -i -H "Authorization: Bearer $GARMIN_MCP_HTTP_TOKEN" http://localhost:8000/mcp
+```
+
+Most MCP clients accept custom headers for remote servers (Claude Desktop and
+claude.ai connectors, the MCP Inspector, and the SDK clients all do); put the
+same `Authorization: Bearer …` header there. The comparison is constant-time.
+`/healthz` and `/readyz` never require the token, since they only report that
+the process is up and whether the Garmin login finished.
+
+Without the token the server still starts, but if `GARMIN_MCP_HOST` is not a
+loopback address it prints a warning on stderr that the account is exposed. A
+reverse proxy with its own authentication (nginx, Traefik, Authelia, etc.)
+remains a fine alternative; the token is the small, built-in option for the
+common self-hosted case.
 
 ### Garmin Connect China (garmin.cn)
 
@@ -884,10 +948,10 @@ docker compose up -d
 
 If you have multi-factor authentication (MFA) enabled on your Garmin account:
 
-1. Run the container in interactive mode:
+1. Run the authentication CLI with the service's token volume:
 
 ```bash
-docker compose run --rm garmin-mcp
+docker compose run --rm --entrypoint garmin-mcp-auth garmin-mcp
 ```
 
 2. When prompted, enter your MFA code:
@@ -1062,6 +1126,9 @@ GARMIN_EMAIL=you@example.com GARMIN_PASSWORD=secret garmin-mcp-auth
 # Verify existing tokens
 garmin-mcp-auth --verify
 
+# Show where tokens are looked up, what is on disk, and whether they work
+garmin-mcp-auth --diagnose
+
 # Force re-authentication (e.g., when tokens expire)
 garmin-mcp-auth --force-reauth
 
@@ -1071,7 +1138,7 @@ garmin-mcp-auth --token-path ~/.garmin_tokens
 
 #### Alternative: Manual First Run
 
-You can also authenticate by running the server once interactively:
+You can provide credentials from files to the authentication CLI:
 
 ```bash
 # Store credentials in files for security
@@ -1079,9 +1146,9 @@ echo "your_email@example.com" > ~/.garmin_email
 echo "your_password" > ~/.garmin_password
 chmod 600 ~/.garmin_email ~/.garmin_password
 
-# Run server interactively to authenticate
+# Run the authentication CLI before starting the server
 GARMIN_EMAIL_FILE=~/.garmin_email GARMIN_PASSWORD_FILE=~/.garmin_password \
-  uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp
+  uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
 
 # Enter MFA code when prompted
 # Tokens will be saved automatically
@@ -1113,7 +1180,7 @@ If using Docker, follow the [Handling MFA with Docker](#handling-mfa-with-docker
 
 #### Troubleshooting MFA
 
-**Error: "MFA authentication required but no interactive terminal available"**
+**Error: "MFA required; run 'garmin-mcp-auth' before starting the server."**
 
 Solution:
 1. Open terminal
@@ -1133,6 +1200,20 @@ garmin-mcp-auth --force-reauth
 garmin-mcp-auth --verify
 ```
 
+**`garmin-mcp-auth` succeeded, but the server still cannot log in**
+
+The server loads tokens only from `garmin_tokens.json` inside the token
+directory (`$GARMINTOKENS`, default `~/.garminconnect`). Its startup error says
+what it found there: no directory, no token file, a file it cannot read, or
+tokens Garmin rejected. The usual cause is the MCP client starting the server
+with a different `GARMINTOKENS` or `HOME` than the shell that ran
+`garmin-mcp-auth` (common with Claude Desktop on Windows), so the two resolve
+to different directories. Compare them with:
+```bash
+garmin-mcp-auth --diagnose
+```
+The `~/.garminconnect_base64` file that `garmin-mcp-auth` also writes is a copy
+for other garminconnect-based tools; the server does not read it.
 ## Remote Mode (Multi-User, HTTP + OAuth2)
 
 Remote mode runs the MCP server over HTTP with OAuth2 authentication, enabling multi-user access. Each user authenticates directly with their **Garmin Connect credentials** during the OAuth2 flow — no pre-created accounts or manual account linking required.
@@ -1183,6 +1264,7 @@ Client → 401 → OAuth2 discovery
 - Reflected values on the login/MFA pages are **HTML-escaped**, and untrusted values are escaped before logging (no log injection).
 - **Remote tools never read the server's filesystem.** `upload_course` takes `gpx_base64` in remote mode and refuses `gpx_path` — see [Courses](#courses-and-gpx-uploads).
 - **Three tools are stdio-only.** `check_garmin_auth` and `login_to_garmin` (on a network server, `login_to_garmin` would let any authenticated user store tokens for *any* Garmin account, bypassing the email allowlist), and `delete_activity` (irreversible, and an activity is the training history that Garmin Coach grades and every load and analytics figure is computed from). `delete_workout` and `delete_course` remain available — a workout or course can be recreated.
+- **Stateless transport.** The server runs Streamable HTTP in stateless mode: no `Mcp-Session-Id`, nothing held per session, so there is no session state to accumulate or to expire under an idle client.
 - **Every remote tool carries effect annotations** (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`), so a client can tell a delete from a read and ask before running one. Results are returned as plain text, not additionally wrapped as `{"result": ...}` structured content.
 - The container **does not run the server as root**: the entrypoint takes ownership of `/data`, then drops to an unprivileged user.
 

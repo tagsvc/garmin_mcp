@@ -471,6 +471,119 @@ async def test_get_activity_fit_data_session_fields(app_with_activity_analysis, 
     assert data["session"]["avg_cadence_rpm"] == 83
     assert data["session"]["avg_left_pco_mm"] == 3
     assert data["session"]["avg_right_pco_mm"] == -8
+    assert "multisport" not in data
+    assert "sessions" not in data
+    assert "analyzed_session_index" not in data
+
+
+_TRI_START = datetime.datetime(2024, 6, 1, 8, 0, 0)
+
+# (sport, start offset s, duration s, record power W) for a run-bike-run brick:
+# 10 min run at 350 W, 1 min transition, 20 min bike at 200 W, 10 min run.
+_BRICK_LEGS = [
+    ("running", 0, 600, 350),
+    ("transition", 600, 60, None),
+    ("cycling", 660, 1200, 200),
+    ("running", 1860, 600, 350),
+]
+
+
+def _multisport_messages(legs=_BRICK_LEGS, with_timestamps=True):
+    """Records for every leg, then one session message per leg (FIT order)."""
+    messages = []
+    for _, offset, duration, power in legs:
+        for i in range(duration):
+            fields = {"heart_rate": 150}
+            if power is not None:
+                fields["power"] = power
+            if with_timestamps:
+                fields["timestamp"] = _TRI_START + datetime.timedelta(seconds=offset + i)
+            messages.append(_make_mock_fit_message("record", fields))
+    for sport, offset, duration, _ in legs:
+        messages.append(_make_mock_fit_message("session", {
+            "sport": sport,
+            "start_time": _TRI_START + datetime.timedelta(seconds=offset),
+            "total_elapsed_time": float(duration),
+            "avg_power": 200 if sport == "cycling" else None,
+        }))
+    return messages
+
+
+async def _call_fit_data(app, mock_garmin_client, messages):
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = None
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile(messages)
+        result = await app.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+    return json.loads(result[0][0].text)
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_data_multisport_lists_every_session(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Each leg of a multisport file is reported; session is the bike leg."""
+    data = await _call_fit_data(
+        app_with_activity_analysis, mock_garmin_client, _multisport_messages()
+    )
+
+    assert data["multisport"] is True
+    assert [s["sport"] for s in data["sessions"]] == [
+        "running", "transition", "cycling", "running"
+    ]
+    assert data["sessions"][2]["start_time"] == "2024-06-01 08:11:00"
+    assert data["sessions"][2]["total_elapsed_time_s"] == 1200.0
+    assert data["analyzed_session_index"] == 2
+    assert data["session"]["sport"] == "cycling"
+    assert data["session"]["avg_power_w"] == 200
+    assert "leg 2 (cycling)" in data["analysis_note"]
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_data_multisport_power_curve_is_bike_only(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Run-leg power (350 W) does not leak into the bike power curve (200 W)."""
+    data = await _call_fit_data(
+        app_with_activity_analysis, mock_garmin_client, _multisport_messages()
+    )
+
+    pdc = data["power_duration_curve"]
+    assert pdc["5s"] == 200
+    assert pdc["20min"] == 200
+    assert "60min" not in pdc  # the bike leg is only 20 min long
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_data_multisport_without_timestamps_falls_back(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Without record timestamps, analyses keep covering all legs and say so."""
+    data = await _call_fit_data(
+        app_with_activity_analysis,
+        mock_garmin_client,
+        _multisport_messages(with_timestamps=False),
+    )
+
+    assert data["session"]["sport"] == "cycling"
+    assert data["power_duration_curve"]["5s"] == 350
+    assert "cover all legs" in data["analysis_note"]
+
+
+def test_primary_session_index_falls_back_to_longest_leg():
+    """With no single cycling leg, the longest leg is analysed."""
+    sessions = [
+        {"sport": "cycling", "total_elapsed_time_s": 900.0},
+        {"sport": "running", "total_elapsed_time_s": 2400.0},
+        {"sport": "cycling", "total_elapsed_time_s": 1800.0},
+    ]
+    assert activity_analysis._primary_session_index(sessions) == 1
+    assert activity_analysis._primary_session_index(
+        [{"sport": "swimming", "total_elapsed_time_s": 1200.0},
+         {"sport": "running", "total_elapsed_time_s": 600.0}]
+    ) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +867,32 @@ async def test_get_activity_fit_data_power_balance_uses_profile_field_types(
     assert data["records"][0]["right_power_pct"] == 52.0
 
 
+@pytest.mark.asyncio
+async def test_get_activity_fit_data_session_power_phase_uses_profile_indexes(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Each phase array contains separate start/end angles, not one start value."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    session_msg = _make_profile_fit_message(
+        18,
+        [
+            (116, (337.5, 22.5), (240, 16)),
+            (118, (345.9375, 15.46875), (246, 11)),
+        ],
+    )
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile([session_msg])
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+
+    session = json.loads(result[0][0].text)["session"]
+    assert session["avg_left_power_phase_start_deg"] == 337.5
+    assert session["avg_left_power_phase_end_deg"] == 22.5
+    assert session["avg_right_power_phase_start_deg"] == 345.9375
+    assert session["avg_right_power_phase_end_deg"] == 15.46875
+
+
 # ---------------------------------------------------------------------------
 # No DI2 data
 # ---------------------------------------------------------------------------
@@ -991,6 +1130,67 @@ async def test_power_duration_curve_filters_by_requested_activity_type(
     assert data["season_bests"]["5s"]["activity_id"] == expected_id
 
 
+@pytest.mark.asyncio
+async def test_power_duration_curve_includes_cycling_parent_subtypes(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Garmin's cycling parent includes names without 'cycling' or 'biking'."""
+    mock_garmin_client.get_activities.return_value = [
+        {"activityId": i, "activityType": {"typeKey": key, "parentTypeId": 2}}
+        for i, key in enumerate(
+            ["virtual_ride", "cyclocross", "e_bike_fitness", "e_bike_mountain"],
+            start=1,
+        )
+    ]
+    mock_garmin_client.download_activity.return_value = b"ride"
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.side_effect = lambda _: _mock_power_fitfile(300)
+        result = await app_with_activity_analysis.call_tool("get_power_duration_curve", {})
+
+    data = json.loads(result[0][0].text)
+    assert data["activities_analyzed"] == 4
+    assert [call.args[0] for call in mock_garmin_client.download_activity.call_args_list] == [1, 2, 3, 4]
+    assert data["season_bests"]["5s"]["watts"] == 300
+
+
+@pytest.mark.asyncio
+async def test_power_duration_curve_requests_matching_activities_before_limiting(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """The requested count applies to rides, rather than an all-sport window."""
+    from garminconnect import Garmin
+
+    activities = [
+        {"activityId": i, "activityType": {"typeKey": key, "parentTypeId": parent}}
+        for i, key, parent in [
+            (1, "running", 17), (2, "road_biking", 2),
+            (3, "running", 17), (4, "road_biking", 2),
+        ]
+    ]
+    # Exercise the installed library's activitytype -> activityType mapping,
+    # replacing only the transport so this test never contacts Garmin.
+    client = Garmin()
+    client.connectapi = Mock(side_effect=lambda url, params: (
+        [a for a in activities if a["activityType"]["parentTypeId"] == 2]
+        if params.get("activityType") == "cycling" else activities
+    )[int(params["start"]):int(params["start"]) + int(params["limit"])])
+    mock_garmin_client.get_activities.side_effect = client.get_activities
+    mock_garmin_client.download_activity.return_value = b"ride"
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.side_effect = lambda _: _mock_power_fitfile(300)
+        result = await app_with_activity_analysis.call_tool(
+            "get_power_duration_curve", {"num_activities": 2, "activity_type": "CYCLING"}
+        )
+
+    data = json.loads(result[0][0].text)
+    assert data["activities_analyzed"] == 2
+    assert [call.args[0] for call in mock_garmin_client.download_activity.call_args_list] == [2, 4]
+    client.connectapi.assert_called_once_with(
+        client.garmin_connect_activities,
+        params={"start": "0", "limit": "2", "activityType": "cycling"},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Climb detection + VAM (unit tests)
 # ---------------------------------------------------------------------------
@@ -1121,6 +1321,23 @@ def test_temperature_stats_none_when_no_data():
     """Returns None when no temperature data"""
     records = [{"power_w": 200, "heart_rate_bpm": 145}] * 50
     assert _compute_temperature_stats(records) is None
+
+
+def test_temperature_stats_include_zero_power_and_skip_missing_samples():
+    """Coasting contributes 0 W; missing power and 0 bpm dropouts stay excluded."""
+    records = [
+        {"temperature_c": 10, "power_w": power, "heart_rate_bpm": hr}
+        for power, hr in [(0, 0), (200, 140), (None, None)]
+    ] + [{"temperature_c": 20}] * 3 + [
+        {"temperature_c": 30, "power_w": power, "heart_rate_bpm": hr}
+        for power, hr in [(0, 0), (0, 150), (None, None)]
+    ]
+
+    stats = _compute_temperature_stats(records)
+    assert stats["avg_power_coolest_third_w"] == 100
+    assert stats["avg_power_hottest_third_w"] == 0
+    assert stats["avg_hr_coolest_third_bpm"] == 140
+    assert stats["avg_hr_hottest_third_bpm"] == 150
 
 
 # ---------------------------------------------------------------------------
@@ -1759,6 +1976,123 @@ async def test_get_activity_fit_data_session_reads_enhanced_speed(app_with_activ
 
 
 # ---------------------------------------------------------------------------
+# Grade derived from altitude + distance when the device writes no grade
+# ---------------------------------------------------------------------------
+
+def _ride_messages(grade_field: bool, altitude: bool = True, distance: bool = True):
+    """1 Hz ride: 60 s flat, 400 s steady 6% climb at 5 m/s, 60 s flat.
+
+    A rear shift is logged mid-climb and another on the closing flat.
+    """
+    start = datetime.datetime(2024, 3, 2, 14, 0, 0)
+    gear_data = (53 << 24) | (2 << 16) | (17 << 8) | 4
+    messages = []
+    dist = alt = 0.0
+    for t in range(520):
+        on_climb = 60 <= t < 460
+        speed = 5.0 if on_climb else 8.0
+        grade = 6.0 if on_climb else 0.0
+        dist += speed
+        alt += speed * grade / 100
+        fields = {
+            "timestamp": start + datetime.timedelta(seconds=t),
+            "power": 280 if on_climb else 180,
+            "cadence": 75 if on_climb else 90,
+            "heart_rate": 160 if on_climb else 140,
+            "enhanced_speed": speed,
+        }
+        if altitude:
+            fields["enhanced_altitude"] = 100.0 + alt
+        if distance:
+            fields["distance"] = dist
+        if grade_field:
+            fields["grade"] = grade
+        messages.append(_make_mock_fit_message("record", fields))
+        if t in (300, 500):
+            messages.append(_make_mock_fit_message("event", {
+                "event": "rear_gear_change",
+                "gear_change_data": gear_data,
+                "timestamp": start + datetime.timedelta(seconds=t),
+            }))
+    return messages
+
+
+async def _fit_data_for(app, mock_garmin_client, messages):
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile(messages)
+        result = await app.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+    return json.loads(result[0][0].text)
+
+
+@pytest.mark.asyncio
+async def test_fit_data_derives_grade_when_device_writes_none(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """No record grade field: climbs, grade bins and shift terrain come from
+    altitude / distance instead of silently disappearing."""
+    data = await _fit_data_for(
+        app_with_activity_analysis, mock_garmin_client,
+        _ride_messages(grade_field=False),
+    )
+
+    assert data["grade_source"] == "derived"
+
+    assert len(data["climbs"]) == 1
+    climb = data["climbs"][0]
+    assert climb["avg_grade_pct"] == pytest.approx(6.0, abs=0.5)
+    assert climb["elevation_gain_m"] == pytest.approx(120, abs=10)
+
+    bins = data["session"]["grade_analysis"]
+    assert "flat" in bins
+    climbing_s = (
+        bins.get("gentle", {}).get("time_s", 0)
+        + bins.get("moderate", {}).get("time_s", 0)
+    )
+    assert climbing_s > 300
+
+    assert data["shifts"][0]["grade_at_shift_pct"] == pytest.approx(6.0, abs=0.5)
+    assert data["shifts"][1]["grade_at_shift_pct"] == pytest.approx(0.0, abs=0.5)
+    assert set(data["shift_summary"]["by_terrain"]) >= {"climbing", "flat"}
+
+
+@pytest.mark.asyncio
+async def test_fit_data_keeps_device_grade(app_with_activity_analysis, mock_garmin_client):
+    """Device grade present: used as-is and labelled as device grade."""
+    data = await _fit_data_for(
+        app_with_activity_analysis, mock_garmin_client,
+        _ride_messages(grade_field=True),
+    )
+
+    assert data["grade_source"] == "device"
+    assert data["climbs"][0]["avg_grade_pct"] == 6.0
+    assert data["climbs"][0]["max_grade_pct"] == 6.0
+    assert data["session"]["grade_analysis"]["moderate"]["time_s"] == 400
+    assert data["shifts"][0]["grade_at_shift_pct"] == 6.0
+    assert data["shifts"][1]["grade_at_shift_pct"] == 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing", ["altitude", "distance"])
+async def test_fit_data_no_grade_without_altitude_or_distance(
+    app_with_activity_analysis, mock_garmin_client, missing
+):
+    """Without altitude or distance there is nothing to derive grade from."""
+    data = await _fit_data_for(
+        app_with_activity_analysis, mock_garmin_client,
+        _ride_messages(grade_field=False, **{missing: False}),
+    )
+
+    assert "grade_source" not in data
+    assert "climbs" not in data
+    assert "grade_analysis" not in data["session"]
+    assert all("grade_at_shift_pct" not in s for s in data["shifts"])
+    assert "by_terrain" not in data["shift_summary"]
+
+
+# ---------------------------------------------------------------------------
 # Wrapped-around negative lap distance
 # ---------------------------------------------------------------------------
 
@@ -1795,3 +2129,63 @@ async def test_get_activity_fit_data_wrapped_lap_distance_is_nulled(app_with_act
     assert "total_distance_m" not in data["laps"][1]
     assert data["laps"][1]["distance_invalid"] is True
     assert data["laps"][1]["avg_heart_rate_bpm"] == 140
+
+
+# ---------------------------------------------------------------------------
+# W/kg body weight lookup
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_data_uses_latest_weigh_in_before_ride(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """W/kg uses the latest weigh-in on or before the ride, not only same-day ones."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = {
+        "dateWeightList": [
+            {"calendarDate": "2024-02-10", "weight": 72000},
+            {"calendarDate": "2024-02-27", "weight": 70000},
+            # After the ride: must not be used.
+            {"calendarDate": "2024-03-05", "weight": 68000},
+        ]
+    }
+    session_msg = _make_mock_fit_message("session", {
+        "sport": "cycling",
+        "start_time": "2024-03-02 14:00:00",
+        "avg_power": 210,
+    })
+
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile([session_msg])
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+
+    data = json.loads(result[0][0].text)
+    mock_garmin_client.get_body_composition.assert_called_once_with("2023-12-03", "2024-03-02")
+    assert data["rider_weight_kg"] == 70.0
+    assert data["rider_weight_date"] == "2024-02-27"
+    assert data["session"]["avg_w_per_kg"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_data_without_weigh_ins_omits_w_per_kg(
+    app_with_activity_analysis, mock_garmin_client
+):
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = {"dateWeightList": []}
+    session_msg = _make_mock_fit_message("session", {
+        "sport": "cycling",
+        "start_time": "2024-03-02 14:00:00",
+        "avg_power": 210,
+    })
+
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile([session_msg])
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+
+    data = json.loads(result[0][0].text)
+    assert "rider_weight_kg" not in data
+    assert "avg_w_per_kg" not in data["session"]

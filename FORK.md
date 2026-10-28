@@ -77,6 +77,24 @@ coverage.
 - **No live-Garmin validation of imported tokens.** Validation is structural only — a live
   check would make the server a good/bad token oracle and re-introduce the 429 surface.
 - **`auth_tools` is stdio-only** — registered in `__init__.py`, never in `remote.py`.
+- **The remote server is stateless Streamable HTTP** (`stateless_http=True` in
+  `remote.py`). Stateful servers on `mcp` <= 1.29.1 never reclaimed sessions
+  (CVE-2026-59951), so any token holder could grow server memory without bound;
+  1.30.0 caps and expires them, but its 30-minute idle expiry makes claude.ai
+  report the first call after a quiet spell as failed. Stateless keeps no
+  sessions at all. Nothing needs them: the caller is identified per request
+  from the OAuth bearer token. `mcp` is floored at 1.30.0 in `pyproject.toml`.
+  Pinned by `tests/integration/test_remote_end_to_end.py`, which drives
+  authenticated requests from two users through the real remote stack.
+- **Each tool call keeps its caller's identity on the worker thread.** Since the
+  2026-10-27 sync, `_ToolFilter` runs every tool body as
+  `anyio.to_thread.run_sync(lambda: asyncio.run(...))` (upstream #449), so the
+  remote server's per-request auth contextvar must cross onto a worker thread
+  and into a fresh event loop for `get_client()` to resolve the right user.
+  anyio carries it; a plain `threading.Thread` does not. If it is ever lost,
+  remote calls fail closed ("client not available") rather than leak a client,
+  but every call breaks. Pinned by `test_remote_mode_contract.py` with concurrent
+  callers holding different tokens; it was confirmed to fail on a plain thread.
 - **Remote registers through `remote.register_remote_tools()`, and nowhere else.**
   It routes every module through `garmin_mcp._ToolFilter` — the wrapper stdio
   uses — so remote tools get upstream's effect annotations and
@@ -134,6 +152,19 @@ coverage.
   1789330190 over 2026-09-13..09-26: 7 calendar entries against 5 generated
   workouts. Anything answering "how many sessions this week" from the feed
   alone is wrong. Pinned by `test_coach_progress_and_sensors.py`.
+- **Recovery hours come from `recoveryTime`; `recoveryTimeChangePhrase` is not a
+  reading.** Upstream zeroed recovery whenever the phrase was `REACHED_ZERO`. A
+  live post-run snapshot (2026-10-27, `AFTER_POST_EXERCISE_RESET`) carried
+  `REACHED_ZERO` with `recoveryTime` 4320 — the 72h Garmin's app showed — and a
+  recovery factor of 10 (POOR); the tools reported 0h and "recovered". The phrase
+  describes what changed at the snapshot's event; when recovery has drained,
+  Garmin sends the low minute value itself (that morning: 1). Garmin Connect's
+  web client has no display text for the phrase and shows hours from
+  `recoveryTime`. Snapshots are event-driven (wake, activity, nap) and hold until
+  the next event, so values are reported with `as_of` and `input_context`, never
+  as a live countdown. _On merge:_ do not take an upstream change that lets the
+  phrase alter the hours. Pinned by `test_recovery_live_snapshots.py`, built from
+  the real payload and confirmed to fail on the upstream rule.
 - **Garmin's "completed" means ended, not finished.** A cancelled (quit) plan is
   listed under `/atp-api/atp/athlete/completed` and carries `planCompleted: true`
   as well as a non-null `quit` — observed on plan 1789330190 after it was quit,
@@ -398,12 +429,12 @@ taken whole.
   hunk at all. When a hunk changes a helper's signature, grep every call site
   across the package and adopt upstream's caller text along with the helper.
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 172 / remote 169.
+**Definition of done:** suite green, invariants intact, tool counts stdio 174 / remote 171.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1077 at time of writing).
-- Tool counts: **stdio 172**, **remote 169** (`auth_tools` and `delete_activity` are stdio-only).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1452 at time of writing).
+- Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.
@@ -417,6 +448,8 @@ stdio/remote split was collapsed, and the first needing no tool migration), on
 2026-09-10 (9 upstream commits: 2 new tools, 7 fixes), on 2026-09-19
 (3 upstream commits: `get_energy_balance` plus docs), and on 2026-10-14 (54
 upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
-fixes; the first sync to route remote registration through `_ToolFilter`). See `CHANGELOG.md` for a
+fixes; the first sync to route remote registration through `_ToolFilter`), and
+on 2026-10-27 (33 upstream commits: 2 new tools, tool bodies moved off the event
+loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). See `CHANGELOG.md` for a
 categorized list of every change relative to upstream, and `README.md` (Remote
 Mode, Security, Token import / refresh) for operational detail.

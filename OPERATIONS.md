@@ -66,8 +66,8 @@ Settings → Advanced Security. All of these are **on**:
 Deliberately **off**:
 
 - **Dependabot version updates for `pip`.** `pyproject.toml` carries intentional
-  constraints — `garminconnect==0.3.5` (CVE-2026-54447 floor), `mcp>=1.28.1,<2`
-  (2.x renames `mcp.server.fastmcp`), exact pins on `requests` and
+  constraints — `garminconnect==0.3.5` (CVE-2026-54447 floor), `mcp>=1.30.0,<2`
+  (2.x renames `mcp.server.fastmcp`; 1.30.0 is a security floor, CVE-2026-59951), exact pins on `requests` and
   `python-dotenv`. Version updates ignore that intent and would reopen the same
   `mcp` 2.x bump indefinitely. Security updates fire only on real advisories,
   which is the signal worth having. If pip version updates are ever turned on,
