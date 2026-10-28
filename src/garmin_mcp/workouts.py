@@ -915,7 +915,10 @@ def _get_garmin_coach_workouts(calendar_date: str) -> str:
         "workouts": all_workouts,
     }
     return json.dumps(
-        {key: value for key, value in curated.items() if value is not None},
+        add_account_units(
+            {key: value for key, value in curated.items() if value is not None},
+            account_unit_system(garmin_client),
+        ),
         indent=2,
     )
 
@@ -929,6 +932,9 @@ def register_tools(app):
 
         Returns a count and list of workout summaries with essential metadata only.
         For detailed workout information including segments, use get_workout_by_id.
+
+        estimated_distance_meters gets estimated_distance_miles (statute) or
+        _km (metric).
         """
         try:
             workouts = _get_all_workouts(garmin_client)
@@ -941,7 +947,9 @@ def register_tools(app):
                 "workouts": [_curate_workout_summary(w) for w in workouts]
             }
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving workouts: {str(e)}"
 
@@ -1364,6 +1372,9 @@ def register_tools(app):
         Returns workouts that have been scheduled on the Garmin Connect calendar,
         including their scheduled dates and completion status.
 
+        estimated_distance_meters gets estimated_distance_miles (statute) or
+        _km (metric).
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
@@ -1395,7 +1406,9 @@ def register_tools(app):
                 "scheduled_workouts": [_curate_scheduled_workout(s) for s in scheduled]
             }
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving scheduled workouts: {str(e)}"
 

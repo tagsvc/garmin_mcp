@@ -59,12 +59,19 @@ after it:
 
 | account (`get_unit_system`) | added beside the metric field |
 |---|---|
-| `statute_us` | `distance_miles`, `avg_speed_mph`, `avg_pace_per_mile` (m:ss), `elevation_gain_feet`, `weight_lb` |
-| `statute_uk` | miles, mph, pace per mile and feet; weight stays in kg |
-| `metric` | `distance_km`, `avg_speed_kmh`, `avg_pace_per_km`; elevation and weight are already metric |
+| `statute_us` | `distance_miles`, `avg_speed_mph`, `avg_pace_per_mile` (m:ss), `elevation_gain_feet`, `weight_lb`, `avg_stride_length_in`, `avg_temp_f` |
+| `statute_uk` | miles, mph, pace per mile, feet and inches; weight stays in kg and temperature in °C |
+| `metric` | `distance_km`, `avg_speed_kmh`, `avg_pace_per_km`; elevation, weight and temperature are already metric |
 
-Garmin's raw split payloads get camelCase companions (`distanceMiles`,
-`averagePacePerMile`, `elevationGainFeet`). Swims keep meters, because Garmin
+Garmin's raw payloads get camelCase companions (`distanceMiles`,
+`averagePacePerMile`, `elevationGainFeet`, `averageTemperatureFahrenheit`,
+`strideLengthInches`, `weightLb` beside Garmin's bare grams). A temperature
+difference such as a range converts by x1.8 without +32. Skin temperature is a
+deviation from your baseline and is named so
+(`skin_temperature_deviation_celsius` / `_fahrenheit`, both from Garmin).
+Hydration follows the hydration unit in your Garmin profile, which is its own
+setting: a US account logging water in milliliters gets no fluid ounces.
+Decimal hours get h:mm text (`sleep_hm: 6:22` beside `sleep_hours: 6.37`). Swims keep meters, because Garmin
 shows pool units and pace per 100. Activity weather is the one endpoint Garmin
 localises itself; `get_activity_weather` labels its units.
 

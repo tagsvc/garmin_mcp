@@ -6,6 +6,8 @@ import re
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from garmin_mcp.units import account_unit_system, add_account_units
+
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # The garmin_client will be set by the main file
@@ -162,6 +164,8 @@ def register_tools(app):
         marks the goal race that an active training plan targets. Goal time
         comes from a per-event detail request.
 
+        distance_meters gets distance_miles (statute) or distance_km (metric).
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
@@ -198,7 +202,11 @@ def register_tools(app):
                 "date_range": {"start": start_date, "end": end_date},
                 "events": events,
             }
-            return json.dumps(curated, indent=2, ensure_ascii=False)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(garmin_client)),
+                indent=2,
+                ensure_ascii=False,
+            )
         except ValueError as e:
             return str(e)
         except Exception as e:

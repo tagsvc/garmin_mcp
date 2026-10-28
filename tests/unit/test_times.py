@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from garmin_mcp import times
+from garmin_mcp import profile_settings as profile_settings_module
 from garmin_mcp.client_resolver import _ResolvingGarminProxy, set_global_client
 from garmin_mcp.times import (
     gmt,
@@ -162,7 +162,7 @@ def test_the_shared_proxy_is_never_the_cache_key():
         assert profile_time_zone(proxy) == "Asia/Tokyo"
     finally:
         set_global_client(None)
-    assert proxy not in times._profile_zones
+    assert proxy not in profile_settings_module._settings
 
 
 def test_local_today_follows_the_profile_zone():

@@ -20,6 +20,7 @@ from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client, get_user_id
 from garmin_mcp.times import local_today
+from garmin_mcp.units import format_hours
 
 
 garmin_client = None
@@ -50,6 +51,9 @@ def register_tools(app):
     ) -> str:
         """Compare current health metrics against personal rolling baselines.
 
+        Values in decimal hours (sleep_hours: 6.37 is 6 h 22 min) also get h:mm
+        text (latest_hm, baseline_avg_hm, prior_avg_hm).
+
         Args:
             end_date: Last date to include in YYYY-MM-DD format. Defaults to today.
             days: Number of days to fetch, capped at 180.
@@ -75,6 +79,8 @@ def register_tools(app):
         z_threshold: float = 1.5,
     ) -> str:
         """Find unusual days compared with the user's own recent baseline.
+
+        An hours metric also gets value_hm and baseline_avg_hm (h:mm text).
 
         Args:
             end_date: Last date to include in YYYY-MM-DD format. Defaults to today.
@@ -189,6 +195,9 @@ def register_tools(app):
         include_daily_rows: bool = False,
     ) -> str:
         """Run a custom historical health report.
+
+        Hours metrics (decimal: 6.37 is 6 h 22 min) also get h:mm text, e.g.
+        sleep_hm beside sleep_hours.
 
         Args:
             end_date: Last date to include in YYYY-MM-DD format. Defaults to today.
@@ -373,6 +382,20 @@ def _normalize_day(
     return row
 
 
+def _add_hm(target: dict[str, Any], unit: str, keys: tuple[str, ...]) -> None:
+    """FORK: h:mm text beside decimal hours (6.37 h is 6:22, not 6:37)."""
+    if unit != "h":
+        return
+    for key in keys:
+        value = _number(target.get(key))
+        if value is not None:
+            target[f"{key}_hm"] = format_hours(value)
+
+
+def _hm_key(metric: str) -> str:
+    return f"{metric[:-len('_hours')]}_hm" if metric.endswith("_hours") else f"{metric}_hm"
+
+
 def _baseline_payload(rows: list[dict[str, Any]], baseline_window: int) -> dict[str, Any]:
     window = min(max(7, baseline_window), len(rows))
     baseline_rows = rows[-window:]
@@ -401,6 +424,7 @@ def _baseline_payload(rows: list[dict[str, Any]], baseline_window: int) -> dict[
             "direction": metadata["direction"],
             "sample_days": len(baseline_values),
         }
+        _add_hm(metrics[field], metadata["unit"], ("latest", "baseline_avg", "prior_avg"))
 
     return {
         "window": _window(rows),
@@ -429,18 +453,18 @@ def _anomalies(
             z_score = (value - avg) / std
             if abs(z_score) < z_threshold:
                 continue
-            anomalies.append(
-                {
-                    "date": row["date"],
-                    "metric": field,
-                    "label": metadata["label"],
-                    "value": _round(value),
-                    "baseline_avg": _round(avg),
-                    "z_score": _round(z_score, 2),
-                    "severity": _severity(abs(z_score)),
-                    "interpretation": _interpret_anomaly(field, z_score),
-                }
-            )
+            anomaly = {
+                "date": row["date"],
+                "metric": field,
+                "label": metadata["label"],
+                "value": _round(value),
+                "baseline_avg": _round(avg),
+                "z_score": _round(z_score, 2),
+                "severity": _severity(abs(z_score)),
+                "interpretation": _interpret_anomaly(field, z_score),
+            }
+            _add_hm(anomaly, metadata["unit"], ("value", "baseline_avg"))
+            anomalies.append(anomaly)
     return sorted(anomalies, key=lambda item: abs(float(item["z_score"])), reverse=True)[:25]
 
 
@@ -555,6 +579,8 @@ def _custom_report(
         output: dict[str, Any] = {"group": group, "days": len(group_rows)}
         for metric in metrics:
             output[metric] = _aggregate(_values(group_rows, metric), aggregation)
+            if ANALYTIC_METRICS[metric]["unit"] == "h" and output[metric] is not None:
+                output[_hm_key(metric)] = format_hours(output[metric])
         report_rows.append(output)
 
     result: dict[str, Any] = {
@@ -583,9 +609,14 @@ def _custom_report(
         },
     }
     if include_daily_rows:
-        result["daily_rows"] = [
-            {"date": row["date"], **{metric: row.get(metric) for metric in metrics}} for row in rows
-        ]
+        result["daily_rows"] = []
+        for row in rows:
+            daily = {"date": row["date"], **{metric: row.get(metric) for metric in metrics}}
+            for metric in metrics:
+                value = _number(daily.get(metric))
+                if ANALYTIC_METRICS[metric]["unit"] == "h" and value is not None:
+                    daily[_hm_key(metric)] = format_hours(value)
+            result["daily_rows"].append(daily)
     return result
 
 

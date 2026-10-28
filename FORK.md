@@ -198,9 +198,19 @@ coverage.
   workout's `pace.zone` bounds (`10:30/mi`, `5:00/km`) becomes m/s in
   `_normalize_workout_steps`, checked for the whole workout before any step
   changes; a bare `10:30` is rejected, since it could be per mile or per km.
+  Temperatures get Fahrenheit on a US account only, and a difference (a
+  range, a deviation) converts by x1.8 with no +32; centimeters get inches on
+  statute accounts. Garmin's raw payloads hold bare grams under `weight`,
+  `boneMass` and `muscleMass` in some places and kilograms under the same
+  name in others (the FTP payload's `weight` is 73.0), so pounds for raw
+  keys are added per payload (`units.add_gram_masses`), never by key name.
+  Hydration follows the profile's own `hydrationMeasurementUnit` -- a US
+  account can log water in milliliters -- not the measurement system.
+  Decimal hours get h:mm text (`_hm`): 6.37 h is 6:22, not 6:37.
   _On merge:_ an upstream rewrite of one of these tools' `json.dumps` returns
   must keep the `add_account_units(...)` wrap. Pinned by
-  `test_account_units_tools.py` and `test_units.py`.
+  `test_account_units_tools.py`, `test_more_account_units_tools.py` and
+  `test_units.py`.
 - **Times name their zone; local comes from the record before the profile.**
   Garmin mixes GMT, the watch's local time and epoch milliseconds, often
   under keys that do not say which: body battery printed its GMT start as a
@@ -489,7 +499,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1615 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1660 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
