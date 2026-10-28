@@ -22,6 +22,7 @@ from garmin_mcp.activity_analysis import _resolve_download_dir
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client, is_remote_mode
+from garmin_mcp.units import account_unit_system, add_account_units
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -251,6 +252,10 @@ def register_tools(app):
 
         Returns a curated list of courses with id, name, distance, activity type
         and creation date.
+
+        Distances and elevations are meters (distance_m, elevation_gain_m), each
+        with a companion in the account's units: distance_miles and
+        elevation_gain_feet for a US account, distance_km for a metric one.
         """
         try:
             data = get_client(ctx).connectapi("/course-service/course")
@@ -271,7 +276,13 @@ def register_tools(app):
                 }
                 for c in data
             ]
-            return json.dumps({"count": len(curated), "courses": curated}, indent=2)
+            return json.dumps(
+                add_account_units(
+                    {"count": len(curated), "courses": curated},
+                    account_unit_system(get_client(ctx)),
+                ),
+                indent=2,
+            )
         except Exception as e:
             return f"Error listing courses: {str(e)}"
 
@@ -281,6 +292,10 @@ def register_tools(app):
 
         Returns course metadata, elevation gain/loss, total distance,
         and all custom course waypoints (shops, water, food, campgrounds, hazards).
+
+        Distances and elevations are meters (distance_m, elevation_gain_m), each
+        with a companion in the account's units: distance_miles and
+        elevation_gain_feet for a US account, distance_km for a metric one.
 
         Args:
             course_id: ID of the course (from get_courses).
@@ -314,7 +329,9 @@ def register_tools(app):
                 "geo_points_count": len(geo_points),
                 "url": f"https://connect.{garmin_client.client.domain}/modern/course/{course_id}",
             }
-            return json.dumps(result, indent=2)
+            return json.dumps(
+                add_account_units(result, account_unit_system(garmin_client)), indent=2
+            )
         except Exception as e:
             return f"Error fetching course details: {str(e)}"
 

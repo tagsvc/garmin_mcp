@@ -15,6 +15,7 @@ from garminconnect import (
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import account_unit_system, add_account_units
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -1124,6 +1125,11 @@ def register_tools(app):
         which lactate starts to accumulate in the blood. This is a key metric for
         endurance training.
 
+        Threshold speed is in m/s (lactate_threshold_speed_mps, speed_mps), each
+        with its pace in the account's units beside it:
+        lactate_threshold_pace_per_mile for a US account, ..._per_km for a
+        metric one. A US account also gets weight_lb.
+
         Args:
             start_date: Start date in YYYY-MM-DD format (optional; give with
                 end_date for history, omit both for latest)
@@ -1223,7 +1229,9 @@ def register_tools(app):
             # Remove None values
             curated = {k: v for k, v in curated.items() if v is not None}
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving lactate threshold data: {str(e)}"
 
@@ -1831,7 +1839,9 @@ def register_tools(app):
         their recent runs have produced (acute load), and the raw distance behind
         that load. All three are expressed in km so they're directly comparable —
         `load_ratio` (acute_load_km / distance_km) quantifies how much intensity
-        is inflating the cost of each kilometer run.
+        is inflating the cost of each kilometer run. An imperial account also
+        gets each km figure in miles (tolerance_miles, acute_load_miles,
+        distance_miles); load_ratio is unitless and unchanged.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1862,7 +1872,9 @@ def register_tools(app):
         if feedback:
             curated["feedback_phrase"] = feedback
 
-        return json.dumps(curated, indent=2)
+        return json.dumps(
+            add_account_units(curated, account_unit_system(garmin_client)), indent=2
+        )
 
     @app.tool()
     async def get_running_tolerance_trend(
@@ -1876,7 +1888,8 @@ def register_tools(app):
         single day. Returns, per period: tolerance_km (current load capacity),
         acute_load_km (intensity-adjusted load), distance_km (actual distance
         run), and load_ratio (acute_load_km / distance_km — how much intensity
-        inflates the cost of each kilometer). Weekly aggregation (default) gives
+        inflates the cost of each kilometer). An imperial account also gets
+        each km figure in miles (tolerance_miles, ...). Weekly aggregation (default) gives
         a compact multi-month view; daily gives day-to-day resolution for a
         shorter window.
 
@@ -1963,7 +1976,7 @@ def register_tools(app):
             else None
         )
 
-        return json.dumps({
+        return json.dumps(add_account_units({
             "start_date": start_date,
             "end_date": end_date,
             "aggregation": aggregation,
@@ -1972,7 +1985,7 @@ def register_tools(app):
             "latest_tolerance_km": latest_tolerance,
             "tolerance_change_km": change,
             "trend": trend,
-        }, indent=2)
+        }, account_unit_system(garmin_client)), indent=2)
 
     @app.tool()
     async def get_acclimation(date: str) -> str:

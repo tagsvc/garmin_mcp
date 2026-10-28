@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import account_unit_system, add_account_units
 from garmin_mcp.write_errors import WriteTracker
 
 # FIT stores lap distance as uint32 centimetres. A device that writes a small
@@ -26,6 +27,16 @@ def sanitize_lap_distance(value):
     ):
         return None
     return value
+
+
+def _laps_are_swim(laps) -> bool:
+    """True when splits laps are swim laps, which name no sport of their own."""
+    return any(
+        isinstance(lap, dict)
+        and (lap.get('lengthDTOs') or lap.get('averageSwimCadence') is not None)
+        for lap in laps
+    )
+
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -209,6 +220,12 @@ def register_tools(app):
                               observed in practice in any activity back to 2012
                               (oldest activities sampled on this account)
 
+        Distances, speeds and elevations are Garmin's metric values
+        (distance_meters, avg_speed_mps, elevation_gain_meters). Each also gets
+        a companion in the account's units: distance_miles, avg_pace_per_mile,
+        avg_speed_mph and elevation_gain_feet for a US account; distance_km and
+        avg_pace_per_km for a metric one. Quote the companion; do not convert.
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
@@ -271,6 +288,7 @@ def register_tools(app):
                     "start_time": a.get('startTimeLocal'),
                     "distance_meters": a.get('distance'),
                     "duration_seconds": a.get('duration'),
+                    "avg_speed_mps": a.get('averageSpeed'),
                     "calories": a.get('calories'),
                     "avg_hr_bpm": a.get('averageHR'),
                     "max_hr_bpm": a.get('maxHR'),
@@ -282,13 +300,21 @@ def register_tools(app):
                 activity = {k: v for k, v in activity.items() if v is not None}
                 curated["activities"].append(activity)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(garmin_client)), indent=2
+            )
         except Exception as e:
             return f"Error retrieving activities by date: {str(e)}"
 
     @app.tool()
     async def get_activities_fordate(ctx: Context, date: str) -> str:
         """Get activities for a specific date
+
+        Distances, speeds and elevations are Garmin's metric values
+        (distance_meters, avg_speed_mps, elevation_gain_meters). Each also gets
+        a companion in the account's units: distance_miles, avg_pace_per_mile,
+        avg_speed_mph and elevation_gain_feet for a US account; distance_km and
+        avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -320,6 +346,7 @@ def register_tools(app):
                     "start_time": a.get('startTimeLocal'),
                     "distance_meters": a.get('distance'),
                     "duration_seconds": a.get('duration'),
+                    "avg_speed_mps": a.get('averageSpeed'),
                     "calories": a.get('calories'),
                     "avg_hr_bpm": a.get('averageHR'),
                     "steps": a.get('steps'),
@@ -331,7 +358,9 @@ def register_tools(app):
                 activity = {k: v for k, v in activity.items() if v is not None}
                 curated["activities"].append(activity)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving activities for date: {str(e)}"
 
@@ -343,6 +372,12 @@ def register_tools(app):
         elevation, training effect, and an event_type field. Common event_type
         values: "race", "training", "uncategorized" (no event type set by the
         user). The field is omitted when Garmin returns no eventTypeDTO.
+
+        Distances, speeds and elevations are Garmin's metric values
+        (distance_meters, avg_speed_mps, elevation_gain_meters). Each also gets
+        a companion in the account's units: distance_miles, avg_pace_per_mile,
+        avg_speed_mph and elevation_gain_feet for a US account; distance_km and
+        avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
         Args:
             activity_id: ID of the activity to retrieve
@@ -376,6 +411,7 @@ def register_tools(app):
                 # Distance and speed
                 "distance_meters": summary.get('distance'),
                 "avg_speed_mps": summary.get('averageSpeed'),
+                "avg_moving_speed_mps": summary.get('averageMovingSpeed'),
                 "max_speed_mps": summary.get('maxSpeed'),
 
                 # Heart rate
@@ -433,7 +469,9 @@ def register_tools(app):
             # Remove None values
             curated = {k: v for k, v in curated.items() if v is not None}
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving activity: {str(e)}"
 
@@ -675,6 +713,12 @@ def register_tools(app):
 
         Lap and nested length start_time_gmt timestamps are GMT (UTC).
 
+        Distances, speeds and elevations are Garmin's metric values
+        (distance_meters, avg_speed_mps, elevation_gain_meters). Each also gets
+        a companion in the account's units: distance_miles, avg_pace_per_mile,
+        avg_speed_mph and elevation_gain_feet for a US account; distance_km and
+        avg_pace_per_km for a metric one. Quote the companion; do not convert.
+
         Args:
             activity_id: ID of the activity to retrieve splits for
         """
@@ -752,13 +796,26 @@ def register_tools(app):
                 lap_data = {k: v for k, v in lap_data.items() if v is not None}
                 curated["laps"].append(lap_data)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(
+                    curated,
+                    account_unit_system(get_client(ctx)),
+                    swim=_laps_are_swim(laps),
+                ),
+                indent=2,
+            )
         except Exception as e:
             return f"Error retrieving activity splits: {str(e)}"
 
     @app.tool()
     async def get_activity_typed_splits(ctx: Context, activity_id: Union[int, str]) -> str:
         """Get typed splits for an activity
+
+        Garmin's metric fields (distance in meters, speeds in m/s, elevation in
+        meters) also get companions in the account's units: distanceMiles,
+        averagePacePerMile, averageSpeedMph and elevationGainFeet for a US
+        account; distanceKm and averagePacePerKm for a metric one. Quote the
+        companion; do not convert.
 
         Args:
             activity_id: ID of the activity to retrieve typed splits for
@@ -769,13 +826,27 @@ def register_tools(app):
             if not typed_splits:
                 return f"No typed splits found for activity with ID {activity_id}"
 
-            return json.dumps(typed_splits, indent=2)
+            return json.dumps(
+                add_account_units(
+                    typed_splits,
+                    account_unit_system(get_client(ctx)),
+                    swim=isinstance(typed_splits, dict)
+                    and _laps_are_swim(typed_splits.get('splits') or []),
+                ),
+                indent=2,
+            )
         except Exception as e:
             return f"Error retrieving activity typed splits: {str(e)}"
 
     @app.tool()
     async def get_activity_split_summaries(ctx: Context, activity_id: Union[int, str]) -> str:
         """Get split summaries for an activity
+
+        Garmin's metric fields (distance in meters, speeds in m/s, elevation in
+        meters) also get companions in the account's units: distanceMiles,
+        averagePacePerMile, averageSpeedMph and elevationGainFeet for a US
+        account; distanceKm and averagePacePerKm for a metric one. Quote the
+        companion; do not convert.
 
         Args:
             activity_id: ID of the activity to retrieve split summaries for
@@ -786,7 +857,15 @@ def register_tools(app):
             if not split_summaries:
                 return f"No split summaries found for activity with ID {activity_id}"
 
-            return json.dumps(split_summaries, indent=2)
+            return json.dumps(
+                add_account_units(
+                    split_summaries,
+                    account_unit_system(get_client(ctx)),
+                    swim=isinstance(split_summaries, dict)
+                    and _laps_are_swim(split_summaries.get('splitSummaries') or []),
+                ),
+                indent=2,
+            )
         except Exception as e:
             return f"Error retrieving activity split summaries: {str(e)}"
 
@@ -1070,6 +1149,12 @@ def register_tools(app):
         event_type == "race" rather than excluding "training", as many non-race
         activities appear as "uncategorized" rather than "training".
 
+        Distances, speeds and elevations are Garmin's metric values
+        (distance_meters, avg_speed_mps, elevation_gain_meters). Each also gets
+        a companion in the account's units: distance_miles, avg_pace_per_mile,
+        avg_speed_mph and elevation_gain_feet for a US account; distance_km and
+        avg_pace_per_km for a metric one. Quote the companion; do not convert.
+
         Args:
             start: Starting index (default 0)
             limit: Maximum number of activities to return (default 20, max 100)
@@ -1101,6 +1186,7 @@ def register_tools(app):
                     "start_time": a.get('startTimeLocal'),
                     "distance_meters": a.get('distance'),
                     "duration_seconds": a.get('duration'),
+                    "avg_speed_mps": a.get('averageSpeed'),
                     "moving_duration_seconds": a.get('movingDuration'),
                     "calories": a.get('calories'),
                     "avg_hr_bpm": a.get('averageHR'),
@@ -1114,7 +1200,9 @@ def register_tools(app):
                 activity = {k: v for k, v in activity.items() if v is not None}
                 curated["activities"].append(activity)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving activities: {str(e)}"
 

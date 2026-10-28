@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import account_unit_system, add_account_units
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -24,6 +25,10 @@ def register_tools(app):
     @app.tool()
     async def get_weigh_ins(ctx: Context, start_date: str, end_date: str) -> str:
         """Get weight measurements between specified dates
+
+        Weights are grams and kilograms as Garmin stores them. A US account
+        also gets pounds beside each: weight_lb, bone_mass_lb, muscle_mass_lb
+        and average_weight_lb.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -81,13 +86,19 @@ def register_tools(app):
                 curated["average_weight_grams"] = total_avg["weight"]
                 curated["average_weight_kg"] = round(total_avg["weight"] / 1000, 2)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving weight measurements: {str(e)}"
 
     @app.tool()
     async def get_daily_weigh_ins(ctx: Context, date: str) -> str:
         """Get weight measurements for a specific date
+
+        Weights are grams and kilograms as Garmin stores them. A US account
+        also gets pounds beside each: weight_lb, bone_mass_lb, muscle_mass_lb
+        and average_weight_lb.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -131,7 +142,9 @@ def register_tools(app):
                 curated["average_weight_grams"] = total_avg["weight"]
                 curated["average_weight_kg"] = round(total_avg["weight"] / 1000, 2)
 
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving daily weight measurements: {str(e)}"
 

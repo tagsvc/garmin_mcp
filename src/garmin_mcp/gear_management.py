@@ -8,6 +8,12 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import (
+    METERS_PER_MILE,
+    account_unit_system,
+    add_account_units,
+    is_imperial,
+)
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -93,6 +99,8 @@ def register_tools(app):
         names of its default gear.
         A gear item's stats_error reports a failed usage-statistics request;
         a null total_distance_km means Garmin did not provide a distance.
+        A statute (US or UK) account also gets total_distance_miles and
+        max_distance_miles.
         No parameters required - user profile is fetched automatically.
 
         Args:
@@ -147,6 +155,8 @@ def register_tools(app):
                 defaults_by_uuid[uuid].append(activity_type)
 
             # 4. Build curated gear list
+            # Miles come from Garmin's meters, not from the rounded km.
+            imperial = is_imperial(account_unit_system(get_client(ctx)))
             curated_gear = []
             active_count = 0
             retired_count = 0
@@ -177,6 +187,8 @@ def register_tools(app):
                 max_meters = g.get("maximumMeters")
                 if max_meters and max_meters > 0:
                     gear_item["max_distance_km"] = round(max_meters / 1000, 1)
+                    if imperial:
+                        gear_item["max_distance_miles"] = round(max_meters / METERS_PER_MILE, 1)
 
                 # Add default activity associations
                 if uuid in defaults_by_uuid:
@@ -197,6 +209,10 @@ def register_tools(app):
                                     distance / 1000, 1
                                 ) if distance is not None else None,
                             }
+                            if imperial:
+                                gear_item["stats"]["total_distance_miles"] = round(
+                                    distance / METERS_PER_MILE, 1
+                                ) if distance is not None else None
 
                 curated_gear.append(gear_item)
 
@@ -303,6 +319,10 @@ def register_tools(app):
         a mis-recorded activity -- a GPS dropout logging 0.5 mi for a 2 mi walk
         -- can actually be found.
 
+        Distances are meters (distance_m, total_distance_m), each with a
+        companion in the account's units: distance_miles for a US account,
+        distance_km for a metric one.
+
         Args:
             gear_uuid: UUID of the gear (get UUIDs from get_gear).
             limit: Maximum activities to return (default 1000).
@@ -325,14 +345,17 @@ def register_tools(app):
             ]
             total_m = sum(c["distance_m"] or 0 for c in curated)
             return json.dumps(
-                {
-                    "gear_uuid": gear_uuid,
-                    "activity_count": len(curated),
-                    # Summed here so the total can be reconciled against the
-                    # figure get_gear reports for the same gear.
-                    "total_distance_m": round(total_m, 2),
-                    "activities": curated,
-                },
+                add_account_units(
+                    {
+                        "gear_uuid": gear_uuid,
+                        "activity_count": len(curated),
+                        # Summed here so the total can be reconciled against the
+                        # figure get_gear reports for the same gear.
+                        "total_distance_m": round(total_m, 2),
+                        "activities": curated,
+                    },
+                    account_unit_system(get_client(ctx)),
+                ),
                 indent=2,
             )
         except Exception as e:
