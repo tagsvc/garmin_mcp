@@ -10,6 +10,7 @@ from garmin_mcp.client_resolver import get_client
 from garmin_mcp.profile_settings import profile_settings
 from garmin_mcp.units import account_unit_system, add_account_units, add_gram_masses
 from garmin_mcp.times import (
+    add_local_siblings,
     gmt_iso,
     local_from_offset,
     local_from_zone,
@@ -621,6 +622,27 @@ def _label_day_series(payload: Any) -> Any:
     return payload
 
 
+def _label_daily_summary(payload: Any) -> Any:
+    """The daily summary (user summary, stats and body): a local time beside
+    each GMT one, and the day's utcOffsetHours.
+
+    Its GMT times -- the last sync, the latest respiration reading, the body
+    battery feedback events and the body battery event list -- came with no
+    local time, so a 3:17 AM GMT sleep read as 3:17 local. Each event uses its
+    own timezoneOffset; the rest use the day's, from Garmin's
+    wellnessStartTimeGmt/wellnessStartTimeLocal pair.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    offset = offset_from_pair(
+        payload.get("wellnessStartTimeGmt"), payload.get("wellnessStartTimeLocal")
+    )
+    add_local_siblings(payload, offset)
+    if offset is not None:
+        payload["utcOffsetHours"] = _offset_hours(offset)
+    return payload
+
+
 def _label_sleep_payload(payload: Any) -> Any:
     """Sleep: ISO GMT/local beside Garmin's epochs, whose *Local values are
     the local wall clock written as if UTC (not real epochs)."""
@@ -1200,7 +1222,8 @@ def register_tools(app):
                 return f"No user summary found for {date}"
 
             return json.dumps(
-                add_account_units(summary, account_unit_system(get_client(ctx))), indent=2
+                add_account_units(_label_daily_summary(summary), account_unit_system(get_client(ctx))),
+                indent=2,
             )
         except Exception as e:
             return f"Error retrieving user summary: {str(e)}"
@@ -1254,6 +1277,7 @@ def register_tools(app):
 
             unit_system = account_unit_system(get_client(ctx))
             add_gram_masses(data, _GRAM_MASS_KEYS, unit_system)
+            _label_daily_summary(data)
             return json.dumps(add_account_units(data, unit_system), indent=2)
         except Exception as e:
             return f"Error retrieving stats and body composition data: {str(e)}"

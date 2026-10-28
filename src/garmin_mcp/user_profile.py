@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import gmt_iso
+from garmin_mcp.times import gmt_iso, local_from_zone, profile_time_zone
 from garmin_mcp.units import (
     METERS_PER_MILE,
     account_unit_system,
@@ -121,7 +121,7 @@ def _get_heart_rate_zone_configs() -> List[Dict[str, Any]]:
 _FIT_EPOCH_UNIX = 631065600
 
 
-def _label_profile(profile: Any, unit_system: Optional[str]) -> Any:
+def _label_profile(profile: Any, unit_system: Optional[str], zone: Optional[str] = None) -> Any:
     """Readable companions for the profile payload's unlabelled units.
 
     FORK: Garmin's userData holds weight in grams (79900.0), height in
@@ -153,7 +153,14 @@ def _label_profile(profile: Any, unit_system: Optional[str]) -> Any:
             key.startswith("firstbeat") and key.endswith("Timestamp")
             and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
         ):
-            data[f"{key[:-len('Timestamp')]}TimeGmt"] = gmt_iso((value + _FIT_EPOCH_UNIX) * 1000)
+            stem = key[:-len('Timestamp')]
+            moment_ms = (value + _FIT_EPOCH_UNIX) * 1000
+            data[f"{stem}TimeGmt"] = gmt_iso(moment_ms)
+            # The record carries no offset: local time from the profile zone.
+            local = local_from_zone(moment_ms, zone)
+            if local:
+                data[f"{stem}TimeLocal"] = local
+                data["localTimeZone"] = zone
     return profile
 
 
@@ -200,7 +207,12 @@ def register_tools(app):
             if not profile:
                 return "No user profile information found."
             return json.dumps(
-                _label_profile(profile, account_unit_system(get_client(ctx))), indent=2
+                _label_profile(
+                    profile,
+                    account_unit_system(get_client(ctx)),
+                    profile_time_zone(get_client(ctx)),
+                ),
+                indent=2,
             )
         except Exception as e:
             return f"Error retrieving user profile: {str(e)}"

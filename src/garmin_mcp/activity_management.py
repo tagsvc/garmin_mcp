@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import profile_time_zone, put_times
+from garmin_mcp.times import add_local_siblings, offset_from_pair, profile_time_zone, put_times
 from garmin_mcp.units import account_unit_system, add_account_units
 from garmin_mcp.write_errors import WriteTracker
 
@@ -28,6 +28,21 @@ def sanitize_lap_distance(value):
     ):
         return None
     return value
+
+
+def _label_split_times(payload, key):
+    """endTimeGMT and the like get a local time, at the split's own offset.
+
+    FORK: Garmin sends startTimeGMT with startTimeLocal but endTimeGMT alone.
+    The start pair gives each split's offset.
+    """
+    splits = payload.get(key) if isinstance(payload, dict) else None
+    for split in splits if isinstance(splits, list) else []:
+        if isinstance(split, dict):
+            add_local_siblings(
+                split, offset_from_pair(split.get('startTimeGMT'), split.get('startTimeLocal'))
+            )
+    return payload
 
 
 def _laps_are_swim(laps) -> bool:
@@ -877,7 +892,7 @@ def register_tools(app):
 
             return json.dumps(
                 add_account_units(
-                    typed_splits,
+                    _label_split_times(typed_splits, "splits"),
                     account_unit_system(get_client(ctx)),
                     swim=isinstance(typed_splits, dict)
                     and _laps_are_swim(typed_splits.get('splits') or []),
@@ -911,7 +926,7 @@ def register_tools(app):
 
             return json.dumps(
                 add_account_units(
-                    split_summaries,
+                    _label_split_times(split_summaries, "splitSummaries"),
                     account_unit_system(get_client(ctx)),
                     swim=isinstance(split_summaries, dict)
                     and _laps_are_swim(split_summaries.get('splitSummaries') or []),

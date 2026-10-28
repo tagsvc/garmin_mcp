@@ -284,6 +284,7 @@ async def test_profile_units_are_added_beside_garmins(app, mock_garmin_client):
     """Live values: 79900 g, 177.8 cm, threshold speed 0.2694 (m/s / 10:
     read as m/s it is a 99 min/mile pace), and a FIT-epoch date."""
     _units(mock_garmin_client)
+    mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
     mock_garmin_client.get_user_profile.return_value = {"userData": {
         "weight": 79900.0, "height": 177.8000030517578,
         "lactateThresholdSpeed": 0.26944369, "firstbeatRunningLtTimestamp": 1161544001,
@@ -297,6 +298,7 @@ async def test_profile_units_are_added_beside_garmins(app, mock_garmin_client):
     assert data["lactateThresholdSpeedMps"] == 2.6944
     assert data["lactateThresholdPacePerMile"] == "9:57"
     assert data["firstbeatRunningLtTimeGmt"] == "2026-10-21T19:06:41Z"
+    assert data["firstbeatRunningLtTimeLocal"] == "2026-10-21T15:06:41-04:00"
 
 
 @pytest.mark.asyncio

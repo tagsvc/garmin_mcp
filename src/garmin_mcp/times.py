@@ -179,6 +179,38 @@ def put_times(
     return False
 
 
+def add_local_siblings(node: Any, offset: Optional[datetime.timedelta]) -> Any:
+    """Beside each Garmin ``*Gmt``/``*GMT`` time, its ``*Local`` at the offset.
+
+    For Garmin payloads a tool returns as-is: the GMT value stays, and a
+    local ISO time with its offset is added under the same name ending in
+    ``Local`` (``eventStartTimeGmt`` -> ``eventStartTimeLocal``) unless Garmin
+    already sends one. A dict carrying its own ``timezoneOffset`` (ms) uses
+    that, and passes it to what it contains. Walks nested dicts and lists.
+    """
+    if isinstance(node, list):
+        for item in node:
+            add_local_siblings(item, offset)
+        return node
+    if not isinstance(node, dict):
+        return node
+    offset = offset_from_ms(node.get("timezoneOffset")) or offset
+    for key in list(node):
+        value = node[key]
+        if isinstance(value, (dict, list)):
+            add_local_siblings(value, offset)
+            continue
+        if not key.endswith(("Gmt", "GMT")) or offset is None:
+            continue
+        sibling = f"{key[:-3]}Local"
+        if sibling in node:
+            continue
+        local = local_from_offset(value, offset)
+        if local:
+            node[sibling] = local
+    return node
+
+
 def profile_time_zone(client: Any) -> Optional[str]:
     """The Garmin Connect profile's time zone (``America/New_York``), or None.
 
