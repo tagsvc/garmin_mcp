@@ -196,6 +196,35 @@ GitHub also auto-disables scheduled workflows after 60 days without repository
 activity, so a long-dormant period can put this back to `disabled_fork` — worth
 re-checking after any long gap.
 
+**Actions can also be halted at the account level, and it looks like nothing.**
+From 2026-10-14 to 2026-10-27 no workflow ran: Actions was waiting on an approval
+in the owner's GitHub account, accepted 2026-10-27. Every repository setting was
+normal throughout (Actions allowed, workflows `active`), so the settings pages
+and the workflows API both said all was well. The symptoms, in order of
+visibility:
+
+- runs created by GitHub itself (CodeQL, Dependabot updates) sit at **queued**
+  with no jobs, indefinitely;
+- `pull_request` workflows (CI, PR Validation, Security Checks) are **never
+  created**, so a PR shows **no checks at all** — not failing ones — and cannot
+  merge, because the required checks never report;
+- Dependabot raises alerts but never opens its fix PRs ("Dependabot has taken too
+  long to create an update").
+
+Check with:
+
+```bash
+curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "https://api.github.com/repos/tagsvc/garmin_mcp/actions/runs?status=completed&per_page=1" \
+  | grep -E '"(created_at|name|conclusion)"'
+```
+
+If the last completed run is older than the last push, Actions is not running.
+Look for a pending notice or approval on the GitHub account itself. After it is
+cleared, events from the halted period are **not replayed**: push a commit
+(an empty one will do) to each open PR to create its checks, and cancel the stale
+queued runs.
+
 ## Railway deployment
 
 - **Builder**: `railway.json` pins `Dockerfile.remote` (the HTTP/OAuth server).
@@ -206,6 +235,10 @@ re-checking after any long gap.
   why `scripts/docker-entrypoint.sh` chowns it as root and then drops to
   `appuser` via `gosu` (see `FORK.md`).
 - **Port**: Railway injects `PORT`; the app binds it automatically.
+- **Transport**: stateless Streamable HTTP (`stateless_http=True` in
+  `remote.py`). No `Mcp-Session-Id`, no per-session server state: nothing to
+  accumulate (CVE-2026-59951) and no idle-session expiry for claude.ai to trip
+  over. Callers are identified per request by their OAuth bearer token.
 - **Deploys**: push to `main` triggers a redeploy.
 
 ### Environment variables

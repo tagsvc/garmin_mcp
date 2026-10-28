@@ -5,6 +5,35 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Recovery snapshot types documented; docs audited — 2026-10-28
+
+Documentation only; no behaviour change. The recovery tools described snapshots
+as coming at wake-up, after an activity and after a nap. Sunday 2026-10-25 showed
+a third type: `UPDATE_REALTIME_VARIABLES`, a mid-day update that records the
+countdown — 10.2h in the post-run snapshot at 14:54, 5.8h at 19:14 (with
+`ENERGIZING_NAP` feedback). No nap-specific type has been seen: in the three days
+observed, naps showed up in the feedback text instead. The tool description, code comments and FORK.md now list the observed
+types and say a value holds until the next *snapshot* rather than the next
+event, since Garmin sometimes records the countdown itself. The latest-snapshot
+lookup from 2026-10-28 already takes these, whatever their type.
+
+**Documentation audit after the day's changes:**
+
+- `OPERATIONS.md` records the 2026-10-14..10-27 Actions halt: an approval pending
+  on the GitHub account stopped every workflow while all repository settings and
+  the workflows API looked normal. Symptoms, a one-line check, and the recovery
+  (halted events are not replayed — push to each open PR). It also records the
+  stateless transport under the Railway deployment.
+- `CLAUDE.md`'s post-merge invariant checklist adds the `mcp>=1.30.0` floor, the
+  stateless remote server, and recovery hours from `recoveryTime`.
+- `README.md` notes that `GARMIN_MCP_STATELESS_HTTP` applies to upstream's
+  single-user HTTP mode only; the remote server is always stateless and never
+  reads it.
+
+Also checked against Garmin Connect's own pages for 10-25 and 10-26: every value
+matches. Garmin rounds hours down (2.5h shows as "2h") and, for a past day, its
+web page shows only the wake-up snapshot, while the tools return all of them.
+
 ## Current recovery no longer "unavailable" in the evening — 2026-10-28
 
 Right after the recovery fix went live, `get_recovery_time_remaining` called

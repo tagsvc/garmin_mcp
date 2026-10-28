@@ -91,10 +91,12 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         # (0-100), not a recovery measure -- 20 on a day with 72h to go.
         "readiness_score": score,
         "state": _recovery_state(hours),
-        # Which event produced the snapshot: Garmin recomputes readiness and
-        # recovery at wake-up, after an activity, and after a nap. The values
-        # hold from as_of until the next such event; the watch counts down
-        # in between, Garmin Connect does not.
+        # What produced the snapshot. Observed: AFTER_WAKEUP_RESET,
+        # AFTER_POST_EXERCISE_RESET, and UPDATE_REALTIME_VARIABLES -- a mid-day
+        # update that records the countdown (2026-10-25: 10.2h after a run,
+        # 5.8h four hours later). Naps seen so far showed in the feedback
+        # (e.g. IMPROVED_BY_NAPPING), not as a type of their own. Values hold
+        # from as_of until the next snapshot; the watch counts down live.
         "input_context": latest.get("inputContext"),
         "source": source,
         "date": latest.get("calendarDate"),
@@ -253,8 +255,9 @@ def _collect_latest_recovery_time(
 ) -> Dict[str, Any]:
     """FORK: the current recovery value -- the most recent snapshot, any day.
 
-    Garmin recomputes recovery at events (waking, an activity, a nap) and a
-    snapshot holds until the next one, so "now" is the latest snapshot,
+    Garmin records recovery in snapshots -- at waking, after an activity, and
+    in occasional mid-day updates of the countdown -- and a snapshot holds
+    until the next one, so "now" is the latest snapshot,
     whichever day it falls on. Upstream defaulted to the SERVER's local date;
     on a UTC server that is already tomorrow for an athlete in the Americas
     every evening, and has no snapshot overnight until the wake-up one exists,
@@ -1927,11 +1930,12 @@ def register_tools(app):
         decaying recent activity assignments. Pass `date` for a specific day's
         latest snapshot.
 
-        Garmin recomputes recovery at events -- waking, finishing an activity,
-        a nap -- and `input_context` names the event behind the snapshot (e.g.
-        AFTER_POST_EXERCISE_RESET). The value holds until the next event: an
-        afternoon run's 72h is still 72h in Garmin Connect that evening, while
-        the watch counts down. `change_phrase` (recoveryTimeChangePhrase) says
+        Garmin records recovery in snapshots, and `input_context` says what
+        produced each one: AFTER_WAKEUP_RESET, AFTER_POST_EXERCISE_RESET, or
+        UPDATE_REALTIME_VARIABLES, a mid-day update that records the countdown
+        (e.g. 10.2h right after a run, 5.8h four hours later). A value holds
+        until the next snapshot; the watch counts down live in between, so
+        subtract the hours since `as_of` for a live estimate. `change_phrase` (recoveryTimeChangePhrase) says
         what changed at that event and is NOT a reading: REACHED_ZERO has been
         seen on a snapshot carrying 72h. `readiness_score` is the Training
         Readiness score, not a recovery measure.
