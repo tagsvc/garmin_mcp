@@ -26,6 +26,8 @@ required checks must pass before it can merge.
 
 1. Run the full suite: `uv run pytest -m "not e2e"` — it must pass.
 2. Confirm the invariants in `FORK.md` still hold (allowlist fail-closed,
-   import-secret gating, `garminconnect==0.3.5` pin (security floor, CVE-2026-54447), `auth_tools` stdio-only,
-   `delete_activity` withheld from remote, no `VOLUME` in `Dockerfile.remote`, `$PORT` handling).
+   import-secret gating, `garminconnect==0.3.5` pin (security floor, CVE-2026-54447), `mcp>=1.30.0`
+   floor (CVE-2026-59951), remote server stateless, `auth_tools` stdio-only, `delete_activity` withheld
+   from remote, recovery hours from `recoveryTime` (never the change phrase), no `VOLUME` in
+   `Dockerfile.remote`, `$PORT` handling).
 3. Re-enumerate tool counts if registration changed (expect stdio 174 / remote 171).

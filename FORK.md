@@ -160,8 +160,10 @@ coverage.
   describes what changed at the snapshot's event; when recovery has drained,
   Garmin sends the low minute value itself (that morning: 1). Garmin Connect's
   web client has no display text for the phrase and shows hours from
-  `recoveryTime`. Snapshots are event-driven (wake, activity, nap) and hold until
-  the next event, so values are reported with `as_of` and `input_context`, never
+  `recoveryTime`. Snapshots come at wake-up, after an activity, and in occasional
+  mid-day `UPDATE_REALTIME_VARIABLES` updates that record the countdown (seen
+  2026-10-25: 10.2h after a run, 5.8h four hours later); each holds until the
+  next, so values are reported with `as_of` and `input_context`, never
   as a live countdown. With no date given, `get_recovery_time_remaining`
   reports the most recent snapshot on any day (`resolved_as: latest_snapshot`),
   not the server's "today": on Railway's UTC clock it is already tomorrow every
