@@ -247,6 +247,11 @@ coverage.
   timestamp or a bare sleep epoch each fails these tests (checked
   2026-10-28). _On merge:_ fix a contract failure; do not widen the
   exceptions without a reason recorded beside it.
+- **A sensor's `serialNumber` is per pairing, not per strap.** One HRM 600,
+  paired a few times, came back from `/device-service/sensors` as three
+  records with three serials (2026-10-28). `get_sensors` groups records by
+  model and reports the latest, with `earlier_pairings`. Do not go back to
+  de-duplicating by serial. Pinned by `test_coach_progress_and_sensors.py`.
 - **The fitnessstats endpoint is not in its documented units.** Behind
   `get_progress_summary_between_dates`, Garmin sends distance and elevation
   gain in centimeters, durations in milliseconds and calories pre-scaled by
@@ -515,7 +520,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1670 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1672 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

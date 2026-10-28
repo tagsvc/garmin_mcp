@@ -5,6 +5,23 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## One sensor per strap: Garmin's sensor serial is per pairing — 2026-10-28
+
+`get_sensors` listed the athlete's one HRM 600 three times. It de-duplicated
+by `serialNumber`, but that number belongs to each pairing record, not to
+the strap: a re-paired strap returns a new one. Two of the three records
+were the same report repeated, and the third was an older pairing (93% on
+Sept 24, against 83% on Oct 27).
+
+Records of the same model (name, type and manufacturer) are now one sensor.
+It shows the most recently connected record's battery and contact, with
+`earlier_pairings` listing the older records' last contact and battery. Two
+straps of the same model would show as one sensor with an earlier pairing,
+since Garmin's record carries no hardware serial to tell them apart. The
+tool description says so.
+
+Suite: 1672 passed.
+
 ## CI guard for account units and explicit times — 2026-10-28
 
 The fourth PR from the read-only audit. It keeps that audit's findings from
