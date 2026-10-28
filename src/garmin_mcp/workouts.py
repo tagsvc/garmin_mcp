@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import account_unit_system, add_account_units, parse_pace
 
 _DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 
@@ -181,6 +182,40 @@ def _move_nested_target_fields(step: dict) -> None:
                 step[field] = value
 
 
+def _pace_target_conversions(step: dict, path: str) -> list:
+    """Parse pace text in a step's pace.zone bounds into the m/s Garmin takes.
+
+    FORK: a bound may be given as pace text such as "10:30/mi" or "5:00/km"
+    instead of meters per second. Returns (field, m/s) for each such bound,
+    whether it sits on the step or inside the target block, so the whole
+    workout is checked before any step is changed. Numbers, and numeric
+    strings, are already m/s and pass through untouched.
+    """
+    conversions = []
+    for target_field, layout in _TARGET_FIELD_LAYOUTS.items():
+        target_type = step.get(target_field)
+        if not isinstance(target_type, dict):
+            continue
+        if target_type.get('workoutTargetTypeKey') != 'pace.zone':
+            continue
+        for field in layout['bounds']:
+            value = step.get(field)
+            if value is None:
+                value = target_type.get(field)
+            if not isinstance(value, str):
+                continue
+            try:
+                float(value)
+                continue
+            except ValueError:
+                pass
+            try:
+                conversions.append((field, parse_pace(value)))
+            except ValueError as e:
+                raise ValueError(f"{path}.{field}: {e}") from None
+    return conversions
+
+
 def _fix_hr_zone_step(step: dict) -> None:
     """Fix a common mistake where HR zone targets use targetValueOne instead of zoneNumber.
 
@@ -257,8 +292,14 @@ def _normalize_workout_steps(workout_data: dict) -> None:
     # earlier step partially repaired.
     for step, path in steps:
         _validate_nested_target_fields(step, path)
+    pace_conversions = [
+        (step, _pace_target_conversions(step, path)) for step, path in steps
+    ]
     for step, _ in steps:
         _move_nested_target_fields(step)
+    for step, conversions in pace_conversions:
+        for field, speed_mps in conversions:
+            step[field] = speed_mps
 
     # These helpers recurse, so invoke them only for top-level steps.
     for segment in workout_data.get('workoutSegments', []):
@@ -920,7 +961,11 @@ def register_tools(app):
 
         Pace target values are speeds in meters per second. target_value_low
         and target_value_high preserve Garmin's targetValueOne/targetValueTwo
-        order; they are not sorted by magnitude.
+        order; they are not sorted by magnitude. Each also gets its pace in the
+        account's units (target_pace_low_per_mile / target_pace_high_per_mile
+        for a US account, ..._per_km for a metric one), a distance end condition
+        gets end_condition_value_miles (or _km), and estimated_distance_meters
+        and avg_training_speed_mps get companions too.
 
         Args:
             workout_id: Workout ID (numeric) or UUID (for training plan workouts)
@@ -948,7 +993,9 @@ def register_tools(app):
 
             # Return curated details with segments
             curated = _curate_workout_details(workout)
-            return json.dumps(curated, indent=2)
+            return json.dumps(
+                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving workout: {str(e)}"
 
@@ -1002,7 +1049,10 @@ def register_tools(app):
           This matches Garmin Connect's "Custom" heart rate target.
         For non-HR targets (pace, power, cadence), use targetValueOne/targetValueTwo directly.
         Pace targets are speeds in meters per second, not min/km:
-        5:00/km = 1000 m / 300 s = 3.333 m/s.
+        5:00/km = 1000 m / 300 s = 3.333 m/s. A pace.zone bound may instead be
+        pace text with its unit, "10:30/mi" or "5:00/km" (also "10:30 min/mi",
+        "5:00 per km"), which is converted to m/s before upload; a bare
+        "10:30" is rejected, since it could be per mile or per km.
         Target values are fields on the workout step, alongside targetType; do not put
         targetValueOne, targetValueTwo, or zoneNumber inside the targetType object.
         Use either zoneNumber or targetValueOne/targetValueTwo, not both. Garmin silently
@@ -1151,7 +1201,8 @@ def register_tools(app):
         For cycling absolute watt range targets, use workoutTargetTypeId 6, key "power.between",
         with targetValueOne (low watts) and targetValueTwo (high watts).
         Pace targets use targetValueOne/targetValueTwo in meters per second, not
-        min/km: 5:00/km = 1000 m / 300 s = 3.333 m/s.
+        min/km: 5:00/km = 1000 m / 300 s = 3.333 m/s. A pace.zone bound may
+        instead be pace text with its unit, "10:30/mi" or "5:00/km".
         Target type IDs and keys must match Garmin's canonical mapping.
 
         IMPORTANT: End condition IDs and keys must match Garmin's canonical mapping.
@@ -1487,7 +1538,7 @@ def register_tools(app):
                 - workout_data (dict): Inline workout JSON to upload first, then schedule (optional).
                   When provided, workout_id is not required. Uses the same structure and
                   target-value rules as upload_workout; pace targets are in m/s, not
-                  min/km (5:00/km = 3.333 m/s).
+                  min/km (5:00/km = 3.333 m/s), or pace text such as "10:30/mi".
 
         Examples:
             Schedule existing workouts by ID:

@@ -21,6 +21,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 - Training load trend (CTL/ATL/TSB), HRV trend, VO2 max trend, respiration rate trend
 - Power Duration Curve, climb detection with VAM, cardiac drift (aerobic decoupling), W/kg calculations
 - Historical health analytics: personal rolling baselines, wellness anomaly detection, lagged metric correlations, weekly reviews, and custom multi-metric reports
+- Values in the account's own units (miles, min/mile pace, feet, pounds for a US account) beside Garmin's metric ones, and workout pace targets written as `10:30/mi`
 
 ### Tool Coverage
 
@@ -47,6 +48,25 @@ This MCP server implements **~174 tools** covering ~90% of the [python-garmincon
 - ✅ Activity File Downloads (2 tools) - download activity files in FIT, GPX, TCX, or CSV format
 
 > **Note:** Activity Analysis tools require a compatible power meter (e.g., Garmin Rally, Favero Assioma, PowerTap P1) and/or Shimano Di2 / SRAM eTap electronic shifting. The `fitparse` dependency is installed automatically.
+
+### Units
+
+Garmin's API returns meters, meters per second, meters of elevation and grams or
+kilograms whatever the account's unit setting. Every metric field is kept as it
+is, and the activity, split, weigh-in, gear, running-tolerance, lactate-threshold,
+course and workout-detail tools add the same value in the account's units right
+after it:
+
+| account (`get_unit_system`) | added beside the metric field |
+|---|---|
+| `statute_us` | `distance_miles`, `avg_speed_mph`, `avg_pace_per_mile` (m:ss), `elevation_gain_feet`, `weight_lb` |
+| `statute_uk` | miles, mph, pace per mile and feet; weight stays in kg |
+| `metric` | `distance_km`, `avg_speed_kmh`, `avg_pace_per_km`; elevation and weight are already metric |
+
+Garmin's raw split payloads get camelCase companions (`distanceMiles`,
+`averagePacePerMile`, `elevationGainFeet`). Swims keep meters, because Garmin
+shows pool units and pace per 100. Activity weather is the one endpoint Garmin
+localises itself; `get_activity_weather` labels its units.
 
 ### Gear Notes
 
@@ -394,7 +414,10 @@ per second:
 
 That example represents `8:00–8:30 min/km`. The lower numeric bound is listed
 first for consistency with the heart-rate example; Garmin normalizes either
-bound order. Garmin silently discards values nested inside `targetType`, leaving
+bound order. A pace bound may instead be pace text with its unit —
+`"targetValueOne": "8:30/km"`, `"10:30/mi"`, `"10:30 min/mi"`, `"5:00 per km"` —
+which the upload tools convert to meters per second before sending. A bare
+`"10:30"` is rejected, since it could be per mile or per km. Garmin silently discards values nested inside `targetType`, leaving
 a pace target with no active range. The upload tools repair that unambiguous
 nesting mistake, but reject the request if nested and step-level values conflict.
 

@@ -5,6 +5,51 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Account units beside the metric values; pace text for workouts — 2026-10-28
+
+Garmin's API sends meters, m/s, meters of elevation and grams or kilograms
+whatever the account's unit setting (only activity weather follows it). The
+tools passed them through, so answering "what was my pace" on a US account meant
+dividing 26.8224 by a speed and turning the result into minutes and seconds,
+which is easy to get wrong.
+
+**Output:** every metric field keeps its name and value, and gets a companion
+right after it in the account's units:
+
+| account | distance | speed / pace | elevation | weight |
+|---|---|---|---|---|
+| `statute_us` | `_miles` | `_speed_mph`, `_pace_per_mile` | `_feet` | `_lb` |
+| `statute_uk` | `_miles` | `_speed_mph`, `_pace_per_mile` | `_feet` | kept in kg |
+| `metric` | `_km` | `_speed_kmh`, `_pace_per_km` | already meters | already kg |
+
+Garmin's raw split payloads get the same in camelCase (`distanceMiles`,
+`averagePacePerMile`, `elevationGainFeet`). Pace is m:ss, rounded half up to the
+second. Applied to `get_activity`, `get_activities`, `get_activities_by_date`,
+`get_activities_fordate`, `get_activity_splits`, `get_activity_typed_splits`,
+`get_activity_split_summaries`, `get_weigh_ins`, `get_daily_weigh_ins`,
+`get_gear`, `get_gear_activities`, `get_running_tolerance`,
+`get_running_tolerance_trend`, `get_lactate_threshold`, `get_courses`,
+`get_course_details` and `get_workout_by_id` (pace targets as
+`target_pace_low_per_mile`, distance steps as `end_condition_value_miles`).
+`get_activity` also gains `avg_moving_speed_mps`, the speed behind Garmin's
+"Avg Moving Pace", and the three activity-list tools gain `avg_speed_mps`, so
+each listed run has a pace. Gear miles come from Garmin's meters, not the rounded km.
+Swims keep meters, since Garmin shows pool units and pace per 100. An unknown
+unit system adds nothing. The unit system is the one garminconnect cached at
+login, so this adds no Garmin calls.
+
+**Input:** `upload_workout`, `upload_workouts` and `schedule_workouts` (inline
+`workout_data`) accept pace text in a `pace.zone` target's bounds —
+`"10:30/mi"`, `"10:30 min/mi"`, `"5:00/km"`, `"5:00 per km"` — and send Garmin
+the m/s it expects. The unit is required: a bare `"10:30"` is rejected before
+upload, since it could be per mile or per km. The whole workout is checked
+before any step is changed. Numbers and numeric strings pass through as before.
+The `create_*_workout` builders take heart-rate targets only and are unchanged.
+
+Tests: 77 new (`test_units.py`, `test_account_units_tools.py`), through the real
+tool calls; 26 deliberate breakages of the new code were each caught.
+Suite: 1536 passed.
+
 ## Recovery snapshot types documented; docs audited — 2026-10-28
 
 Documentation only; no behaviour change. The recovery tools described snapshots

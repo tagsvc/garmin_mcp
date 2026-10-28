@@ -45,6 +45,7 @@ coverage.
 | Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` — battery level and last-connected, which `get_devices` omits. |
 | Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
+| Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
 ## Invariants that must NOT regress
 
@@ -180,6 +181,22 @@ coverage.
   `completed`, `quit`, or `ended` (over, but quit could not be read), and never
   infers "completed" from the list alone. Pinned by
   `test_coach_progress_and_sensors.py`.
+- **Metric fields are never replaced; account units are added beside them.**
+  Garmin's API returns meters, m/s, and grams or kilograms whatever the
+  account's setting (only activity weather follows it). `units.add_account_units`
+  adds a companion after each metric field — miles, feet, mph, min/mile pace and
+  pounds for `statute_us`; km, km/h and min/km pace for `metric`; miles and pace
+  but kilograms for `statute_uk` — and never overwrites a key. An unknown unit
+  system adds nothing, so output matches what it was before (the shared test
+  mock's `get_unit_system` returns a Mock, which reads as unknown). Swims keep
+  meters: Garmin shows pool units and pace per 100. The unit system is the one
+  garminconnect cached at login; reading it makes no API call. Pace text in a
+  workout's `pace.zone` bounds (`10:30/mi`, `5:00/km`) becomes m/s in
+  `_normalize_workout_steps`, checked for the whole workout before any step
+  changes; a bare `10:30` is rejected, since it could be per mile or per km.
+  _On merge:_ an upstream rewrite of one of these tools' `json.dumps` returns
+  must keep the `add_account_units(...)` wrap. Pinned by
+  `test_account_units_tools.py` and `test_units.py`.
 - **`protected` and `benchmark` are different fields, not aliases.**
   `protected` comes from the GraphQL workout feed, `benchmark` from the ATP
   calendar; neither service sends the other's key. They coincided on the single
@@ -441,7 +458,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1459 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1536 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
