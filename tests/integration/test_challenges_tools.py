@@ -181,6 +181,35 @@ async def test_get_personal_record_tool(app_with_challenges, mock_garmin_client)
 
 
 @pytest.mark.asyncio
+async def test_personal_record_types_10_and_16_are_power_and_weeks(
+    app_with_challenges, mock_garmin_client
+):
+    """Live values, 2026-10-28. Type 10 was labelled "Fastest 100K Cycling"
+    and showed 177.19 as "2:57" -- 100 km in three minutes. The value is an
+    average over 1,200 one-second samples: best 20-minute power, in watts.
+    Type 16 is a weekly streak, counted in weeks."""
+    mock_garmin_client.get_personal_record.return_value = [
+        {"typeId": 10, "value": 177.191666666667, "activityId": 1,
+         "prStartTimeLocalFormatted": "2014-09-07 09:00:00"},
+        {"typeId": 16, "value": 7.0, "prStartTimeLocalFormatted": "2026-10-27 00:00:00"},
+        {"typeId": 11, "value": 4713.0390625, "activityId": 2,
+         "prStartTimeLocalFormatted": "2013-10-06 09:00:00"},
+    ]
+
+    data = json.loads((await app_with_challenges.call_tool("get_personal_record", {}))[0][0].text)
+
+    by_type = {record["type_id"]: record for record in data}
+    power, streak, forty_k = by_type[10], by_type[16], by_type[11]
+    assert power["record_type"] == "Best 20-Minute Power Cycling"
+    assert power["value"] == "177 W"
+    assert power["raw_value"] == 177.191666666667
+    assert streak["value"] == "7 weeks"
+    # Neighbouring types are unchanged.
+    assert forty_k["record_type"] == "Fastest 40K Cycling"
+    assert forty_k["value"] == "1:18:33"
+
+
+@pytest.mark.asyncio
 async def test_get_personal_record_date_falls_back_to_gmt_in_utc(
     app_with_challenges, mock_garmin_client, monkeypatch
 ):

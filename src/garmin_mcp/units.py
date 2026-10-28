@@ -66,8 +66,8 @@ def account_unit_system(client: Any) -> Optional[str]:
     return unit_system if unit_system in _KNOWN_UNIT_SYSTEMS else None
 
 
-def format_pace(seconds: float) -> str:
-    """Format seconds per unit distance as m:ss, or h:mm:ss past an hour."""
+def format_duration(seconds: float) -> str:
+    """Format seconds as m:ss, or h:mm:ss past an hour."""
     # Half up, not Python's half-to-even: 10:29.5 reads as 10:30.
     total = math.floor(seconds + 0.5)
     hours, rest = divmod(total, 3600)
@@ -75,6 +75,11 @@ def format_pace(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
+
+
+def format_pace(seconds: float) -> str:
+    """Format seconds per unit distance as m:ss, or h:mm:ss past an hour."""
+    return format_duration(seconds)
 
 
 def pace(speed_mps: float, unit_meters: float) -> Optional[str]:

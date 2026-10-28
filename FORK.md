@@ -200,6 +200,13 @@ coverage.
   _On merge:_ an upstream rewrite of one of these tools' `json.dumps` returns
   must keep the `add_account_units(...)` wrap. Pinned by
   `test_account_units_tools.py` and `test_units.py`.
+- **The fitnessstats endpoint is not in its documented units.** Behind
+  `get_progress_summary_between_dates`, Garmin sends distance and elevation
+  gain in centimeters, durations in milliseconds and calories pre-scaled by
+  ~4.19 (verified 2026-10-28 against a run of known distance, time and gain).
+  `training._PROGRESS_METRIC_UNITS` converts them; an unverified metric is
+  passed through with `unit: "unknown"`, not guessed. _On merge:_ keep the
+  table. Pinned by `test_training_tools.py`.
 - **`protected` and `benchmark` are different fields, not aliases.**
   `protected` comes from the GraphQL workout feed, `benchmark` from the ATP
   calendar; neither service sends the other's key. They coincided on the single
@@ -461,7 +468,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1536 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1545 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

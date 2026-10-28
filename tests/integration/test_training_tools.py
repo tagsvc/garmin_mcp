@@ -1604,37 +1604,129 @@ async def test_get_progress_summary_converts_calories_from_garmin_units(
     assert equipment["sum"] == pytest.approx(426.0, abs=0.01)
 
 
+def _progress_payload(metric, value, activity_type="running"):
+    return [{
+        "date": "2026-10-28",
+        "countOfActivities": 1,
+        "stats": {activity_type: {metric: {
+            "count": 1, "min": value, "max": value, "avg": value, "sum": value,
+        }}},
+    }]
+
+
+# A real run, 2026-10-24: 7260.53 m in 2899.16 s (48:19) with 37 m of gain.
+# Garmin's fitnessstats endpoint returned these raw values for it.
 @pytest.mark.asyncio
-async def test_get_progress_summary_leaves_non_calorie_metrics_unconverted(
-    app_with_training, mock_garmin_client
+@pytest.mark.parametrize(
+    "metric, raw, expected, unit",
+    [
+        ("distance", 726052.978515625, 7260.53, "meters"),
+        ("elevationGain", 3700.0, 37.0, "meters"),
+        ("duration", 2899157.958984375, 2899.16, "seconds"),
+        ("movingDuration", 2897156.951904297, 2897.16, "seconds"),
+        ("elapsedDuration", 2899157.958984375, 2899.16, "seconds"),
+    ],
+)
+async def test_get_progress_summary_converts_garmin_raw_units(
+    app_with_training, mock_garmin_client, metric, raw, expected, unit
 ):
-    """The calorie unit fix must be scoped to metric="calories" only."""
-    mock_garmin_client.get_progress_summary_between_dates.return_value = [
-        {
-            "date": "2024-06-01",
-            "countOfActivities": 1,
-            "stats": {
-                "running": {
-                    "duration": {
-                        "count": 1,
-                        "min": 4450.452,
-                        "max": 4450.452,
-                        "avg": 4450.452,
-                        "sum": 4450.452,
-                    }
-                }
-            },
-        }
-    ]
+    """Distance and elevation come back in centimeters and durations in
+    milliseconds; read as meters, a month of running looked like 6,510 km."""
+    mock_garmin_client.get_progress_summary_between_dates.return_value = (
+        _progress_payload(metric, raw)
+    )
 
     result = await app_with_training.call_tool(
         "get_progress_summary_between_dates",
-        {"start_date": "2024-01-08", "end_date": "2024-01-15", "metric": "duration"},
+        {"start_date": "2026-10-24", "end_date": "2026-10-24", "metric": metric},
     )
     data = json.loads(result[0][0].text)
 
-    assert data["stats_by_activity_type"]["running"]["sum"] == 4450.452
+    assert data["unit"] == unit
+    running = data["stats_by_activity_type"]["running"]
+    for key in ("sum", "avg", "min", "max"):
+        assert running[key] == expected
     assert data["count_of_activities"] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_progress_summary_distance_companions_follow_account_units(
+    app_with_training, mock_garmin_client
+):
+    mock_garmin_client.get_progress_summary_between_dates.return_value = (
+        _progress_payload("distance", 726052.978515625)
+    )
+    arguments = {"start_date": "2026-10-24", "end_date": "2026-10-24", "metric": "distance"}
+
+    mock_garmin_client.get_unit_system.return_value = "statute_us"
+    us = json.loads((await app_with_training.call_tool(
+        "get_progress_summary_between_dates", arguments))[0][0].text)
+    mock_garmin_client.get_unit_system.return_value = "metric"
+    metric = json.loads((await app_with_training.call_tool(
+        "get_progress_summary_between_dates", arguments))[0][0].text)
+
+    assert us["stats_by_activity_type"]["running"]["sum_miles"] == 4.51
+    assert "sum_km" not in us["stats_by_activity_type"]["running"]
+    assert metric["stats_by_activity_type"]["running"]["sum_km"] == 7.26
+    assert "sum_miles" not in metric["stats_by_activity_type"]["running"]
+
+    # An unknown unit system adds no companion at all.
+    mock_garmin_client.get_unit_system.return_value = None
+    unknown = json.loads((await app_with_training.call_tool(
+        "get_progress_summary_between_dates", arguments))[0][0].text)
+    assert set(unknown["stats_by_activity_type"]["running"]) == {"count", "sum", "avg", "min", "max"}
+
+
+@pytest.mark.asyncio
+async def test_get_progress_summary_elevation_feet_and_duration_hms(
+    app_with_training, mock_garmin_client
+):
+    mock_garmin_client.get_unit_system.return_value = "statute_us"
+    mock_garmin_client.get_progress_summary_between_dates.return_value = (
+        _progress_payload("elevationGain", 3700.0)
+    )
+    elevation = json.loads((await app_with_training.call_tool(
+        "get_progress_summary_between_dates",
+        {"start_date": "2026-10-24", "end_date": "2026-10-24", "metric": "elevationGain"},
+    ))[0][0].text)
+    mock_garmin_client.get_progress_summary_between_dates.return_value = (
+        _progress_payload("duration", 2899157.958984375)
+    )
+    duration = json.loads((await app_with_training.call_tool(
+        "get_progress_summary_between_dates",
+        {"start_date": "2026-10-24", "end_date": "2026-10-24", "metric": "duration"},
+    ))[0][0].text)
+
+    assert elevation["stats_by_activity_type"]["running"]["max_feet"] == 121
+    assert duration["stats_by_activity_type"]["running"]["sum_hms"] == "48:19"
+
+
+@pytest.mark.asyncio
+async def test_get_progress_summary_unknown_metric_is_passed_through_and_says_so(
+    app_with_training, mock_garmin_client
+):
+    mock_garmin_client.get_progress_summary_between_dates.return_value = (
+        _progress_payload("steps", 7496.0)
+    )
+
+    data = json.loads((await app_with_training.call_tool(
+        "get_progress_summary_between_dates",
+        {"start_date": "2026-10-24", "end_date": "2026-10-24", "metric": "steps"},
+    ))[0][0].text)
+
+    assert data["unit"] == "unknown"
+    assert data["stats_by_activity_type"]["running"]["sum"] == 7496.0
+
+
+@pytest.mark.asyncio
+async def test_get_cycling_ftp_without_an_ftp_says_so(app_with_training, mock_garmin_client):
+    """Garmin can return a non-empty dict holding none of the FTP fields;
+    the tool used to answer with a bare "{}"."""
+    mock_garmin_client.get_cycling_ftp.return_value = {"userProfilePK": 1, "sport": None}
+
+    result = await app_with_training.call_tool("get_cycling_ftp", {})
+
+    assert result[0][0].text == "No cycling FTP data found"
 
 
 @pytest.mark.asyncio

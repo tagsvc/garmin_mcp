@@ -15,7 +15,15 @@ from garminconnect import (
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.units import account_unit_system, add_account_units
+from garmin_mcp.units import (
+    METERS_PER_FOOT,
+    METERS_PER_MILE,
+    METRIC,
+    account_unit_system,
+    add_account_units,
+    format_duration,
+    is_imperial,
+)
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -174,12 +182,48 @@ def _tracker_acute_load(
 # not a general kJ conversion.
 _PROGRESS_CALORIES_FACTOR = 4.19
 
+# FORK: the other metrics are not in their documented units either. Verified
+# live 2026-10-28 against a run with known totals (7260.53 m, 2899.16 s,
+# 37 m gain): distance and elevationGain come back in centimeters (726052.98,
+# 3700.0), duration, movingDuration and elapsedDuration in milliseconds
+# (2899157.96). Reading the raw sum as meters put a month of running at
+# 6,510 km. metric -> (unit reported, factor from Garmin's raw value).
+_PROGRESS_METRIC_UNITS = {
+    "distance": ("meters", 0.01),
+    "elevationGain": ("meters", 0.01),
+    "duration": ("seconds", 0.001),
+    "movingDuration": ("seconds", 0.001),
+    "elapsedDuration": ("seconds", 0.001),
+    "calories": ("kcal", 1 / _PROGRESS_CALORIES_FACTOR),
+}
+_PROGRESS_STAT_KEYS = ("sum", "avg", "min", "max")
+
 
 def _convert_progress_metric(metric: str, value: Optional[float]) -> Optional[float]:
-    """Convert a raw progress-summary stat value to its documented unit."""
-    if value is None or metric != "calories":
+    """Convert a raw progress-summary stat value to its documented unit.
+
+    A metric not in _PROGRESS_METRIC_UNITS is returned as Garmin sent it.
+    """
+    if value is None or metric not in _PROGRESS_METRIC_UNITS:
         return value
-    return value / _PROGRESS_CALORIES_FACTOR
+    return round(value * _PROGRESS_METRIC_UNITS[metric][1], 2)
+
+
+def _progress_companions(metric: str, stats: Dict[str, Any], unit_system: Optional[str]) -> None:
+    """Add account-unit companions to one activity type's converted stats."""
+    for key in _PROGRESS_STAT_KEYS:
+        value = stats.get(key)
+        if value is None:
+            continue
+        if metric == "distance":
+            if is_imperial(unit_system):
+                stats[f"{key}_miles"] = round(value / METERS_PER_MILE, 2)
+            elif unit_system == METRIC:
+                stats[f"{key}_km"] = round(value / 1000, 2)
+        elif metric == "elevationGain" and is_imperial(unit_system):
+            stats[f"{key}_feet"] = round(value / METERS_PER_FOOT)
+        elif _PROGRESS_METRIC_UNITS.get(metric, ("",))[0] == "seconds":
+            stats[f"{key}_hms"] = format_duration(value)
 
 
 # Garmin returns the lactate threshold speed in cm/ms, not seconds/meter:
@@ -535,12 +579,19 @@ def register_tools(app):
             end_date: End date in YYYY-MM-DD format
             metric: Metric to get progress for (e.g., "elevationGain", "duration", "distance", "movingDuration", "calories")
 
-        Note: "calories" values are returned in kcal. Garmin's underlying
-        endpoint stores this metric pre-scaled by ~4.19; this tool undoes
-        that scaling before returning.
+        Values are converted from Garmin's raw units, which differ from the
+        documented ones: distance and elevationGain are returned in meters
+        (Garmin sends centimeters), duration, movingDuration and
+        elapsedDuration in seconds (Garmin sends milliseconds), and calories
+        in kcal (Garmin pre-scales by ~4.19). `unit` names the unit of
+        sum/avg/min/max. Companions follow each: sum_miles etc. for distance
+        and sum_feet for elevation on a US account (sum_km for distance on a
+        metric one), and sum_hms (h:mm:ss) for durations. Any other metric is
+        returned as Garmin sends it, with unit "unknown".
         """
         try:
-            summary_data = get_client(ctx).get_progress_summary_between_dates(
+            client = get_client(ctx)
+            summary_data = client.get_progress_summary_between_dates(
                 start_date, end_date, metric
             )
 
@@ -560,10 +611,12 @@ def register_tools(app):
             # true activity count nor the per-type counts in `stats`.
             curated = {
                 "metric": metric,
+                "unit": _PROGRESS_METRIC_UNITS.get(metric, ("unknown",))[0],
                 "start_date": start_date,
                 "end_date": end_date,
                 "stats_by_activity_type": {},
             }
+            unit_system = account_unit_system(client)
 
             # Parse stats by activity type. `or {}` guards against an explicit
             # null `stats` (Garmin sends null for empty sections), which would
@@ -573,13 +626,13 @@ def register_tools(app):
                 if metric in activity_stats:
                     metric_data = activity_stats[metric]
                     if metric_data and metric_data.get("count", 0) > 0:
-                        curated["stats_by_activity_type"][activity_type] = {
-                            "count": metric_data.get("count"),
-                            "sum": _convert_progress_metric(metric, metric_data.get("sum")),
-                            "avg": _convert_progress_metric(metric, metric_data.get("avg")),
-                            "min": _convert_progress_metric(metric, metric_data.get("min")),
-                            "max": _convert_progress_metric(metric, metric_data.get("max")),
-                        }
+                        type_stats = {"count": metric_data.get("count")}
+                        for key in _PROGRESS_STAT_KEYS:
+                            type_stats[key] = _convert_progress_metric(
+                                metric, metric_data.get(key)
+                            )
+                        _progress_companions(metric, type_stats, unit_system)
+                        curated["stats_by_activity_type"][activity_type] = type_stats
 
             curated["count_of_activities"] = sum(
                 v["count"] for v in curated["stats_by_activity_type"].values()
@@ -1108,6 +1161,10 @@ def register_tools(app):
             }
 
             curated = {k: v for k, v in curated.items() if v is not None}
+            # Garmin can answer with a non-empty dict that carries none of
+            # these fields, which used to come back as a bare "{}".
+            if "functional_threshold_power_watts" not in curated:
+                return "No cycling FTP data found"
 
             return json.dumps(curated, indent=2)
         except Exception as e:

@@ -69,8 +69,14 @@ ADHOC_ACTIVITY_TYPE_MAPPING = {
 }
 
 # Personal record type mappings: typeId -> (name, value_type)
-# value_type: "time" (seconds), "distance" (meters), "count", "elevation" (meters), "days"
+# value_type: "time" (seconds), "distance" (meters), "count", "elevation" (meters),
+# "days", "weeks", "power" (watts)
 # This list is estimated based on real data, the type mapping might not be 100% accurate
+# FORK: two entries corrected against a live account, 2026-10-28. Type 10 was
+# "Fastest 100K Cycling" as a time, which showed a 2014 ride as 100 km in
+# "2:57"; its value, 177.1917, is 212630/1200 -- an average over 1,200
+# one-second samples -- so it is the best 20-minute average power, in watts.
+# Type 16 is a weekly streak, counted in weeks, not days.
 PR_TYPE_MAPPING = {
     1: ("Fastest 1K", "time"),
     2: ("Fastest Mile", "time"),
@@ -81,13 +87,13 @@ PR_TYPE_MAPPING = {
     7: ("Longest Run", "distance"),
     8: ("Longest Ride", "distance"),
     9: ("Most Elevation Gain Cycling", "elevation"),
-    10: ("Fastest 100K Cycling", "time"),
+    10: ("Best 20-Minute Power Cycling", "power"),
     11: ("Fastest 40K Cycling", "time"),
     12: ("Most Steps Day", "count"),
     13: ("Most Steps Week", "count"),
     14: ("Most Steps Month", "count"),
     15: ("Longest Daily Goal Streak", "days"),
-    16: ("Longest Weekly Goal Streak", "days"),
+    16: ("Longest Weekly Goal Streak", "weeks"),
     17: ("Longest Pool Swim", "distance"),
     18: ("Fastest 100m Pool Swim", "time"),
     19: ("Fastest 400m Pool Swim", "time"),
@@ -226,6 +232,10 @@ def _format_pr_value(value: float, value_type: str) -> str:
         return f"{int(value):,}"
     elif value_type == "days":
         return f"{int(value)} days"
+    elif value_type == "weeks":
+        return f"{int(value)} weeks"
+    elif value_type == "power":
+        return f"{value:.0f} W"
     return str(value)
 
 
