@@ -35,8 +35,9 @@ second. Applied to `get_activity`, `get_activities`, `get_activities_by_date`,
 "Avg Moving Pace", and the three activity-list tools gain `avg_speed_mps`, so
 each listed run has a pace. Gear miles come from Garmin's meters, not the rounded km.
 Swims keep meters, since Garmin shows pool units and pace per 100. An unknown
-unit system adds nothing. The unit system is the one garminconnect cached at
-login, so this adds no Garmin calls.
+unit system adds nothing. The unit system is the profile's measurement setting,
+which garminconnect caches at login, so this adds no Garmin calls; a change in
+Garmin Connect reaches the remote server within the hour (next session restore).
 
 **Input:** `upload_workout`, `upload_workouts` and `schedule_workouts` (inline
 `workout_data`) accept pace text in a `pace.zone` target's bounds —

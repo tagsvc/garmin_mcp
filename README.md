@@ -68,6 +68,12 @@ Garmin's raw split payloads get camelCase companions (`distanceMiles`,
 shows pool units and pace per 100. Activity weather is the one endpoint Garmin
 localises itself; `get_activity_weather` labels its units.
 
+The unit system is the measurement setting in your Garmin Connect profile
+(`measurementSystem`, what `get_unit_system` returns), read when the server logs
+in to Garmin. After you change it in Garmin Connect, the remote server picks it
+up within the hour, when it next restores your session, or on a redeploy; a
+stdio server picks it up on restart. The metric fields never change with it.
+
 ### Gear Notes
 
 Each item in the `gear` array returned by `get_gear` includes a `notes` field

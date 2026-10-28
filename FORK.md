@@ -189,8 +189,11 @@ coverage.
   but kilograms for `statute_uk` — and never overwrites a key. An unknown unit
   system adds nothing, so output matches what it was before (the shared test
   mock's `get_unit_system` returns a Mock, which reads as unknown). Swims keep
-  meters: Garmin shows pool units and pace per 100. The unit system is the one
-  garminconnect cached at login; reading it makes no API call. Pace text in a
+  meters: Garmin shows pool units and pace per 100. The unit system is the profile's
+  `measurementSystem`, which garminconnect caches at login; reading it makes no
+  API call. A change in Garmin Connect therefore reaches the remote server when
+  `SessionManager` next restores the session (`CACHE_TTL`, one hour) and a stdio
+  server on restart. Pace text in a
   workout's `pace.zone` bounds (`10:30/mi`, `5:00/km`) becomes m/s in
   `_normalize_workout_steps`, checked for the whole workout before any step
   changes; a bare `10:30` is rejected, since it could be per mile or per km.
