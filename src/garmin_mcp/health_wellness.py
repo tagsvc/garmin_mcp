@@ -19,6 +19,7 @@ from garmin_mcp.times import (
     offset_from_pair,
     profile_time_zone,
     put_times,
+    zone_garmin_times,
 )
 
 # The garmin_client will be set by the main file
@@ -617,6 +618,7 @@ def _label_day_series(payload: Any) -> Any:
         offset = offset_from_pair(
             payload.get("startTimestampGMT"), payload.get("startTimestampLocal")
         )
+        zone_garmin_times(payload, offset)
         if offset is not None:
             payload["utcOffsetHours"] = _offset_hours(offset)
     return payload
@@ -638,6 +640,7 @@ def _label_daily_summary(payload: Any) -> Any:
         payload.get("wellnessStartTimeGmt"), payload.get("wellnessStartTimeLocal")
     )
     add_local_siblings(payload, offset)
+    zone_garmin_times(payload, offset)
     if offset is not None:
         payload["utcOffsetHours"] = _offset_hours(offset)
     return payload
@@ -664,6 +667,12 @@ def _label_sleep_payload(payload: Any) -> Any:
         )
         if offset is not None:
             payload["utcOffsetHours"] = _offset_hours(offset)
+        zone_garmin_times(payload, offset)
+        # SpO2 epochs name no zone; verified GMT (03:18 for a sleep starting
+        # 03:17:13 GMT, 11:17 PM local).
+        for epoch in payload.get("wellnessEpochSPO2DataDTOList") or []:
+            if isinstance(epoch, dict) and isinstance(epoch.get("epochTimestamp"), str):
+                epoch["epochTimestamp"] = gmt_iso(epoch["epochTimestamp"]) or epoch["epochTimestamp"]
     return payload
 
 
@@ -680,7 +689,7 @@ def _label_body_battery_events(events: Any) -> Any:
         if local:
             event["eventStartTimeLocal"] = local
         event["utcOffsetHours"] = _offset_hours(offset)
-    return events
+    return zone_garmin_times(events)
 
 
 def _label_steps(steps: Any, client: Any) -> Any:
@@ -698,7 +707,7 @@ def _label_steps(steps: Any, client: Any) -> Any:
             if local:
                 bucket[local_key] = local
         bucket["localTimeZone"] = zone
-    return steps
+    return zone_garmin_times(steps)
 
 
 # Bare grams in the body-composition payloads (79900.0 for 79.9 kg).
@@ -712,8 +721,18 @@ def _label_hydration(payload: Any, client: Any) -> Any:
     """Fluid ounces beside Garmin's *InML values, when the profile's own
     hydration unit is not milliliters (a setting separate from the
     measurement system: a US account can log water in ml)."""
+    if not isinstance(payload, dict):
+        return payload
+    # lastEntryTimestampLocal has no GMT partner: its offset is the
+    # profile zone's at that wall-clock time.
+    zone = profile_time_zone(client)
+    if zone and isinstance(payload.get("lastEntryTimestampLocal"), str):
+        before = payload["lastEntryTimestampLocal"]
+        zone_garmin_times(payload, zone=zone)
+        if payload["lastEntryTimestampLocal"] != before:
+            payload["localTimeZone"] = zone
     unit = profile_settings(client).get("hydrationMeasurementUnit")
-    if not isinstance(payload, dict) or unit in (None, "milliliter"):
+    if unit in (None, "milliliter"):
         return payload
     for key, value in list(payload.items()):
         if key.endswith("InML") and isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -1213,11 +1232,12 @@ def register_tools(app):
         totalDistanceMeters gets totalDistanceMiles (statute) or totalDistanceKm;
         floorsAscendedInMeters/floorsDescendedInMeters get *Feet (statute).
 
-        Times: Garmin's payload is kept as sent (for garminconnect-ha), and its
-        values carry no zone marker -- *Gmt/*GMT values have no Z and *Local values
-        no offset. Use the fields this tool adds instead: beside each GMT time a
-        *Local sibling with its UTC offset (lastSyncTimestampLocal,
-        latestRespirationTimeLocal, bodyBatteryDynamicFeedbackEvent.eventTimestampLocal,
+        Times: Garmin's keys are kept, and its time text is given its zone in
+        place: *Gmt/*GMT values end in Z and *Local values carry their UTC
+        offset (e.g. latestSpo2ReadingTimeLocal 2026-10-28T05:59:00-04:00).
+        Beside each GMT time Garmin sends alone the tool adds a *Local with its
+        offset (lastSyncTimestampLocal, latestRespirationTimeLocal,
+        bodyBatteryDynamicFeedbackEvent.eventTimestampLocal,
         bodyBatteryActivityEventList[].eventStartTimeLocal / eventUpdateTimeLocal,
         each event at its own timezoneOffset), and utcOffsetHours, the day's offset
         from Garmin's wellnessStartTimeGmt/wellnessStartTimeLocal pair.
@@ -1276,11 +1296,12 @@ def register_tools(app):
         get_user_summary; weight, boneMass and muscleMass are grams and get *Lb on
         a US account.
 
-        Times: Garmin's payload is kept as sent (for garminconnect-ha), and its
-        values carry no zone marker -- *Gmt/*GMT values have no Z and *Local values
-        no offset. Use the fields this tool adds instead: beside each GMT time a
-        *Local sibling with its UTC offset (lastSyncTimestampLocal,
-        latestRespirationTimeLocal, bodyBatteryDynamicFeedbackEvent.eventTimestampLocal,
+        Times: Garmin's keys are kept, and its time text is given its zone in
+        place: *Gmt/*GMT values end in Z and *Local values carry their UTC
+        offset (e.g. latestSpo2ReadingTimeLocal 2026-10-28T05:59:00-04:00).
+        Beside each GMT time Garmin sends alone the tool adds a *Local with its
+        offset (lastSyncTimestampLocal, latestRespirationTimeLocal,
+        bodyBatteryDynamicFeedbackEvent.eventTimestampLocal,
         bodyBatteryActivityEventList[].eventStartTimeLocal / eventUpdateTimeLocal,
         each event at its own timezoneOffset), and utcOffsetHours, the day's offset
         from Garmin's wellnessStartTimeGmt/wellnessStartTimeLocal pair.
@@ -1307,8 +1328,9 @@ def register_tools(app):
         Note: This returns full interval data (~14KB). For a compact summary,
         use get_stats() which includes total_steps.
 
-        Buckets are Garmin's, with startGMT/endGMT in GMT; startLocal/endLocal
-        are added in the Garmin profile's time zone (localTimeZone).
+        Buckets are Garmin's, with startGMT/endGMT in GMT (ending in Z);
+        startLocal/endLocal are added in the Garmin profile's time zone
+        (localTimeZone).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1434,10 +1456,10 @@ def register_tools(app):
     async def get_body_battery_events(ctx: Context, date: str) -> str:
         """Get body battery events data
 
-        Garmin's payload as-is, plus event.eventStartTimeLocal and
+        Garmin's payload with its keys kept, plus event.eventStartTimeLocal and
         event.utcOffsetHours from the event's own offset. eventStartTimeGmt is
-        GMT, and the stress/body-battery arrays are [UTC epoch ms, ...] pairs:
-        add utcOffsetHours for local time.
+        GMT and ends in Z, and the stress/body-battery arrays are [UTC epoch ms,
+        ...] pairs: add utcOffsetHours for local time.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1472,8 +1494,8 @@ def register_tools(app):
     async def get_floors(ctx: Context, date: str) -> str:
         """Get floors climbed data
 
-        floorValuesArray times are GMT; add utcOffsetHours (the day's own offset)
-        for local time.
+        floorValuesArray times are GMT and end in Z; add utcOffsetHours (the
+        day's own offset) for local time.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1512,6 +1534,9 @@ def register_tools(app):
 
         heartRateValues timestamps are UTC epoch milliseconds; add utcOffsetHours
         (the day's own offset) for local time.
+
+        Garmin's start/end text is given its zone in place (*GMT ends in Z,
+        *Local carries its offset).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1569,7 +1594,9 @@ def register_tools(app):
 
         Volumes are milliliters (*InML). When the Garmin profile's hydration unit
         is not milliliters, each also gets *InFlOz. The hydration unit is its own
-        setting, separate from the measurement system.
+        setting, separate from the measurement system. lastEntryTimestampLocal
+        carries its UTC offset, from the Garmin profile's time zone (named in
+        localTimeZone), since Garmin sends no GMT time beside it.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1590,10 +1617,13 @@ def register_tools(app):
         Note: This returns detailed sleep data (~50KB).
         For a compact summary, use get_sleep_summary().
 
-        Garmin's payload as-is, plus dailySleepDTO.sleepStartGmt/sleepStartLocal/
-        sleepEndGmt/sleepEndLocal as ISO times and a top-level utcOffsetHours.
-        Garmin's *TimestampLocal epochs are the local wall clock written as if it
-        were UTC, not real epochs; the *GMT epochs and series timestamps are UTC.
+        Garmin's payload with its keys kept, plus dailySleepDTO.sleepStartGmt/
+        sleepStartLocal/sleepEndGmt/sleepEndLocal as ISO times and a top-level
+        utcOffsetHours. Garmin's GMT time text ends in Z (sleepLevels[].startGMT,
+        dailyNapDTOS[].napStartTimestampGMT, wellnessEpochSPO2DataDTOList[].
+        epochTimestamp...). Garmin's *TimestampLocal epochs are the local wall clock
+        written as if it were UTC, not real epochs; the *GMT epochs and series
+        timestamps are UTC.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1706,6 +1736,9 @@ def register_tools(app):
         Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
         day's own offset, from Garmin's GMT/local pair) for local time.
 
+        Garmin's start/end text is given its zone in place (*GMT ends in Z,
+        *Local carries its offset).
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1772,6 +1805,9 @@ def register_tools(app):
 
         Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
         day's own offset) for local time.
+
+        Garmin's start/end text is given its zone in place (*GMT ends in Z,
+        *Local carries its offset).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1884,6 +1920,9 @@ def register_tools(app):
         Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
         day's own offset) for local time.
 
+        Garmin's start/end text is given its zone in place (*GMT ends in Z,
+        *Local carries its offset).
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1900,6 +1939,9 @@ def register_tools(app):
     async def get_all_day_events(ctx: Context, date: str) -> str:
         """Get daily wellness events data
 
+        Garmin's GMT/Local pairs are given their zone in place: *GMT values end
+        in Z and *Local values carry their UTC offset.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1908,7 +1950,7 @@ def register_tools(app):
             if not events:
                 return f"No daily wellness events found for {date}"
 
-            return json.dumps(events, indent=2)
+            return json.dumps(zone_garmin_times(events), indent=2)
         except Exception as e:
             return f"Error retrieving daily wellness events: {str(e)}"
 

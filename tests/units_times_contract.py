@@ -48,6 +48,15 @@ RAW_RESTATED_BY = {
     "date": "measuredAtLocal",  # body composition: local pseudo-epoch
 }
 
+# Garmin raw keys allowed to keep zoneless time text, and why.
+RAW_UNZONED = {
+    "calendarDate": "a calendar date written as local midnight, not an instant",
+    "createDate": "gear service createDate: zone not established",
+    "updateDate": "gear service updateDate: zone not established",
+    "dateBegin": "gear service dateBegin: a date written as midnight",
+    "dateEnd": "gear service dateEnd: a date written as midnight",
+}
+
 # Garmin GMT keys whose local time the tool adds under a different name.
 RAW_LOCAL_SIBLINGS = {
     "timestampGMT": ("measuredAtLocal",),  # body composition weigh-ins
@@ -124,6 +133,18 @@ def _walk(node: Any, path: str, swim: bool, offset_in_scope: bool) -> Iterator[s
     offset_in_scope = offset_in_scope or "utcOffsetHours" in node
     for key, value in node.items():
         if (
+            isinstance(key, str) and not _SNAKE.match(key) and key not in RAW_UNZONED
+            and isinstance(value, str) and _ISO_DATETIME.match(value)
+            and not _EXPLICIT_ZONE.search(value)
+        ):
+            yield f"{path}.{key}: Garmin time {value!r} carries no Z or offset"
+        if isinstance(value, list) and value and all(isinstance(row, list) for row in value):
+            for row_index, row in enumerate(value):
+                for item in row:
+                    if isinstance(item, str) and _ISO_DATETIME.match(item) and not _EXPLICIT_ZONE.search(item):
+                        yield f"{path}.{key}[{row_index}]: Garmin time {item!r} carries no Z or offset"
+                        break
+        if (
             isinstance(key, str) and _raw_gmt_key(key) and _is_time_value(value)
             and not offset_in_scope and not (_local_siblings(key) & set(node))
         ):
@@ -134,7 +155,7 @@ def _walk(node: Any, path: str, swim: bool, offset_in_scope: bool) -> Iterator[s
             for companion, converted in units._companions(key, value, units.STATUTE_US, swim):
                 if converted is not None and companion not in node:
                     yield f"{here}: no {companion} companion"
-        restated = RAW_RESTATED_BY.get(key) in node
+        restated = RAW_RESTATED_BY.get(key) in node or node.get("profile_type") == "local_date_time"
         if isinstance(key, str) and _SNAKE.match(key) and not _labelled(key) and not restated:
             if isinstance(value, str) and _ISO_DATETIME.match(value) and not _EXPLICIT_ZONE.search(value):
                 yield f"{here}: time {value!r} names no zone"

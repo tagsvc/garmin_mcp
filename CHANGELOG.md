@@ -5,6 +5,52 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Garmin's own time text carries its zone — 2026-10-28
+
+The tools that pass Garmin's payload through kept its time strings exactly as
+Garmin wrote them: `2026-10-28T09:59:00.0` for GMT and local alike, so only
+the key told a parser which was which. Three of Garmin's own `*Local` fields
+in the daily summary (`wellnessStartTimeLocal`, `wellnessEndTimeLocal`,
+`latestSpo2ReadingTimeLocal`) had no offset anywhere in the output.
+Keeping Garmin's exact strings had been a deliberate choice. It is reversed
+here: nothing reads those strings but Claude, and the descriptions already
+promised garminconnect-ha's data, not its text format.
+
+`times.zone_garmin_times` now rewrites the text in place. Keys and instants
+are unchanged, and epoch numbers stay numbers.
+- **GMT values.** `*Gmt`/`*GMT` values end in `Z`, with the `.0` dropped.
+- **Local values.** `*Local` values carry their UTC offset. It comes from, in
+  order:
+  - their own GMT partner;
+  - the record's `timezoneOffset`;
+  - the day's offset;
+  - failing those, the profile's time zone. Hydration's
+    `lastEntryTimestampLocal` takes this path and says so in `localTimeZone`.
+- **Series rows.** Columns that the row descriptor names as GMT end in `Z`;
+  floors uses this.
+- **FIT values.** FIT `date_time` values end in `Z`; `local_date_time` values
+  are the watch's clock, as their `profile_type` says.
+- **Also.** The sleep data's unlabelled SpO2 `epochTimestamp` is verified GMT
+  and now ends in `Z`.
+
+Applies to:
+- daily summary (`get_user_summary`, `get_stats_and_body`)
+- body battery events
+- sleep data
+- stress, all-day stress, heart rates, respiration and floors
+- step buckets
+- all-day events
+- hydration
+- typed splits and split summaries
+- FIT messages
+
+**CI check.** Time text without `Z` or an offset in Garmin's payloads now
+fails the check, with the exceptions listed with their reasons (calendar
+dates written as midnight, gear service dates). Removing any one of the nine
+zoning steps fails it.
+
+Suite: 1683 passed.
+
 ## Descriptions name the time fields their tools add — 2026-10-28
 
 The 2026-10-28 daily-summary change added `*Local` siblings and

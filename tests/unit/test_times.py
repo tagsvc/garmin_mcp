@@ -201,3 +201,46 @@ def test_add_local_siblings_without_an_offset_adds_nothing():
 
     payload = {"lastSyncTimestampGMT": "2026-10-28T21:18:19.470"}
     assert add_local_siblings(payload, None) == {"lastSyncTimestampGMT": "2026-10-28T21:18:19.470"}
+
+
+def test_zone_garmin_times_gives_garmins_text_its_zone_in_place():
+    from garmin_mcp.times import zone_garmin_times
+
+    payload = {
+        "wellnessStartTimeGmt": "2026-10-28T04:00:00.0",
+        "wellnessStartTimeLocal": "2026-10-28T00:00:00.0",
+        "latestSpo2ReadingTimeGmt": "2026-10-28T09:59:00.0",
+        "latestSpo2ReadingTimeLocal": "2026-10-28T05:59:00.0",
+        "events": [{"eventStartTimeGmt": "2026-10-28T03:17:13", "timezoneOffset": 3600000,
+                    "eventStartTimeLocal": "2026-10-28T04:17:13"}],
+        "sleepStartTimestampGMT": 1793157433000,
+        "floorsValueDescriptorDTOList": [{"index": 0, "key": "startTimeGMT"},
+                                         {"index": 2, "key": "floorsAscended"}],
+        "floorValuesArray": [["2026-10-27T04:00:00.0", "keep", 3]],
+        "calendarDate": "2026-10-28",
+    }
+    zone_garmin_times(payload, MINUS_4)
+
+    assert payload["wellnessStartTimeGmt"] == "2026-10-28T04:00:00Z"
+    # Each local takes the offset from its own GMT partner.
+    assert payload["wellnessStartTimeLocal"] == "2026-10-28T00:00:00-04:00"
+    assert payload["latestSpo2ReadingTimeLocal"] == "2026-10-28T05:59:00-04:00"
+    # A record's own timezoneOffset wins over the day's.
+    assert payload["events"][0]["eventStartTimeLocal"] == "2026-10-28T04:17:13+01:00"
+    assert payload["events"][0]["eventStartTimeGmt"] == "2026-10-28T03:17:13Z"
+    # Epochs stay numbers; only descriptor-named GMT columns change.
+    assert payload["sleepStartTimestampGMT"] == 1793157433000
+    assert payload["floorValuesArray"] == [["2026-10-27T04:00:00Z", "keep", 3]]
+    assert payload["calendarDate"] == "2026-10-28"
+
+
+def test_zone_garmin_times_uses_the_profile_zone_for_a_lone_local_time():
+    from garmin_mcp.times import zone_garmin_times
+
+    summer = zone_garmin_times({"lastEntryTimestampLocal": "2026-10-27T22:58:29.7"}, zone="America/New_York")
+    winter = zone_garmin_times({"lastEntryTimestampLocal": "2026-11-02T22:58:29.7"}, zone="America/New_York")
+    unknown = zone_garmin_times({"lastEntryTimestampLocal": "2026-10-27T22:58:29.7"})
+
+    assert summer["lastEntryTimestampLocal"] == "2026-10-27T22:58:29-04:00"
+    assert winter["lastEntryTimestampLocal"] == "2026-11-02T22:58:29-05:00"
+    assert unknown["lastEntryTimestampLocal"] == "2026-10-27T22:58:29.7"  # no offset to add
