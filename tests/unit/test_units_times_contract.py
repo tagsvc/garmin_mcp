@@ -81,3 +81,19 @@ def test_result_json_reads_both_call_tool_shapes():
     assert result_json([Block()]) == {"a": 1}          # _ToolFilter: content list
     Block.text = "No data"
     assert result_json([Block()]) is None
+
+
+def test_raw_gmt_times_need_a_local_time_or_an_offset():
+    assert output_violations({"lastSyncTimestampGMT": "2026-10-28T21:18:19.470"}) == [
+        "$.lastSyncTimestampGMT: GMT time with no local time beside it"
+    ]
+    assert output_violations({"lastSyncTimestampGMT": "2026-10-28T21:18:19.470",
+                              "lastSyncTimestampLocal": "2026-10-28T17:18:19-04:00"}) == []
+    # A payload's utcOffsetHours converts every GMT time beneath it.
+    assert output_violations({"utcOffsetHours": -4.0,
+                              "sleepLevels": [{"startGMT": "2026-10-28T03:17:13.0"}]}) == []
+    # Body composition restates timestampGMT as measuredAtLocal.
+    assert output_violations({"timestampGMT": 1793103631000,
+                              "measuredAtLocal": "2026-10-27T08:20:31-04:00"}) == []
+    # Curated *_gmt keys are already named; this rule is for Garmin's keys.
+    assert output_violations({"start_time_gmt": "2026-10-27T18:37:26Z"}) == []

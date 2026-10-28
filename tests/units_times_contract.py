@@ -48,6 +48,11 @@ RAW_RESTATED_BY = {
     "date": "measuredAtLocal",  # body composition: local pseudo-epoch
 }
 
+# Garmin GMT keys whose local time the tool adds under a different name.
+RAW_LOCAL_SIBLINGS = {
+    "timestampGMT": ("measuredAtLocal",),  # body composition weigh-ins
+}
+
 # Keys in the source that are not tool output, per module, and why.
 SOURCE_EXEMPT = {
     ("activity_analysis.py", "start_time"): "FIT internals; _label_fit_times renames before output",
@@ -85,13 +90,28 @@ def _is_number(value: Any) -> bool:
 
 def output_violations(data: Any) -> List[str]:
     """Contract breaches in one tool's parsed JSON output (statute_us)."""
-    return list(_walk(data, "$", swim=False))
+    return list(_walk(data, "$", swim=False, offset_in_scope=False))
 
 
-def _walk(node: Any, path: str, swim: bool) -> Iterator[str]:
+def _raw_gmt_key(key: str) -> bool:
+    return key.endswith(("Gmt", "GMT")) and not _SNAKE.match(key)
+
+
+def _local_siblings(key: str) -> set:
+    stem = key[:-3]
+    return {f"{stem}Local", *RAW_LOCAL_SIBLINGS.get(key, ())}
+
+
+def _is_time_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(_ISO_DATETIME.match(value))
+    return _is_number(value) and _EPOCH_MS[0] <= value <= _EPOCH_MS[1]
+
+
+def _walk(node: Any, path: str, swim: bool, offset_in_scope: bool) -> Iterator[str]:
     if isinstance(node, list):
         for index, item in enumerate(node):
-            yield from _walk(item, f"{path}[{index}]", swim)
+            yield from _walk(item, f"{path}[{index}]", swim, offset_in_scope)
         return
     if not isinstance(node, dict):
         return
@@ -100,6 +120,14 @@ def _walk(node: Any, path: str, swim: bool) -> Iterator[str]:
         or units._names_a_swim(node)
         or any(marker in node for marker in _SWIM_MARKERS)
     )
+    # A payload's utcOffsetHours converts every GMT time beneath it.
+    offset_in_scope = offset_in_scope or "utcOffsetHours" in node
+    for key, value in node.items():
+        if (
+            isinstance(key, str) and _raw_gmt_key(key) and _is_time_value(value)
+            and not offset_in_scope and not (_local_siblings(key) & set(node))
+        ):
+            yield f"{path}.{key}: GMT time with no local time beside it"
     for key, value in node.items():
         here = f"{path}.{key}"
         if isinstance(key, str) and _is_number(value) and units._is_number(value):
@@ -112,7 +140,7 @@ def _walk(node: Any, path: str, swim: bool) -> Iterator[str]:
                 yield f"{here}: time {value!r} names no zone"
             elif _is_number(value) and _EPOCH_MS[0] <= value <= _EPOCH_MS[1] and "id" not in key.split("_"):
                 yield f"{here}: epoch {value!r} names no zone"
-        yield from _walk(value, here, swim)
+        yield from _walk(value, here, swim, offset_in_scope)
 
 
 def result_json(result: Any) -> Any:

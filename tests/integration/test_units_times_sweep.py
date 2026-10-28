@@ -8,7 +8,9 @@ contract check in tests/conftest.py inspects every result. A tool that
 starts emitting a bare metric field or an unlabelled time fails here even if
 no other test calls it. The values are synthetic; no athlete data is stored.
 """
-from unittest.mock import Mock
+import copy
+import json
+from unittest.mock import DEFAULT, Mock
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -36,7 +38,8 @@ RUN = {
     "distance": 5000.0, "duration": 1800.0, "averageSpeed": 2.78, "elevationGain": 40.0,
     "elevationLoss": 35.0, "beginTimestamp": EPOCH_GMT, "recoveryTime": 1440,
 }
-SPLIT = {"startTimeGMT": GMT, "startTimeLocal": LOCAL, "distance": 1609.34, "duration": 600.0,
+SPLIT = {"startTimeGMT": GMT, "startTimeLocal": LOCAL, "endTimeGMT": "2026-10-27T18:47:26.0",
+         "distance": 1609.34, "duration": 600.0,
          "averageSpeed": 2.68, "maxSpeed": 3.1, "elevationGain": 5.0, "averageTemperature": 22.0,
          "strideLength": 75.0, "verticalOscillation": 8.0, "type": "RWD_RUN"}
 READINESS = {"calendarDate": D, "timestamp": "2026-10-27T19:01:16.0",
@@ -47,7 +50,23 @@ DAY_SERIES = {"calendarDate": D, "startTimestampGMT": "2026-10-27T04:00:00.0",
 SLEEP = {"dailySleepDTO": {"calendarDate": D2, "sleepTimeSeconds": 28800,
                            "sleepStartTimestampGMT": 1793157433000, "sleepEndTimestampGMT": 1793186233000,
                            "sleepStartTimestampLocal": 1793143033000, "sleepEndTimestampLocal": 1793171833000,
-                           "sleepScores": {"overall": {"value": 80}}}}
+                           "sleepScores": {"overall": {"value": 80}},
+                           "sleepNeed": {"timestampGmt": "2026-10-27T19:01:16"},
+                           "dailyNapDTOS": [{"napStartTimestampGMT": "2026-10-28T17:58:51",
+                                             "napEndTimestampGMT": "2026-10-28T20:04:51",
+                                             "napStartTimeOffset": -240, "napEndTimeOffset": -240}]},
+         "sleepLevels": [{"startGMT": "2026-10-28T03:17:13.0", "endGMT": "2026-10-28T03:27:13.0"}]}
+# The daily summary payload behind get_user_summary / get_stats_and_body.
+DAILY_SUMMARY = {
+    "calendarDate": D, "totalDistanceMeters": 8000.0, "floorsAscendedInMeters": 30.0,
+    "wellnessStartTimeGmt": "2026-10-27T04:00:00.0", "wellnessStartTimeLocal": "2026-10-27T00:00:00.0",
+    "lastSyncTimestampGMT": "2026-10-28T21:18:19.470",
+    "latestRespirationTimeGMT": "2026-10-28T04:00:00.0",
+    "bodyBatteryDynamicFeedbackEvent": {"eventTimestampGmt": "2026-10-28T00:20:46"},
+    "bodyBatteryActivityEventList": [{
+        "eventType": "SLEEP", "eventStartTimeGmt": "2026-10-27T03:17:13", "timezoneOffset": -14400000,
+        "eventUpdateTimeGmt": "2026-10-27T11:30:00"}],
+}
 WEIGH_IN = {"calendarDate": D, "weight": 72000.0, "boneMass": 3000.0, "muscleMass": 33000.0,
             "date": EPOCH_LOCAL, "timestampGMT": EPOCH_GMT}
 
@@ -146,9 +165,8 @@ def _garmin_double():
     client.get_training_readiness.return_value = [READINESS]
     client.get_morning_training_readiness.return_value = READINESS
     client.get_stats.return_value = {"totalDistanceMeters": 8000.0, "totalSteps": 9000}
-    client.get_user_summary.return_value = {"totalDistanceMeters": 8000.0,
-                                            "floorsAscendedInMeters": 30.0}
-    client.get_stats_and_body.return_value = {"totalDistanceMeters": 8000.0, "weight": 72000.0}
+    client.get_user_summary.return_value = json.loads(json.dumps(DAILY_SUMMARY))
+    client.get_stats_and_body.return_value = {**json.loads(json.dumps(DAILY_SUMMARY)), "weight": 72000.0}
     client.get_daily_steps.return_value = [{"calendarDate": D, "totalSteps": 9000,
                                             "totalDistance": 8000.0}]
     client.get_weekly_steps.return_value = [{"calendarDate": D, "values": {
@@ -220,6 +238,13 @@ def _garmin_double():
     client.get_blood_pressure.return_value = {"measurementSummaries": []}
     client.get_lifestyle_logging_data.return_value = {"calendarDate": D, "dailyLogsReport": []}
     client.get_full_name.return_value = "Runner"
+    # Tools label Garmin's payloads in place, and several share a payload
+    # here: each call gets its own copy, so one tool's labels cannot cover
+    # for another's.
+    for child in list(client._mock_children.values()):
+        returned = getattr(child, "_mock_return_value", DEFAULT)
+        if returned is not DEFAULT and child.side_effect is None:
+            child.side_effect = (lambda value: lambda *a, **k: copy.deepcopy(value))(returned)
     return client
 
 

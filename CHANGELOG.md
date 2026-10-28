@@ -5,6 +5,38 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Local times beside Garmin's GMT times in the daily summary and splits — 2026-10-28
+
+`get_user_summary` and `get_stats_and_body` pass Garmin's daily summary
+through. Its GMT times came with no local time beside them, so a sleep at
+3:17 GMT read as 3:17 local instead of 11:17 PM the evening before:
+- the body battery event list (`eventStartTimeGmt`, `eventUpdateTimeGmt`)
+- the body battery feedback events (`eventTimestampGmt`)
+- `lastSyncTimestampGMT`
+- `latestRespirationTimeGMT`
+
+`get_body_battery_events` had this fixed already; these two tools did not.
+
+What each tool now adds:
+- **The daily summary tools.** A `*Local` sibling beside each of those times,
+  and the day's `utcOffsetHours`. Each event uses its own `timezoneOffset`;
+  the rest use the day's offset, from Garmin's
+  `wellnessStartTimeGmt`/`wellnessStartTimeLocal` pair.
+- **Typed splits and split summaries.** Garmin sends `startTimeGMT` with a
+  local time but `endTimeGMT` alone. Each split now also gets `endTimeLocal`,
+  at its own offset.
+- **The profile.** `firstbeat*TimeGmt` gains a `*TimeLocal` in the profile
+  zone.
+
+**The CI guard missed this.** It checked times only under the keys our code
+writes. Now, in Garmin's own payloads, a `*Gmt`/`*GMT` time needs a local
+time beside it or a `utcOffsetHours` above it. The sweep's payloads gained
+the audited GMT-only fields, and its stand-in returns a fresh copy per call.
+Tools label payloads in place, and a shared payload had let one tool's labels
+hide another's missing ones.
+
+Suite: 1678 passed.
+
 ## One sensor per strap: Garmin's sensor serial is per pairing — 2026-10-28
 
 `get_sensors` listed the athlete's one HRM 600 three times. It de-duplicated

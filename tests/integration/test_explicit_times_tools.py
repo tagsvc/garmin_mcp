@@ -507,3 +507,47 @@ def test_recovery_fallback_uses_the_athletes_today():
 
     assert data["source"] == "recent_activity"
     assert data["value_type"] == "estimate"
+
+
+# --- the daily summary payload ---------------------------------------------------
+
+DAILY = {
+    "calendarDate": "2026-10-27",
+    "wellnessStartTimeGmt": "2026-10-27T04:00:00.0", "wellnessStartTimeLocal": "2026-10-27T00:00:00.0",
+    "lastSyncTimestampGMT": "2026-10-28T21:18:19.470",
+    "bodyBatteryDynamicFeedbackEvent": {"eventTimestampGmt": "2026-10-28T00:20:46"},
+    "bodyBatteryActivityEventList": [{
+        "eventType": "SLEEP", "eventStartTimeGmt": "2026-10-28T03:17:13", "timezoneOffset": -14400000}],
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool, method", [("get_user_summary", "get_user_summary"),
+                                          ("get_stats_and_body", "get_stats_and_body")])
+async def test_daily_summary_gmt_times_get_local_times(app, mock_garmin_client, tool, method):
+    """The summary's body battery list printed sleep at 3:17 (GMT) with no
+    local time beside it: 11:17 PM the evening before."""
+    getattr(mock_garmin_client, method).return_value = json.loads(json.dumps(DAILY))
+
+    data = await _call(app, tool, {"date": "2026-10-27"})
+
+    event = data["bodyBatteryActivityEventList"][0]
+    assert event["eventStartTimeGmt"] == "2026-10-28T03:17:13"  # Garmin's, untouched
+    assert event["eventStartTimeLocal"] == "2026-10-27T23:17:13-04:00"
+    assert data["lastSyncTimestampLocal"] == "2026-10-28T17:18:19-04:00"
+    assert data["bodyBatteryDynamicFeedbackEvent"]["eventTimestampLocal"] == "2026-10-27T20:20:46-04:00"
+    assert data["utcOffsetHours"] == -4.0
+    assert data["wellnessStartTimeLocal"] == "2026-10-27T00:00:00.0"  # Garmin's local, kept
+
+
+@pytest.mark.asyncio
+async def test_split_end_times_get_the_splits_own_local_time(app, mock_garmin_client):
+    mock_garmin_client.get_activity_typed_splits.return_value = {"splits": [{
+        "startTimeGMT": "2026-10-27T18:37:26.0", "startTimeLocal": "2026-10-27T14:37:26.0",
+        "endTimeGMT": "2026-10-27T18:46:02.0", "type": "RWD_RUN"}]}
+
+    data = await _call(app, "get_activity_typed_splits", {"activity_id": 1})
+
+    split = data["splits"][0]
+    assert split["endTimeLocal"] == "2026-10-27T14:46:02-04:00"
+    assert split["startTimeLocal"] == "2026-10-27T14:37:26.0"  # Garmin's, not overwritten

@@ -176,3 +176,28 @@ def test_local_today_follows_the_profile_zone():
 
 def test_local_today_without_a_zone_is_the_servers_date():
     assert local_today(Mock()) == datetime.date.today()
+
+
+def test_add_local_siblings_uses_each_records_own_offset():
+    from garmin_mcp.times import add_local_siblings
+
+    payload = {
+        "lastSyncTimestampGMT": "2026-10-28T21:18:19.470",
+        "startTimestampGMT": "2026-10-27T04:00:00.0", "startTimestampLocal": "kept",
+        "events": [{"eventStartTimeGmt": "2026-10-28T03:17:13", "timezoneOffset": 3600000}],
+        "count": 3,
+    }
+    add_local_siblings(payload, MINUS_4)
+
+    assert payload["lastSyncTimestampLocal"] == "2026-10-28T17:18:19-04:00"
+    assert payload["startTimestampLocal"] == "kept"
+    # The event's own +1h, not the day's -4h.
+    assert payload["events"][0]["eventStartTimeLocal"] == "2026-10-28T04:17:13+01:00"
+    assert "countLocal" not in payload
+
+
+def test_add_local_siblings_without_an_offset_adds_nothing():
+    from garmin_mcp.times import add_local_siblings
+
+    payload = {"lastSyncTimestampGMT": "2026-10-28T21:18:19.470"}
+    assert add_local_siblings(payload, None) == {"lastSyncTimestampGMT": "2026-10-28T21:18:19.470"}
