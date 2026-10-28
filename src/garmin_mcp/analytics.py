@@ -19,6 +19,7 @@ from typing import Any
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client, get_user_id
+from garmin_mcp.times import local_today
 
 
 garmin_client = None
@@ -280,7 +281,9 @@ def register_tools(app):
 
 def _daily_rows(client: Any, end_date: str | None, days: int) -> list[dict[str, Any]]:
     safe_days = min(max(1, days), MAX_DAYS)
-    end = _parse_date(end_date) if end_date else dt.date.today()
+    # FORK: was the server's date -- UTC on Railway, so tomorrow from 8 PM in
+    # New York, a day with no data yet.
+    end = _parse_date(end_date) if end_date else local_today(client)
     start = end - dt.timedelta(days=safe_days - 1)
     activities_by_date = _activity_totals(client, start, end)
     rows: list[dict[str, Any]] = []

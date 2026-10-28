@@ -3,14 +3,24 @@ Weight management functions for Garmin Connect MCP Server
 """
 import json
 import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import profile_time_zone, put_times
 from garmin_mcp.units import account_unit_system, add_account_units
 
 # The garmin_client will be set by the main file
 garmin_client = None
+
+
+def _local_epoch(weigh_in: dict):
+    """A weigh-in's local pseudo-epoch ("date"), when Garmin sent one."""
+    value = weigh_in.get("date")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    return None
 
 
 def configure(client):
@@ -29,6 +39,9 @@ def register_tools(app):
         Weights are grams and kilograms as Garmin stores them. A US account
         also gets pounds beside each: weight_lb, bone_mass_lb, muscle_mass_lb
         and average_weight_lb.
+
+        Each weigh-in's time: timestamp_gmt, and timestamp_local with its own UTC
+        offset.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -69,8 +82,11 @@ def register_tools(app):
                     "bone_mass_grams": w.get("boneMass"),
                     "muscle_mass_grams": w.get("muscleMass"),
                     "source_type": w.get("sourceType"),
-                    "timestamp_gmt": w.get("timestampGMT"),
                 }
+                # FORK: timestamp_gmt was Garmin's bare epoch ms. Its "date"
+                # is a local pseudo-epoch (the wall clock written as UTC),
+                # which gives the weigh-in's own offset.
+                put_times(measurement, "timestamp", w.get("timestampGMT"), _local_epoch(w))
                 # Remove None values
                 measurement = {k: v for k, v in measurement.items() if v is not None}
                 curated["measurements"].append(measurement)
@@ -99,6 +115,9 @@ def register_tools(app):
         Weights are grams and kilograms as Garmin stores them. A US account
         also gets pounds beside each: weight_lb, bone_mass_lb, muscle_mass_lb
         and average_weight_lb.
+
+        Each weigh-in's time: timestamp_gmt, and timestamp_local with its own UTC
+        offset.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -130,8 +149,11 @@ def register_tools(app):
                     "bone_mass_grams": w.get("boneMass"),
                     "muscle_mass_grams": w.get("muscleMass"),
                     "source_type": w.get("sourceType"),
-                    "timestamp_gmt": w.get("timestampGMT"),
                 }
+                # FORK: timestamp_gmt was Garmin's bare epoch ms. Its "date"
+                # is a local pseudo-epoch (the wall clock written as UTC),
+                # which gives the weigh-in's own offset.
+                put_times(measurement, "timestamp", w.get("timestampGMT"), _local_epoch(w))
                 # Remove None values
                 measurement = {k: v for k, v in measurement.items() if v is not None}
                 curated["measurements"].append(measurement)
@@ -182,8 +204,8 @@ def register_tools(app):
                         "id": measurement.get("samplePk"),
                         "weight_kg": round(weight / 1000, 2) if weight is not None else None,
                         "source_type": measurement.get("sourceType"),
-                        "timestamp_gmt": measurement.get("timestampGMT"),
                     }
+                    put_times(item, "timestamp", measurement.get("timestampGMT"), _local_epoch(measurement))
                     preview.append({key: value for key, value in item.items() if value is not None})
                 return json.dumps({
                     "status": "needs_confirmation", "date": date,
@@ -272,8 +294,15 @@ def register_tools(app):
             if unit_key == "lb":
                 unit_key = "lbs"
             if not date_timestamp and not gmt_timestamp:
-                # Generate timestamps if not provided
-                now = datetime.datetime.now()
+                # Generate timestamps if not provided. FORK: "local" was the
+                # server's clock -- UTC on Railway -- so an evening weigh-in in
+                # New York was recorded on the next day. Local now comes from
+                # the profile's time zone.
+                zone = profile_time_zone(get_client(ctx))
+                now = (
+                    datetime.datetime.now(ZoneInfo(zone)) if zone
+                    else datetime.datetime.now().astimezone()
+                )
                 date_timestamp = now.strftime('%Y-%m-%dT%H:%M:%S')
                 gmt_timestamp = now.astimezone(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
             elif not date_timestamp:

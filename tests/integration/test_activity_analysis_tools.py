@@ -533,12 +533,94 @@ async def test_get_activity_fit_data_multisport_lists_every_session(
     assert [s["sport"] for s in data["sessions"]] == [
         "running", "transition", "cycling", "running"
     ]
-    assert data["sessions"][2]["start_time"] == "2024-06-01 08:11:00"
+    assert data["sessions"][2]["start_time_gmt"] == "2024-06-01T08:11:00Z"
     assert data["sessions"][2]["total_elapsed_time_s"] == 1200.0
     assert data["analyzed_session_index"] == 2
     assert data["session"]["sport"] == "cycling"
     assert data["session"]["avg_power_w"] == 200
     assert "leg 2 (cycling)" in data["analysis_note"]
+
+
+# The 2026-10-27 run: FIT times are UTC; the activity message carries the
+# watch's local_timestamp beside its UTC timestamp.
+_RUN_START_UTC = datetime.datetime(2026, 10, 27, 18, 37, 26)
+_RUN_END_UTC = datetime.datetime(2026, 10, 27, 19, 0, 47)
+
+
+def _evening_run_messages(start_utc, local_offset_hours=-4, with_activity=True):
+    messages = [
+        _make_mock_fit_message("lap", {"start_time": start_utc, "total_elapsed_time": 600.0}),
+        _make_mock_fit_message("session", {
+            "sport": "running", "start_time": start_utc, "total_elapsed_time": 1401.0,
+            "avg_power": 274,
+        }),
+    ]
+    if with_activity:
+        end = start_utc + datetime.timedelta(seconds=1401)
+        messages.append(_make_mock_fit_message("activity", {
+            "timestamp": end,
+            "local_timestamp": end + datetime.timedelta(hours=local_offset_hours),
+        }))
+    return messages
+
+
+@pytest.mark.asyncio
+async def test_fit_times_are_labelled_gmt_with_the_watch_local_time(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """FIT start times were bare UTC under the key the activity lists use for
+    local time, so the same run read 18:37 here and 14:37 there."""
+    data = await _call_fit_data(
+        app_with_activity_analysis, mock_garmin_client, _evening_run_messages(_RUN_START_UTC)
+    )
+
+    assert data["session"]["start_time_gmt"] == "2026-10-27T18:37:26Z"
+    assert data["session"]["start_time_local"] == "2026-10-27T14:37:26-04:00"
+    assert data["laps"][0]["start_time_local"] == "2026-10-27T14:37:26-04:00"
+    assert "start_time" not in data["session"] and "start_time" not in data["laps"][0]
+    assert data["utc_offset_hours"] == -4.0
+    assert "local_time_zone" not in data  # the watch's own offset, not the profile's
+
+
+@pytest.mark.asyncio
+async def test_fit_without_an_activity_offset_uses_the_profile_zone_and_says_so(
+    app_with_activity_analysis, mock_garmin_client
+):
+    mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
+
+    data = await _call_fit_data(
+        app_with_activity_analysis, mock_garmin_client,
+        _evening_run_messages(_RUN_START_UTC, with_activity=False),
+    )
+
+    assert data["session"]["start_time_local"] == "2026-10-27T14:37:26-04:00"
+    assert data["local_time_zone"] == "America/New_York"
+    assert "utc_offset_hours" not in data
+
+
+@pytest.mark.asyncio
+async def test_fit_weigh_in_lookup_uses_the_local_date_of_an_evening_run(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """A run at 9 PM in New York is 01:00 UTC the next day; the W/kg weigh-in
+    must be looked up by the local date."""
+    start = datetime.datetime(2026, 10, 28, 1, 0, 0)  # 2026-10-27 21:00 EDT
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = {"dateWeightList": [
+        {"calendarDate": "2026-10-27", "weight": 80000.0},
+        {"calendarDate": "2026-10-28", "weight": 79000.0},
+    ]}
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile(_evening_run_messages(start))
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+    data = json.loads(result[0][0].text)
+
+    assert data["session"]["start_time_local"] == "2026-10-27T21:00:00-04:00"
+    assert data["rider_weight_date"] == "2026-10-27"
+    assert data["rider_weight_kg"] == 80.0
+    assert mock_garmin_client.get_body_composition.call_args.args[1] == "2026-10-27"
 
 
 @pytest.mark.asyncio
@@ -2189,3 +2271,26 @@ async def test_get_activity_fit_data_without_weigh_ins_omits_w_per_kg(
     data = json.loads(result[0][0].text)
     assert "rider_weight_kg" not in data
     assert "avg_w_per_kg" not in data["session"]
+
+
+@pytest.mark.asyncio
+async def test_fit_sample_streams_name_their_timestamps_gmt(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Per-second records are UTC; their key says so, and utc_offset_hours
+    converts them."""
+    messages = [
+        _make_mock_fit_message("record", {"timestamp": _RUN_START_UTC, "heart_rate": 120}),
+    ] + _evening_run_messages(_RUN_START_UTC)
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = None
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile(messages)
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID, "include_records": True}
+        )
+    data = json.loads(result[0][0].text)
+
+    assert data["records"][0]["timestamp_gmt"] == "2026-10-27T18:37:26Z"
+    assert "timestamp" not in data["records"][0]
+    assert data["utc_offset_hours"] == -4.0

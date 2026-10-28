@@ -15,6 +15,7 @@ from garminconnect import (
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import put_times
 from garmin_mcp.units import (
     METERS_PER_FOOT,
     METERS_PER_MILE,
@@ -872,6 +873,9 @@ def register_tools(app):
     async def get_hrv_data(ctx: Context, date: str, return_timeseries: bool = False) -> str:
         """Get Heart Rate Variability (HRV) data
 
+        Sleep window and readings: sleep_start_gmt/_local, sleep_end_gmt/_local
+        and each reading's time_gmt/time_local, with the night's own UTC offset.
+
         Args:
             date: Date in YYYY-MM-DD format
             return_timeseries: If True, include detailed 5-minute HRV readings (can be large)
@@ -904,10 +908,15 @@ def register_tools(app):
                 # Status and feedback
                 "status": summary.get("status"),
                 "feedback": summary.get("feedbackPhrase"),
-                # Sleep window timestamps
-                "sleep_start": hrv_data.get("sleepStartTimestampLocal"),
-                "sleep_end": hrv_data.get("sleepEndTimestampLocal"),
             }
+            # FORK: were sleep_start/sleep_end, local time with no zone -- the
+            # names get_sleep_summary used for GMT epochs. The GMT/local pair
+            # gives the offset.
+            for stem, key in (("sleep_start", "sleepStart"), ("sleep_end", "sleepEnd")):
+                put_times(
+                    curated, stem,
+                    hrv_data.get(f"{key}TimestampGMT"), hrv_data.get(f"{key}TimestampLocal"),
+                )
 
             # Optionally include the detailed HRV readings timeseries
             if return_timeseries:
@@ -915,13 +924,13 @@ def register_tools(app):
                     reading for reading in (hrv_data.get("hrvReadings") or [])
                     if isinstance(reading, dict)
                 ]
-                curated["hrv_readings"] = [
-                    {
-                        "time": r.get("readingTimeLocal"),
-                        "hrv_ms": r.get("hrvValue"),
-                    }
-                    for r in readings
-                ]
+                curated["hrv_readings"] = []
+                for r in readings:
+                    reading: Dict[str, Any] = {}
+                    # FORK: was "time", local with no zone.
+                    put_times(reading, "time", r.get("readingTimeGMT"), r.get("readingTimeLocal"))
+                    reading["hrv_ms"] = r.get("hrvValue")
+                    curated["hrv_readings"].append(reading)
                 curated["readings_count"] = len(readings)
 
             # Remove None values
