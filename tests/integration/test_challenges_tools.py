@@ -190,10 +190,10 @@ async def test_personal_record_types_10_and_16_are_power_and_weeks(
     Type 16 is a weekly streak, counted in weeks."""
     mock_garmin_client.get_personal_record.return_value = [
         {"typeId": 10, "value": 177.191666666667, "activityId": 1,
-         "prStartTimeLocalFormatted": "2014-09-07 09:00:00"},
-        {"typeId": 16, "value": 7.0, "prStartTimeLocalFormatted": "2026-10-27 00:00:00"},
+         "prStartTimeLocalFormatted": "2014-09-07T09:00:00.0"},
+        {"typeId": 16, "value": 7.0, "prStartTimeLocalFormatted": "2026-10-27T00:00:00.0"},
         {"typeId": 11, "value": 4713.0390625, "activityId": 2,
-         "prStartTimeLocalFormatted": "2013-10-06 09:00:00"},
+         "prStartTimeLocalFormatted": "2013-10-06T09:00:00.0"},
     ]
 
     data = json.loads((await app_with_challenges.call_tool("get_personal_record", {}))[0][0].text)

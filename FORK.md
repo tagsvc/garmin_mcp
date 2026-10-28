@@ -231,6 +231,22 @@ coverage.
   database. _On merge:_ keep the `_gmt`/`_local` names and do not reintroduce
   a bare time key or a server-clock "today". Pinned by `test_times.py` and
   `test_explicit_times_tools.py`.
+- **The units/times contract is CI-enforced.** `tests/units_times_contract.py`
+  holds the rules' checker and their one exceptions list, each with its reason.
+  Three tests keep the audit's findings from coming back:
+  - `tests/conftest.py` checks every tool call the suite makes for a
+    statute_us account. Each metric field must carry the companion the
+    converter would add, and each curated time must name its zone.
+  - `test_units_times_sweep.py` calls every read-only remote tool once,
+    against payloads shaped like the live ones. A new read-only tool must be
+    added to its table.
+  - `test_units_times_contract.py` scans the tool modules' source for
+    time-like keys with no `_gmt`/`_local`, catching code no test reaches.
+
+  Reintroducing a bare `start_time`, an unwrapped tool, a server-clock
+  timestamp or a bare sleep epoch each fails these tests (checked
+  2026-10-28). _On merge:_ fix a contract failure; do not widen the
+  exceptions without a reason recorded beside it.
 - **The fitnessstats endpoint is not in its documented units.** Behind
   `get_progress_summary_between_dates`, Garmin sends distance and elevation
   gain in centimeters, durations in milliseconds and calories pre-scaled by
@@ -499,7 +515,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1660 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1670 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

@@ -3,6 +3,7 @@ Challenges and badges functions for Garmin Connect MCP Server
 """
 
 import json
+import re
 import datetime
 from typing import Any, Dict, List, Optional, Union
 
@@ -142,8 +143,11 @@ def _parse_iso_date(iso_string: str) -> str:
     """Extract just the date part from an ISO datetime string"""
     if not iso_string:
         return None
-    # Handle formats like "2024-03-31T18:55:47.534" or "2024-03-31T18:55:47.0"
-    return iso_string.split("T")[0] if "T" in iso_string else iso_string
+    # Handle formats like "2024-03-31T18:55:47.534" or "2024-03-31T18:55:47.0",
+    # and the space-separated "2024-03-31 18:55:47" some payloads use.
+    if re.match(r"\d{4}-\d{2}-\d{2}([T ]|$)", iso_string):
+        return iso_string[:10]
+    return iso_string
 
 
 def _first_non_none(data: dict, *keys: str) -> Any:

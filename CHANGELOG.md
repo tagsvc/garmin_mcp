@@ -5,6 +5,46 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## CI guard for account units and explicit times — 2026-10-28
+
+The fourth PR from the read-only audit. It keeps that audit's findings from
+coming back.
+
+- **`tests/units_times_contract.py`** holds the contract's checker and its one
+  list of exceptions, each with its reason. On a statute_us account, every
+  metric field must carry the companion the converter would add. The
+  converter's own rules decide, so the two cannot drift apart. Every curated
+  time, as ISO text or an epoch, must name its zone.
+- **`tests/conftest.py`** runs the checker on every tool call the suite makes
+  for a US account.
+- **`test_units_times_sweep.py`** calls every read-only remote tool once.
+  - It uses a Garmin stand-in whose payloads have the audited keys and
+    synthetic values; no athlete data is stored.
+  - It fails if a read-only tool is missing from its table.
+  - It fails if a tool expected to return data falls back to text, which
+    would let the check pass vacuously.
+- **`test_units_times_contract.py`** scans the tool modules' source for
+  time-like keys without `_gmt`/`_local`, so a bare `start_time` cannot return
+  even in code no test reaches.
+
+As a check, five of the audit's bugs were reintroduced one at a time: body
+battery's bare `start_time`, unwrapped `get_stats`, unwrapped typed splits,
+the server-clock device upload time and the bare sleep epoch. The guard
+alone caught each.
+
+**Found by the guard and fixed:**
+- **Decimal hours.** `recovery_time_hours` (readiness), `remaining_hours`
+  (recovery) and `sleep_hours` (sleep summaries) now carry h:mm text, so
+  10.2 h reads 10:12, not 10:20.
+- **Personal-record dates.** A personal record's `date` no longer passes a
+  space-separated timestamp through whole.
+
+**Exceptions:** the five fields whose zone is not established, plus
+`last_sync_time` (never seen in a live payload) and FTP's `calendar_date`
+stamp, now each listed with its reason.
+
+Suite: 1670 passed.
+
 ## Account units for the remaining tools; skin temperature named a deviation — 2026-10-28
 
 The third PR from the read-only audit. It extends the account-unit companions
