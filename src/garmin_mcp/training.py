@@ -2067,6 +2067,8 @@ def register_tools(app):
 
         VO2 max is not returned here; use get_training_status or get_vo2max_trend.
 
+        Altitudes in meters get *_feet companions on a statute account.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -2109,6 +2111,6 @@ def register_tools(app):
         if isinstance(heat, (int, float)) and isinstance(prev, (int, float)):
             result["heat_acclimation_change"] = round(heat - prev, 1)
 
-        return json.dumps(result, indent=2)
+        return json.dumps(add_account_units(result, account_unit_system(garmin_client)), indent=2)
 
     return app

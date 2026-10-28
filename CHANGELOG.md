@@ -5,6 +5,82 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Account units for the remaining tools; skin temperature named a deviation — 2026-10-28
+
+The third PR from the read-only audit. It extends the account-unit companions
+from 2026-10-28 to the tools the first pass did not cover.
+
+**New rules** (`units.py`):
+- **Temperatures.**
+  - **Fahrenheit for US accounts only.** The watch's sensor sends °C under
+    keys that don't say so: typed splits showed `averageTemperature: 25` on a
+    63 °F day. A US account now gets `averageTemperatureFahrenheit: 77.0`, and
+    the curated `*_temp_c` fields get `*_temp_f`.
+  - **Differences.** A range or deviation converts by ×1.8 with no +32.
+  - **Other accounts.** Statute UK and metric keep Celsius.
+- **Centimeters.** Stride length and vertical oscillation get inches on
+  statute accounts.
+- **Raw meter keys.**
+  - `totalDistanceMeters` → `totalDistanceMiles`
+  - `maximumMeters` → `maximumMiles`
+  - `floorsAscendedInMeters` → `floorsAscendedFeet`
+- **Decimal hours** get h:mm text (`_hm`).
+- **Grams under raw keys.**
+  - **Pounds only where verified.** `add_gram_masses` adds pounds for
+    payloads known to hold grams. Garmin uses `weight` for grams in body
+    composition and for kilograms in the FTP payload, so the key name alone
+    never decides.
+
+**Now covered:**
+- **Health:**
+  - `get_stats`, `get_daily_steps`, `get_weekly_steps` and `get_user_summary`:
+    distance and floors.
+  - `get_stats_and_body` and `get_body_composition`: weight, bone and muscle
+    mass in grams → `*Lb`.
+  - `get_hydration_data`: `*InFlOz`, only when the profile's own hydration
+    unit is not milliliters. The athlete's US account logs water in ml.
+  - `get_energy_balance`: kg changes → lb.
+  - `get_acclimation`: altitudes → feet.
+- **Activities:**
+  - `get_activity_fit_data`: all metric fields.
+  - `get_activity_gear`: maximum distance.
+  - `get_activity_exercise_sets`: set weights from grams → `weightKg`/`weightLb`.
+  - `get_activity` and the raw splits: stride and oscillation in inches,
+    watch temperature in °F.
+- **Profile and nutrition:**
+  - `get_user_profile`:
+    - weight in grams → `weightLb`;
+    - height in cm → `heightInches` and `heightFeetInches`;
+    - `lactateThresholdSpeed`, which is m/s ÷ 10, → `lactateThresholdSpeedMps`
+      and its pace;
+    - `firstbeat*Timestamp`, in seconds since FIT's 1989 epoch (read as Unix
+      time it lands in 2006) → `firstbeat*TimeGmt`.
+  - `get_nutrition_daily_settings`: weight targets in grams → `*Lb`.
+- **Records and challenges:**
+  - `get_personal_record`: distance and elevation records gain
+    `distance_meters`/`elevation_meters` with companions. Pool swims are
+    excluded.
+  - Badge challenges: distance and elevation badges gain
+    `progress`/`target_distance_meters` with companions.
+  - Virtual challenges: `progress_miles`/`target_miles`.
+  - `get_goals`: distances.
+- **Calendar and workouts:** `get_calendar_events`, `get_workouts`,
+  `get_scheduled_workouts` and the Garmin Coach workout list:
+  distances/estimated distances.
+- **Analytics:** baselines, anomalies and custom reports gain h:mm beside
+  decimal hours (6.37 h is 6:22, not 6:37).
+
+**Renamed:** skin temperature is a deviation from the baseline, so
+`skin_temperature_celsius` → `skin_temperature_deviation_celsius`, and
+Garmin's `skin_temp_f` (its type name passed through) →
+`skin_temperature_deviation_fahrenheit`.
+
+Also: the profile settings are read once per Garmin session for both the
+time zone and the hydration unit (`profile_settings.py`).
+
+Tests: `test_more_account_units_tools.py` and new cases in `test_units.py`.
+Each of the deliberate breakages was caught. Suite: 1660 passed.
+
 ## Times name their zone; local from the record, then the profile — 2026-10-28
 
 The read-only audit found 27 tools returning times with no zone, and the

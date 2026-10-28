@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Union
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.profile_settings import profile_settings
+from garmin_mcp.units import account_unit_system, add_account_units, add_gram_masses
 from garmin_mcp.times import (
     gmt_iso,
     local_from_offset,
@@ -677,13 +679,37 @@ def _label_steps(steps: Any, client: Any) -> Any:
     return steps
 
 
-def _label_body_composition(payload: Any) -> Any:
-    """Weigh-ins: ISO times beside Garmin's epochs. `date` is a local
-    pseudo-epoch (the wall clock as UTC); `timestampGMT` a real one."""
+# Bare grams in the body-composition payloads (79900.0 for 79.9 kg).
+_GRAM_MASS_KEYS = ("weight", "boneMass", "muscleMass")
+
+
+_ML_PER_FL_OZ = 29.5735
+
+
+def _label_hydration(payload: Any, client: Any) -> Any:
+    """Fluid ounces beside Garmin's *InML values, when the profile's own
+    hydration unit is not milliliters (a setting separate from the
+    measurement system: a US account can log water in ml)."""
+    unit = profile_settings(client).get("hydrationMeasurementUnit")
+    if not isinstance(payload, dict) or unit in (None, "milliliter"):
+        return payload
+    for key, value in list(payload.items()):
+        if key.endswith("InML") and isinstance(value, (int, float)) and not isinstance(value, bool):
+            payload[f"{key[:-4]}InFlOz"] = round(value / _ML_PER_FL_OZ, 1)
+    return payload
+
+
+def _label_body_composition(payload: Any, unit_system: Optional[str] = None) -> Any:
+    """Weigh-ins: ISO times beside Garmin's epochs, and pounds beside its
+    grams. `date` is a local pseudo-epoch (the wall clock as UTC);
+    `timestampGMT` a real one."""
+    if isinstance(payload, dict):
+        add_gram_masses(payload.get("totalAverage"), _GRAM_MASS_KEYS, unit_system)
     entries = payload.get("dateWeightList") if isinstance(payload, dict) else None
     for entry in entries if isinstance(entries, list) else []:
         if not isinstance(entry, dict):
             continue
+        add_gram_masses(entry, _GRAM_MASS_KEYS, unit_system)
         local = entry.get("date")
         labelled: Dict[str, Any] = {}
         put_times(
@@ -711,6 +737,8 @@ def register_tools(app):
         not true basal metabolic rate. For the current date, all calorie and
         duration fields are a partial-day accumulator (elapsed hours so far),
         not a full-day total.
+
+        distance_meters gets distance_miles (statute) or distance_km (metric).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -778,7 +806,9 @@ def register_tools(app):
             # Remove None values for cleaner output
             summary = {k: v for k, v in summary.items() if v is not None}
 
-            return json.dumps(summary, indent=2)
+            return json.dumps(
+                add_account_units(summary, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving stats: {str(e)}"
 
@@ -954,6 +984,8 @@ def register_tools(app):
         whatever body composition data exists, but omits the derived TDEE.
 
         Maximum range: 61 days per call.
+
+        Weight changes in kg get *_lb companions on a US account.
 
         Args:
             start_date: Start date in YYYY-MM-DD format
@@ -1150,11 +1182,14 @@ def register_tools(app):
         if intake_days_included == 0 and expenditure_days_included == 0 and not readings:
             return f"No usable data found between {start_date} and {end_date}."
 
-        return json.dumps(result, indent=2)
+        return json.dumps(add_account_units(result, account_unit_system(garmin_client)), indent=2)
 
     @app.tool()
     async def get_user_summary(ctx: Context, date: str) -> str:
         """Get user summary data (compatible with garminconnect-ha)
+
+        totalDistanceMeters gets totalDistanceMiles (statute) or totalDistanceKm;
+        floorsAscendedInMeters/floorsDescendedInMeters get *Feet (statute).
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1164,7 +1199,9 @@ def register_tools(app):
             if not summary:
                 return f"No user summary found for {date}"
 
-            return json.dumps(summary, indent=2)
+            return json.dumps(
+                add_account_units(summary, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving user summary: {str(e)}"
 
@@ -1175,6 +1212,9 @@ def register_tools(app):
         Each weigh-in also gets measuredAtGmt and measuredAtLocal (ISO). Garmin's
         `date` is a local pseudo-epoch (the wall clock written as UTC) and
         `timestampGMT` a real epoch; weights are grams.
+
+        weight, boneMass and muscleMass are grams; a US account also gets
+        weightLb, boneMassLb and muscleMassLb.
 
         Args:
             start_date: Date in YYYY-MM-DD format or start date if end_date provided
@@ -1190,13 +1230,19 @@ def register_tools(app):
                 if not composition:
                     return f"No body composition data found for {start_date}"
 
-            return json.dumps(_label_body_composition(composition), indent=2)
+            return json.dumps(
+                _label_body_composition(composition, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving body composition data: {str(e)}"
 
     @app.tool()
     async def get_stats_and_body(ctx: Context, date: str) -> str:
         """Get stats and body composition data
+
+        Distance and floor heights get account-unit companions as in
+        get_user_summary; weight, boneMass and muscleMass are grams and get *Lb on
+        a US account.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1206,7 +1252,9 @@ def register_tools(app):
             if not data:
                 return f"No stats and body composition data found for {date}"
 
-            return json.dumps(data, indent=2)
+            unit_system = account_unit_system(get_client(ctx))
+            add_gram_masses(data, _GRAM_MASS_KEYS, unit_system)
+            return json.dumps(add_account_units(data, unit_system), indent=2)
         except Exception as e:
             return f"Error retrieving stats and body composition data: {str(e)}"
 
@@ -1236,6 +1284,9 @@ def register_tools(app):
     async def get_daily_steps(ctx: Context, start_date: str, end_date: str) -> str:
         """Get steps data for a date range
 
+        Each day's totalDistance (meters) gets totalDistanceMiles (statute) or
+        totalDistanceKm (metric).
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
@@ -1245,7 +1296,9 @@ def register_tools(app):
             if not steps_data:
                 return f"No daily steps data found between {start_date} and {end_date}"
 
-            return json.dumps(steps_data, indent=2)
+            return json.dumps(
+                add_account_units(steps_data, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving daily steps data: {str(e)}"
 
@@ -1471,6 +1524,10 @@ def register_tools(app):
     async def get_hydration_data(ctx: Context, date: str) -> str:
         """Get hydration data
 
+        Volumes are milliliters (*InML). When the Garmin profile's hydration unit
+        is not milliliters, each also gets *InFlOz. The hydration unit is its own
+        setting, separate from the measurement system.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1479,7 +1536,7 @@ def register_tools(app):
             if not hydration_data:
                 return f"No hydration data found for {date}"
 
-            return json.dumps(hydration_data, indent=2)
+            return json.dumps(_label_hydration(hydration_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving hydration data: {str(e)}"
 
@@ -1834,6 +1891,8 @@ def register_tools(app):
 
         Returns weekly step totals for the specified number of weeks ending at end_date.
 
+        Distances in meters get *_miles (statute) or *_km (metric) companions.
+
         Args:
             end_date: End date in YYYY-MM-DD format
             weeks: Number of weeks to fetch (default 4, max 52)
@@ -1864,12 +1923,15 @@ def register_tools(app):
             curated_weeks.sort(key=lambda x: x.get("week_start") or "", reverse=True)
 
             return json.dumps(
-                {
-                    "end_date": end_date,
-                    "weeks_requested": weeks,
-                    "weeks_returned": len(curated_weeks),
-                    "weekly_data": curated_weeks,
-                },
+                add_account_units(
+                    {
+                        "end_date": end_date,
+                        "weeks_requested": weeks,
+                        "weeks_returned": len(curated_weeks),
+                        "weekly_data": curated_weeks,
+                    },
+                    account_unit_system(get_client(ctx)),
+                ),
                 indent=2,
             )
         except Exception as e:
@@ -2011,7 +2073,9 @@ def register_tools(app):
         - Heart Rate Variability (HRV) in ms
         - Respiration rate in breaths per minute
         - Resting Heart Rate in bpm
-        - Skin Temperature deviation in degrees Celsius
+        - Skin temperature: the deviation from your baseline (not a body
+          temperature), in both degrees Celsius and Fahrenheit as Garmin sends
+          them (skin_temperature_deviation_celsius / _fahrenheit)
         - Pulse Oximeter (SpO2) percentage
 
         Each metric includes the measured value, your normal baseline range,
@@ -2033,7 +2097,10 @@ def register_tools(app):
                 "HRV": "heart_rate_variability_ms",
                 "HR": "heart_rate_bpm",
                 "SPO2": "pulse_oximeter_percent",
-                "SKIN_TEMP_C": "skin_temperature_celsius",
+                # FORK: both are deviations from the athlete's baseline, not
+                # temperatures; Garmin sends each unit itself.
+                "SKIN_TEMP_C": "skin_temperature_deviation_celsius",
+                "SKIN_TEMP_F": "skin_temperature_deviation_fahrenheit",
                 "RESPIRATION": "respiration_brpm",
             }
 
@@ -2087,7 +2154,10 @@ def register_tools(app):
                 "HRV": "heart_rate_variability_ms",
                 "HR": "heart_rate_bpm",
                 "SPO2": "pulse_oximeter_percent",
-                "SKIN_TEMP_C": "skin_temperature_celsius",
+                # FORK: both are deviations from the athlete's baseline, not
+                # temperatures; Garmin sends each unit itself.
+                "SKIN_TEMP_C": "skin_temperature_deviation_celsius",
+                "SKIN_TEMP_F": "skin_temperature_deviation_fahrenheit",
                 "RESPIRATION": "respiration_brpm",
             }
 

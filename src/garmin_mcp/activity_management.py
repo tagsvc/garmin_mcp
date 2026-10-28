@@ -108,6 +108,24 @@ def _activity_preview(client: Any, activity_id: int) -> Dict[str, Any]:
     return {key: value for key, value in preview.items() if value is not None}
 
 
+def _label_set_weights(payload: Any, unit_system: Optional[str]) -> Any:
+    """Kilograms (and pounds on a US account) beside each set's weight.
+
+    FORK: Garmin's exercise-set `weight` is bare grams, with -1 or null for
+    an unweighted set -- the same convention the write path sends.
+    """
+    sets = payload.get("exerciseSets") if isinstance(payload, dict) else None
+    for exercise_set in sets if isinstance(sets, list) else []:
+        if not isinstance(exercise_set, dict):
+            continue
+        grams = exercise_set.get("weight")
+        if isinstance(grams, (int, float)) and not isinstance(grams, bool) and grams > 0:
+            exercise_set["weightKg"] = round(grams / 1000, 2)
+            if unit_system == "statute_us":
+                exercise_set["weightLb"] = round(grams / 1000 / 0.45359237, 1)
+    return payload
+
+
 def _put_activity_update(activity_id: int, payload: Dict[str, Any]) -> Any:
     """Send a partial activity update via PUT to the activity-service endpoint.
 
@@ -843,6 +861,11 @@ def register_tools(app):
         account; distanceKm and averagePacePerKm for a metric one. Quote the
         companion; do not convert.
 
+        The watch's temperature (averageTemperature etc.) is degrees Celsius;
+        a US account also gets averageTemperatureFahrenheit. strideLength and
+        verticalOscillation are centimeters (avgStepLength is meters); statute
+        accounts also get *Inches.
+
         Args:
             activity_id: ID of the activity to retrieve typed splits for
         """
@@ -873,6 +896,9 @@ def register_tools(app):
         averagePacePerMile, averageSpeedMph and elevationGainFeet for a US
         account; distanceKm and averagePacePerKm for a metric one. Quote the
         companion; do not convert.
+
+        Temperatures are degrees Celsius (US account: *Fahrenheit beside them);
+        strideLength and verticalOscillation are centimeters (statute: *Inches).
 
         Args:
             activity_id: ID of the activity to retrieve split summaries for
@@ -1031,6 +1057,8 @@ def register_tools(app):
     async def get_activity_gear(ctx: Context, activity_id: Union[int, str]) -> str:
         """Get gear data used for an activity
 
+        maximumMeters gets maximumMiles (statute) or maximumKm (metric).
+
         Args:
             activity_id: ID of the activity to retrieve gear data for
         """
@@ -1040,13 +1068,18 @@ def register_tools(app):
             if not gear:
                 return f"No gear data found for activity with ID {activity_id}"
 
-            return json.dumps(gear, indent=2)
+            return json.dumps(
+                add_account_units(gear, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving activity gear data: {str(e)}"
 
     @app.tool()
     async def get_activity_exercise_sets(ctx: Context, activity_id: Union[int, str]) -> str:
         """Get exercise sets for strength training activities
+
+        Garmin's set `weight` is grams (-1 or null when unweighted); each
+        weighted set also gets weightKg, and weightLb on a US account.
 
         Args:
             activity_id: ID of the activity to retrieve exercise sets for
@@ -1057,7 +1090,9 @@ def register_tools(app):
             if not exercise_sets:
                 return f"No exercise sets found for activity with ID {activity_id}"
 
-            return json.dumps(exercise_sets, indent=2)
+            return json.dumps(
+                _label_set_weights(exercise_sets, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving activity exercise sets: {str(e)}"
 

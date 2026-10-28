@@ -33,6 +33,7 @@ from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client, is_remote_mode
 from garmin_mcp.times import gmt_iso, offset_from_pair, profile_time_zone, put_times
+from garmin_mcp.units import account_unit_system, add_account_units
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -1978,6 +1979,11 @@ def register_tools(app):
         offset (utc_offset_hours) or, failing that, the profile zone named in
         local_time_zone. Per-sample streams carry timestamp_gmt.
 
+        Metric fields get companions in the account's units (total_distance_m ->
+        total_distance_miles, *_speed_mps -> pace and mph, *_m ascent -> feet,
+        rider_weight_kg -> lb, *_temp_c -> *_temp_f on a US account; a
+        temperature range converts x1.8 without +32).
+
         Args:
             activity_id: Garmin activity ID
             include_records: Include full per-second time series (default False).
@@ -2049,7 +2055,11 @@ def register_tools(app):
                         if climb_w:
                             climb["avg_w_per_kg"] = round(climb_w / weight_kg, 2)
 
-            return json.dumps(parsed, indent=2, default=str)
+            return json.dumps(
+                add_account_units(parsed, account_unit_system(get_client(ctx))),
+                indent=2,
+                default=str,
+            )
 
         except Exception as e:
             return f"Error downloading FIT data for activity {activity_id}: {str(e)}"

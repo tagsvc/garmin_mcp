@@ -8,6 +8,14 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import gmt_iso
+from garmin_mcp.units import (
+    METERS_PER_MILE,
+    account_unit_system,
+    add_gram_masses,
+    is_imperial,
+    pace,
+)
 from .write_errors import WriteTracker
 
 # The garmin_client will be set by the main file
@@ -109,6 +117,46 @@ def _get_heart_rate_zone_configs() -> List[Dict[str, Any]]:
     return zones
 
 
+# FIT's epoch, 1989-12-31T00:00:00Z, as Unix seconds.
+_FIT_EPOCH_UNIX = 631065600
+
+
+def _label_profile(profile: Any, unit_system: Optional[str]) -> Any:
+    """Readable companions for the profile payload's unlabelled units.
+
+    FORK: Garmin's userData holds weight in grams (79900.0), height in
+    centimeters, the lactate threshold speed in m/s divided by 10 (0.2694,
+    which read as m/s is a 99 min/mile pace) and its firstbeat*Timestamp
+    dates in seconds since FIT's 1989 epoch (read as Unix time, 2006).
+    """
+    data = profile.get("userData") if isinstance(profile, dict) else None
+    if not isinstance(data, dict):
+        return profile
+    add_gram_masses(data, ("weight",), unit_system)
+    height = data.get("height")
+    if is_imperial(unit_system) and isinstance(height, (int, float)) and height > 0:
+        inches = height / 2.54
+        data["heightInches"] = round(inches, 1)
+        feet, rest = divmod(round(inches), 12)
+        data["heightFeetInches"] = f"{feet}'{rest}\""
+    speed = data.get("lactateThresholdSpeed")
+    if isinstance(speed, (int, float)) and not isinstance(speed, bool) and speed > 0:
+        mps = round(speed * 10, 4)
+        data["lactateThresholdSpeedMps"] = mps
+        unit_meters, name = (
+            (METERS_PER_MILE, "PerMile") if is_imperial(unit_system) else (1000.0, "PerKm")
+        )
+        data[f"lactateThresholdPace{name}"] = pace(mps, unit_meters)
+    for key in list(data):
+        value = data[key]
+        if (
+            key.startswith("firstbeat") and key.endswith("Timestamp")
+            and isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+        ):
+            data[f"{key[:-len('Timestamp')]}TimeGmt"] = gmt_iso((value + _FIT_EPOCH_UNIX) * 1000)
+    return profile
+
+
 def configure(client):
     """Configure the module with the Garmin client instance"""
     global garmin_client
@@ -138,12 +186,22 @@ def register_tools(app):
 
     @app.tool()
     async def get_user_profile(ctx: Context) -> str:
-        """Get user profile information"""
+        """Get user profile information
+
+        Garmin's userData units are added beside them: weight is grams (weightLb
+        on a US account), height is centimeters (heightInches and
+        heightFeetInches on a statute account), lactateThresholdSpeed is m/s
+        divided by 10 (lactateThresholdSpeedMps and its pace are added), and
+        firstbeat*Timestamp values count seconds from FIT's 1989 epoch
+        (firstbeat*TimeGmt gives the date).
+        """
         try:
             profile = get_client(ctx).get_user_profile()
             if not profile:
                 return "No user profile information found."
-            return json.dumps(profile, indent=2)
+            return json.dumps(
+                _label_profile(profile, account_unit_system(get_client(ctx))), indent=2
+            )
         except Exception as e:
             return f"Error retrieving user profile: {str(e)}"
 

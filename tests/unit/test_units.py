@@ -298,3 +298,83 @@ def test_account_unit_system():
 
     # A bare Mock, as most tool tests pass, must read as unknown.
     assert account_unit_system(Mock()) is None
+
+
+# --- temperatures, centimeters, raw meter keys, hours, grams -----------------
+
+from garmin_mcp.units import add_gram_masses, format_hours  # noqa: E402
+
+
+def test_temperatures_get_fahrenheit_on_a_us_account_only():
+    data = {"avg_temp_c": 25.0, "temperature_c": -3.0, "averageTemperature": 25.0}
+    assert add_account_units(data, "statute_us") == {
+        "avg_temp_c": 25.0, "avg_temp_f": 77.0,
+        "temperature_c": -3.0, "temperature_f": 26.6,
+        "averageTemperature": 25.0, "averageTemperatureFahrenheit": 77.0,
+    }
+    for unit_system in ("statute_uk", "metric"):
+        assert add_account_units(data, unit_system) == data
+
+
+@pytest.mark.parametrize("key", ["temp_range_c", "temp_change_c", "temp_drift_c", "temp_deviation_celsius"])
+def test_temperature_differences_convert_without_the_offset(key):
+    out = add_account_units({key: 6.0}, "statute_us")
+    assert list(out.values())[1] == 10.8
+
+
+def test_a_c_suffix_without_temp_in_the_name_is_not_a_temperature():
+    assert add_account_units({"magic_c": 1.0}, "statute_us") == {"magic_c": 1.0}
+
+
+def test_centimeters_get_inches_on_statute_accounts():
+    data = {"avg_stride_length_cm": 78.54, "strideLength": 72.0, "verticalOscillation": 8.05}
+    us = add_account_units(data, "statute_us")
+    assert us["avg_stride_length_in"] == 30.9
+    assert us["strideLengthInches"] == 28.3
+    assert us["verticalOscillationInches"] == 3.2
+    assert add_account_units(data, "statute_uk")["avg_stride_length_in"] == 30.9
+    assert add_account_units(data, "metric") == data
+
+
+def test_raw_meter_keys_drop_their_unit_word():
+    out = add_account_units(
+        {"totalDistanceMeters": 8046.72, "maximumMeters": 804672.0,
+         "floorsAscendedInMeters": 30.48, "floorsDescendedInMeters": 3.048},
+        "statute_us",
+    )
+    assert out["totalDistanceMiles"] == 5.0
+    assert out["maximumMiles"] == 500.0
+    assert out["floorsAscendedFeet"] == 100
+    assert out["floorsDescendedFeet"] == 10
+    assert add_account_units({"totalDistanceMeters": 8046.72}, "metric")["totalDistanceKm"] == 8.05
+
+
+@pytest.mark.parametrize(
+    "hours, text", [(6.37, "6:22"), (7.5, "7:30"), (0.0, "0:00"), (45.2, "45:12"), (-0.5, "-0:30"),
+                    (0.9999, "1:00")],
+)
+def test_format_hours(hours, text):
+    assert format_hours(hours) == text
+
+
+def test_hours_keys_get_hm_text():
+    assert add_account_units({"sleep_hours": 6.37}, "metric") == {"sleep_hours": 6.37, "sleep_hm": "6:22"}
+
+
+def test_add_gram_masses_is_us_only_and_skips_empty_values():
+    payload = {"weight": 79900.0, "boneMass": -1, "muscleMass": None}
+    add_gram_masses(payload, ("weight", "boneMass", "muscleMass"), "statute_us")
+    assert payload == {"weight": 79900.0, "weightLb": 176.1, "boneMass": -1, "muscleMass": None}
+
+    payload = {"weight": 79900.0}
+    for unit_system in ("statute_uk", "metric", None):
+        add_gram_masses(payload, ("weight",), unit_system)
+    assert payload == {"weight": 79900.0}
+
+    payload = {"weight": 79900.0, "weightLb": "kept"}
+    add_gram_masses(payload, ("weight",), "statute_us")
+    assert payload["weightLb"] == "kept"
+
+
+def test_add_gram_masses_ignores_non_dicts():
+    assert add_gram_masses(None, ("weight",), "statute_us") is None

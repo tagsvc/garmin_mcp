@@ -7,11 +7,13 @@ those metric fields exactly as they were and add a converted companion beside
 each one, in the account's own units, so a reader can quote miles or a
 min/mile pace instead of converting (and converting wrongly).
 
-A ``statute_us`` account gets miles, feet, mph, min/mile pace and pounds. A
-``metric`` account gets km, km/h and min/km pace; its elevation and weight are
-already in its units. ``statute_uk`` gets miles, feet, mph and min/mile pace
-but keeps kilograms, since this module does not guess between pounds and
-stone. An unknown unit system adds nothing, so the output is what it was
+A ``statute_us`` account gets miles, feet, mph, min/mile pace, pounds,
+inches and degrees Fahrenheit. A ``metric`` account gets km, km/h and min/km
+pace; its elevation, weight and temperature are already in its units.
+``statute_uk`` gets miles, feet, mph, min/mile pace and inches but keeps
+kilograms and Celsius, since this module does not guess between pounds and
+stone. Temperature differences (a range, a deviation) convert by x1.8 with
+no +32. An unknown unit system adds nothing, so the output is what it was
 before this module existed.
 
 Swims keep meters: Garmin shows pool distances in the pool's own units and
@@ -43,14 +45,25 @@ _SPORT_KEYS = ("type", "activity_type", "activity", "sport", "splitType")
 # Garmin's own camelCase keys, for the splits tools that return its payload
 # as-is. Exact names only: a raw key is converted when it is known to be
 # meters or m/s, never because its name looks like it might be.
-_RAW_DISTANCE_KEYS = frozenset({"distance", "totalDistance", "maxDistanceWithPrecision"})
+_RAW_DISTANCE_KEYS = frozenset({
+    "distance", "totalDistance", "maxDistanceWithPrecision", "totalDistanceMeters",
+    "maximumMeters",
+})
 _RAW_HEIGHT_KEYS = frozenset({
     "elevationGain", "elevationLoss", "maxElevationGain", "averageElevationGain",
-    "startElevation", "maxElevation", "minElevation",
+    "startElevation", "maxElevation", "minElevation", "floorsAscendedInMeters",
+    "floorsDescendedInMeters",
 })
 _RAW_SPEED_KEYS = frozenset({
     "averageSpeed", "averageMovingSpeed", "maxSpeed", "avgSpeed", "avgGradeAdjustedSpeed",
 })
+# The watch's own temperature sensor, in degrees Celsius with no unit in the
+# key (typed splits: 25 against the wrist on a 63 F day).
+_RAW_TEMPERATURE_KEYS = frozenset({"averageTemperature", "maxTemperature", "minTemperature"})
+# Centimeters, unlabelled (beside avgStepLength, which is in meters).
+_RAW_CENTIMETER_KEYS = frozenset({"strideLength", "verticalOscillation"})
+# A temperature key whose stem names a difference is a delta: x1.8, no +32.
+_DELTA_WORDS = ("range", "change", "delta", "deviation", "drift")
 
 
 def account_unit_system(client: Any) -> Optional[str]:
@@ -75,6 +88,13 @@ def format_duration(seconds: float) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes}:{secs:02d}"
+
+
+def format_hours(hours: float) -> str:
+    """Decimal hours as h:mm (6.37 -> "6:22"), rounded half up to the minute."""
+    minutes = math.floor(abs(hours) * 60 + 0.5)
+    sign = "-" if hours < 0 and minutes else ""
+    return f"{sign}{minutes // 60}:{minutes % 60:02d}"
 
 
 def format_pace(seconds: float) -> str:
@@ -116,6 +136,22 @@ def parse_pace(text: str) -> float:
     unit = match["unit"].lower()
     unit_meters = METERS_PER_MILE if unit.startswith("mi") else METERS_PER_KM
     return round(unit_meters / seconds, 7)
+
+
+def add_gram_masses(payload: Any, keys: Tuple[str, ...], unit_system: Optional[str]) -> Any:
+    """Pounds beside Garmin raw mass keys that are bare grams (``weight``: 79900.0).
+
+    Only for the payloads where those keys are known to be grams: the same
+    name holds kilograms elsewhere (73.0 in the FTP payload), so this is
+    never applied by key name alone.
+    """
+    if unit_system != STATUTE_US or not isinstance(payload, dict):
+        return payload
+    for key in keys:
+        value = payload.get(key)
+        if _is_number(value) and value > 0 and f"{key}Lb" not in payload:
+            payload[f"{key}Lb"] = round(value / 1000 / KG_PER_POUND, 1)
+    return payload
 
 
 def add_account_units(data: Any, unit_system: Optional[str], *, swim: bool = False) -> Any:
@@ -202,16 +238,37 @@ def _snake(camel: str) -> str:
     return re.sub(r"(?<!^)([A-Z])", r"_\1", camel).lower()
 
 
+def _raw_stem(key: str) -> str:
+    """totalDistanceMeters -> totalDistance, floorsAscendedInMeters -> floorsAscended."""
+    for suffix in ("InMeters", "Meters"):
+        if key.endswith(suffix) and len(key) > len(suffix):
+            return key[: -len(suffix)]
+    return key
+
+
+def _fahrenheit(celsius: float, delta: bool) -> float:
+    return round(celsius * 9 / 5 + (0 if delta else 32), 1)
+
+
 def _companions(key: str, value: float, unit_system: str, swim: bool) -> Iterator[Tuple[str, Any]]:
     """Yield (key, value) companions for one numeric field."""
     # Garmin's raw camelCase payloads.
     if key in _RAW_HEIGHT_KEYS:
         if is_imperial(unit_system):
-            yield f"{key}Feet", round(value / METERS_PER_FOOT)
+            yield f"{_raw_stem(key)}Feet", round(value / METERS_PER_FOOT)
         return
     if key in _RAW_DISTANCE_KEYS:
         if not swim:
-            yield _distance(key, value, unit_system, camel=True)
+            yield _distance(_raw_stem(key), value, unit_system, camel=True)
+        return
+    if key in _RAW_TEMPERATURE_KEYS:
+        # Fahrenheit is the US unit; statute_uk shows Celsius.
+        if unit_system == STATUTE_US:
+            yield f"{key}Fahrenheit", _fahrenheit(value, delta=False)
+        return
+    if key in _RAW_CENTIMETER_KEYS:
+        if is_imperial(unit_system):
+            yield f"{key}Inches", round(value / 2.54, 1)
         return
     if key in _RAW_SPEED_KEYS:
         if not swim:
@@ -236,6 +293,21 @@ def _companions(key: str, value: float, unit_system: str, swim: bool) -> Iterato
         # Already metric units; imperial accounts get miles.
         if is_imperial(unit_system) and not swim:
             yield f"{key[:-3]}_miles", round(value * METERS_PER_KM / METERS_PER_MILE, 2)
+        return
+    for suffix, unit in (("_celsius", "_fahrenheit"), ("_c", "_f")):
+        if key.endswith(suffix):
+            stem = key[: -len(suffix)]
+            if "temp" in stem and unit_system == STATUTE_US:
+                delta = any(word in stem for word in _DELTA_WORDS)
+                yield f"{stem}{unit}", _fahrenheit(value, delta)
+            return
+    if key.endswith("_cm"):
+        if is_imperial(unit_system):
+            yield f"{key[:-3]}_in", round(value / 2.54, 1)
+        return
+    if key.endswith("_hours"):
+        # Decimal hours: 6.37 is 6 h 22 min, not 6:37.
+        yield f"{key[:-6]}_hm", format_hours(value)
         return
     for suffix, kg_per_unit in (("_kg", 1.0), ("_grams", 0.001)):
         if key.endswith(suffix):

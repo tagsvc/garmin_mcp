@@ -2294,3 +2294,22 @@ async def test_fit_sample_streams_name_their_timestamps_gmt(
     assert data["records"][0]["timestamp_gmt"] == "2026-10-27T18:37:26Z"
     assert "timestamp" not in data["records"][0]
     assert data["utc_offset_hours"] == -4.0
+
+
+@pytest.mark.asyncio
+async def test_fit_metric_fields_get_account_unit_companions(
+    app_with_activity_analysis, mock_garmin_client
+):
+    mock_garmin_client.get_unit_system.return_value = "statute_us"
+    messages = [
+        _make_mock_fit_message("session", {
+            "sport": "running", "start_time": _RUN_START_UTC, "total_elapsed_time": 1401.0,
+            "total_distance": 3494.78, "total_ascent": 44.0,
+        }),
+    ]
+
+    data = await _call_fit_data(app_with_activity_analysis, mock_garmin_client, messages)
+
+    assert data["session"]["total_distance_m"] == 3494.78
+    assert data["session"]["total_distance_miles"] == 2.17
+    assert data["session"]["total_ascent_feet"] == 144

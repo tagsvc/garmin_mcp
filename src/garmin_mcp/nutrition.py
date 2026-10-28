@@ -12,6 +12,7 @@ from garminconnect import GarminConnectConnectionError
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import account_unit_system, add_gram_masses
 
 from garmin_mcp.write_errors import WriteTracker
 
@@ -407,6 +408,9 @@ def register_tools(app):
         Returns the user's nutrition goals and targets including
         calorie targets, macronutrient goals, and plan configuration.
 
+        startingWeight, targetWeightGoal and weightChangeRate (per week) are
+        grams; a US account also gets *Lb.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -415,6 +419,11 @@ def register_tools(app):
             data = get_client(ctx).connectapi(url)
             if not data:
                 return f"No nutrition settings found for {date}."
+            # FORK: Garmin's weight targets are bare grams (227 g/week is 0.5 lb).
+            add_gram_masses(
+                data, ("startingWeight", "targetWeightGoal", "weightChangeRate"),
+                account_unit_system(get_client(ctx)),
+            )
             return json.dumps(data, indent=2)
         except Exception as e:
             return f"Error retrieving nutrition settings: {str(e)}"

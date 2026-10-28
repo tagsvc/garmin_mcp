@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.units import METERS_PER_MILE, account_unit_system, add_account_units, is_imperial
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -184,6 +185,16 @@ def _calculate_progress_percent(progress: float, target: float) -> str:
     return f"{min(percent, 100):.1f}%"
 
 
+def _add_badge_meters(curated: dict, unit_id: Any, progress: Any, target: Any) -> None:
+    """progress_distance_meters etc. for distance and elevation badges."""
+    value_type = (BADGE_UNIT_MAPPING.get(unit_id) or (None, None))[1]
+    if value_type not in ("distance", "elevation"):
+        return
+    for name, value in (("progress", progress), ("target", target)):
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            curated[f"{name}_{value_type}_meters"] = value
+
+
 def _curate_badge_challenge(challenge: dict) -> dict:
     """Curate a badge challenge into a clean format"""
     category_id = challenge.get("challengeCategoryId")
@@ -209,6 +220,9 @@ def _curate_badge_challenge(challenge: dict) -> dict:
         curated["progress"] = _format_badge_value(progress, unit_id)
         curated["target"] = _format_badge_value(target, unit_id)
         curated["progress_percent"] = _calculate_progress_percent(progress, target)
+        # FORK: progress/target are km or m text only ("48.28 km", exactly
+        # 30 mi). The meters beside them get account-unit companions.
+        _add_badge_meters(curated, unit_id, progress, target)
 
     # Add earned date if completed
     earned_date = challenge.get("badgeEarnedDate")
@@ -391,6 +405,8 @@ def register_tools(app):
         included with their progress and remaining amounts. Falls back to
         python-garminconnect's get_goals() if that request returns nothing.
 
+        Distances in meters get *_miles (statute) or *_km (metric) companions.
+
         Args:
             goal_type: Type of goals to retrieve. Options: "active", "future", or "past"
         """
@@ -403,13 +419,18 @@ def register_tools(app):
             goals = _collect_goals(garmin_client, goal_type)
             if not goals:
                 return f"No {goal_type} goals found."
-            return json.dumps(goals, indent=2)
+            return json.dumps(add_account_units(goals, account_unit_system(garmin_client)), indent=2)
         except Exception as e:
             return f"Error retrieving {goal_type} goals: {str(e)}"
 
     @app.tool()
     async def get_personal_record(ctx: Context) -> str:
-        """Get personal records for user"""
+        """Get personal records for user
+
+        Distance and elevation records also carry distance_meters /
+        elevation_meters with account-unit companions (distance_miles,
+        elevation_feet on a US account); value stays Garmin's km/m text.
+        """
         try:
             records = get_client(ctx).get_personal_record()
             if not records:
@@ -443,6 +464,16 @@ def register_tools(app):
                     ),
                 }
 
+                # FORK: distances and elevation were km/m text only. The
+                # meters beside them get account-unit companions (not for
+                # pool swims, which Garmin shows in pool units).
+                if (
+                    value_type in ("distance", "elevation")
+                    and isinstance(raw_value, (int, float))
+                    and "Swim" not in pr_name
+                ):
+                    curated_record[f"{value_type}_meters"] = raw_value
+
                 # Add activity info if available
                 activity_id = record.get("activityId")
                 if activity_id:
@@ -453,7 +484,9 @@ def register_tools(app):
             # Sort by type_id for consistent ordering
             curated_records.sort(key=lambda x: x["type_id"])
 
-            return json.dumps(curated_records, indent=2)
+            return json.dumps(
+                add_account_units(curated_records, account_unit_system(garmin_client)), indent=2
+            )
         except Exception as e:
             return f"Error retrieving personal records: {str(e)}"
 
@@ -566,7 +599,10 @@ def register_tools(app):
             )
 
             return json.dumps(
-                {"total": len(curated_challenges), "challenges": curated_challenges},
+                add_account_units(
+                    {"total": len(curated_challenges), "challenges": curated_challenges},
+                    account_unit_system(garmin_client),
+                ),
                 indent=2,
             )
         except Exception as e:
@@ -578,6 +614,9 @@ def register_tools(app):
 
         Returns monthly/seasonal challenges from Garmin that the user can join.
         These challenges award badges and points upon completion.
+
+        Distance and elevation badges also carry progress/target_distance_meters
+        (or _elevation_meters) with account-unit companions.
 
         Args:
             start: Starting index for pagination (starts at 1)
@@ -599,7 +638,10 @@ def register_tools(app):
             curated_challenges.sort(key=lambda x: x.get("start_date") or "")
 
             return json.dumps(
-                {"total": len(curated_challenges), "challenges": curated_challenges},
+                add_account_units(
+                    {"total": len(curated_challenges), "challenges": curated_challenges},
+                    account_unit_system(garmin_client),
+                ),
                 indent=2,
             )
         except Exception as e:
@@ -611,6 +653,9 @@ def register_tools(app):
 
         Returns the completed badge-challenge history and earned dates. For
         challenges still in progress, use get_non_completed_badge_challenges.
+
+        Distance and elevation badges also carry progress/target_distance_meters
+        (or _elevation_meters) with account-unit companions.
 
         Args:
             start: Starting index for pagination (starts at 1)
@@ -632,7 +677,10 @@ def register_tools(app):
             )
 
             return json.dumps(
-                {"total": len(curated_challenges), "challenges": curated_challenges},
+                add_account_units(
+                    {"total": len(curated_challenges), "challenges": curated_challenges},
+                    account_unit_system(garmin_client),
+                ),
                 indent=2,
             )
         except Exception as e:
@@ -646,6 +694,9 @@ def register_tools(app):
 
         Returns active challenges the user has joined but hasn't completed yet.
         Useful for tracking current progress toward badge goals.
+
+        Distance and elevation badges also carry progress/target_distance_meters
+        (or _elevation_meters) with account-unit companions.
 
         Args:
             start: Starting index for pagination (starts at 1)
@@ -667,7 +718,10 @@ def register_tools(app):
             curated_challenges.sort(key=lambda x: x.get("end_date") or "")
 
             return json.dumps(
-                {"total": len(curated_challenges), "challenges": curated_challenges},
+                add_account_units(
+                    {"total": len(curated_challenges), "challenges": curated_challenges},
+                    account_unit_system(garmin_client),
+                ),
                 indent=2,
             )
         except Exception as e:
@@ -718,6 +772,9 @@ def register_tools(app):
 
         Returns virtual challenges (like walking expeditions on famous trails)
         that the user is currently participating in.
+
+        A statute account also gets progress_miles and target_miles beside the km
+        text.
 
         Args:
             start: Starting index for pagination (default 1, must be >= 1;
@@ -770,6 +827,10 @@ def register_tools(app):
                         curated["target_meters"] = target
                         curated["progress_km"] = f"{progress / 1000:.2f} km"
                         curated["target_km"] = f"{target / 1000:.2f} km"
+                        # FORK: miles beside the km text, for a statute account.
+                        if is_imperial(account_unit_system(garmin_client)):
+                            curated["progress_miles"] = round(progress / METERS_PER_MILE, 2)
+                            curated["target_miles"] = round(target / METERS_PER_MILE, 2)
                     else:
                         curated["progress"] = _format_badge_value(progress, unit_id)
                         curated["target"] = _format_badge_value(target, unit_id)
@@ -780,7 +841,10 @@ def register_tools(app):
                 curated_challenges.append(curated)
 
             return json.dumps(
-                {"total": len(curated_challenges), "challenges": curated_challenges},
+                add_account_units(
+                    {"total": len(curated_challenges), "challenges": curated_challenges},
+                    account_unit_system(garmin_client),
+                ),
                 indent=2,
             )
         except Exception as e:

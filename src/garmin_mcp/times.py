@@ -22,9 +22,10 @@ that instant in New York). ``wall_clock`` reads them that way.
 
 import datetime
 import re
-import weakref
 from typing import Any, Optional, Tuple
 from zoneinfo import ZoneInfo
+
+from garmin_mcp.profile_settings import profile_settings
 
 UTC = datetime.timezone.utc
 
@@ -35,11 +36,6 @@ _ISO_PATTERN = re.compile(
     r"\s*(Z|GMT|UTC|[+-]\d{2}:?\d{2})?$",
     re.IGNORECASE,
 )
-
-# Profile time zone per Garmin client. A client lives as long as its
-# session (remote: SessionManager.CACHE_TTL, one hour), so a change in
-# Garmin Connect is picked up when the session is next restored.
-_profile_zones: "weakref.WeakKeyDictionary[Any, Optional[str]]" = weakref.WeakKeyDictionary()
 
 
 def _parse(value: Any) -> Tuple[Optional[datetime.datetime], bool]:
@@ -186,34 +182,9 @@ def put_times(
 def profile_time_zone(client: Any) -> Optional[str]:
     """The Garmin Connect profile's time zone (``America/New_York``), or None.
 
-    Read from the user settings once per client and cached with it. The
-    module-level ``garmin_client`` in remote mode is one proxy shared by every
-    user, so it is never a cache key: it is resolved to the caller's own
-    client first.
+    From the profile settings, read once per client (profile_settings.py).
     """
-    from garmin_mcp.client_resolver import _ResolvingGarminProxy, get_client
-
-    if isinstance(client, _ResolvingGarminProxy):
-        client = get_client()
-    try:
-        if client in _profile_zones:
-            return _profile_zones[client]
-    except TypeError:
-        return _read_profile_time_zone(client)
-    zone = _read_profile_time_zone(client)
-    try:
-        _profile_zones[client] = zone
-    except TypeError:
-        pass
-    return zone
-
-
-def _read_profile_time_zone(client: Any) -> Optional[str]:
-    try:
-        settings = client.get_userprofile_settings()
-    except Exception:
-        return None
-    zone = settings.get("timeZone") if isinstance(settings, dict) else None
+    zone = profile_settings(client).get("timeZone")
     if not isinstance(zone, str) or not zone:
         return None
     try:
