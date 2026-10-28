@@ -195,7 +195,8 @@ def _garmin_double():
     client.get_max_metrics.return_value = [{"heatAltitudeAcclimation": {
         "calendarDate": D, "altitudeAcclimation": 1000, "currentAltitude": 20}}]
     client.get_user_profile.return_value = {"userData": {"weight": 72000.0, "height": 175.0,
-                                                         "lactateThresholdSpeed": 0.3}}
+                                                         "lactateThresholdSpeed": 0.3,
+                                                         "firstbeatRunningLtTimestamp": 1161544001}}
     client.get_personal_record.return_value = [
         {"typeId": 7, "value": 21097.5, "prStartTimeLocalFormatted": "2026-10-24T10:00:00.0"}]
     client.get_workouts.return_value = [{"workoutId": 1, "workoutName": "Easy",
@@ -383,3 +384,33 @@ async def test_every_read_only_tool_meets_the_units_and_times_contract(app):
         if result_json(result) is not None:
             returned_json.add(name)
     assert MUST_RETURN_JSON <= returned_json, sorted(MUST_RETURN_JSON - returned_json)
+
+
+# Fields a tool adds to say how to read its times; a reader only knows to use
+# them if the tool's description names them.
+SELF_DESCRIBING_KEYS = ("utcOffsetHours", "local_time_zone", "localTimeZone", "utc_offset_hours")
+
+
+def _keys(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from _keys(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _keys(item)
+
+
+@pytest.mark.asyncio
+async def test_descriptions_name_the_time_fields_their_tools_add(app):
+    """PR #57 added *Local siblings and utcOffsetHours to the daily summary
+    without saying so in its description; a reader of the tool list could
+    not know to use them."""
+    descriptions = {t.name: t.description or "" for t in await app.list_tools()}
+    missing = []
+    for name in await _read_only_tools(app):
+        data = result_json(await app.call_tool(name, ARGS[name]))
+        for key in set(_keys(data)) & set(SELF_DESCRIBING_KEYS):
+            if key not in descriptions[name]:
+                missing.append(f"{name}: output has {key}, description does not name it")
+    assert missing == []

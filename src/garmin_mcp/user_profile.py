@@ -200,7 +200,8 @@ def register_tools(app):
         heightFeetInches on a statute account), lactateThresholdSpeed is m/s
         divided by 10 (lactateThresholdSpeedMps and its pace are added), and
         firstbeat*Timestamp values count seconds from FIT's 1989 epoch
-        (firstbeat*TimeGmt gives the date).
+        (firstbeat*TimeGmt gives the moment, and firstbeat*TimeLocal the same
+        moment in the Garmin profile's time zone, named in localTimeZone).
         """
         try:
             profile = get_client(ctx).get_user_profile()

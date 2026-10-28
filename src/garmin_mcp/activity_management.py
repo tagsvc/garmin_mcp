@@ -881,6 +881,9 @@ def register_tools(app):
         verticalOscillation are centimeters (avgStepLength is meters); statute
         accounts also get *Inches.
 
+        Garmin sends startTimeGMT with startTimeLocal but endTimeGMT alone; each
+        split also gets endTimeLocal, with its UTC offset, at the split's own offset.
+
         Args:
             activity_id: ID of the activity to retrieve typed splits for
         """
@@ -914,6 +917,9 @@ def register_tools(app):
 
         Temperatures are degrees Celsius (US account: *Fahrenheit beside them);
         strideLength and verticalOscillation are centimeters (statute: *Inches).
+
+        Garmin sends startTimeGMT with startTimeLocal but endTimeGMT alone; each
+        split also gets endTimeLocal, with its UTC offset, at the split's own offset.
 
         Args:
             activity_id: ID of the activity to retrieve split summaries for

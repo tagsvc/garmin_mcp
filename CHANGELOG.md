@@ -5,6 +5,29 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Descriptions name the time fields their tools add — 2026-10-28
+
+The 2026-10-28 daily-summary change added `*Local` siblings and
+`utcOffsetHours`, but the tool descriptions did not mention them, so a reader
+of the tool list could not know to use them. Now:
+- **`get_user_summary` and `get_stats_and_body`** say that Garmin's own values
+  are kept as sent and carry no zone marker, and point to the added fields:
+  each `*Local` with its offset, and `utcOffsetHours`.
+- **Typed splits and split summaries** name `endTimeLocal`.
+- **`get_user_profile`** names `firstbeat*TimeLocal` and `localTimeZone`.
+
+A sweep check now fails when a tool's output contains `utcOffsetHours`,
+`local_time_zone`, `localTimeZone` or `utc_offset_hours` but its description
+does not name the field. It caught the profile tool's omission while this
+change was being made.
+
+A review elsewhere also reported three other descriptions as outdated:
+recovery `as_of`, running tolerance in km only, and skin temperature in °C.
+The served code already had all three updated; that client had kept the
+descriptions from when it first connected.
+
+Suite: 1679 passed.
+
 ## Local times beside Garmin's GMT times in the daily summary and splits — 2026-10-28
 
 `get_user_summary` and `get_stats_and_body` pass Garmin's daily summary
