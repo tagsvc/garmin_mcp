@@ -374,23 +374,34 @@ def register_tools(app):
         serials but no battery state, which is the thing worth checking before
         a session.
 
-        Garmin reports the same sensor once per paired device, so entries are
-        de-duplicated here by serial number.
+        Garmin keeps a record per pairing, and repeats a record per paired
+        device. Records of the same model (name, type and manufacturer) are
+        reported here as one sensor: the most recently connected record, with
+        earlier_pairings listing the older records' last contact and battery.
+        Two straps of the same model would therefore show as one sensor with
+        an earlier pairing; Garmin's record gives no hardware serial to tell
+        them apart.
         """
         try:
             data = get_client(ctx).connectapi("/device-service/sensors")
             if not isinstance(data, list):
                 return json.dumps(data, indent=2)
 
-            seen = set()
-            sensors = []
+            # FORK: grouped by model, not serialNumber. Garmin's serialNumber
+            # is per pairing record, not the strap's: one HRM 600, paired a few
+            # times, came back as three records with three serials (2026-10-28;
+            # two were the same report, one an older pairing).
+            groups: Dict[tuple, List[Dict[str, Any]]] = {}
             for item in data:
                 if not isinstance(item, dict):
                     continue
-                serial = item.get("serialNumber")
-                if serial in seen:
-                    continue
-                seen.add(serial)
+                key = (item.get("deviceName"), item.get("sensorType"), item.get("manufacturer"))
+                groups.setdefault(key, []).append(item)
+
+            sensors = []
+            for records in groups.values():
+                records.sort(key=lambda r: str(r.get("lastConnected") or ""), reverse=True)
+                item = records[0]
                 sensor = {
                     "name": item.get("deviceName"),
                     "type": item.get("sensorType"),
@@ -400,8 +411,23 @@ def register_tools(app):
                     "software_version": item.get("softwareVersion"),
                     "manufacturer": item.get("manufacturer"),
                     "rechargeable": item.get("rechargeableSensorCapable"),
-                    "priority_sensor": item.get("prioritySensor"),
+                    "priority_sensor": item.get("prioritySensor") or any(
+                        r.get("prioritySensor") for r in records
+                    ),
                 }
+                earlier = []
+                for record in records[1:]:
+                    if record.get("lastConnected") == item.get("lastConnected"):
+                        continue  # the same report, repeated per paired device
+                    entry = {
+                        "last_connected": record.get("lastConnected"),
+                        "battery_level": record.get("batteryLevel"),
+                    }
+                    entry = {k: v for k, v in entry.items() if v is not None}
+                    if entry not in earlier:
+                        earlier.append(entry)
+                if earlier:
+                    sensor["earlier_pairings"] = earlier
                 sensors.append({k: v for k, v in sensor.items() if v is not None})
 
             if not sensors:

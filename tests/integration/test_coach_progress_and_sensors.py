@@ -256,6 +256,56 @@ async def test_duplicate_pairings_are_collapsed(mock_garmin_client):
     assert payload["count"] == 1, "the same serial must not appear twice"
 
 
+# 2026-10-28: one HRM 600, paired a few times, as three records with three
+# serials -- two the same report, one an older pairing (serials redacted).
+_REPAIRED_SENSOR = [
+    {"deviceName": "HRM 600", "batteryStatus": "NEW", "batteryLevel": 93,
+     "sensorType": "HEART_RATE", "prioritySensor": False, "serialNumber": 1,
+     "softwareVersion": "5.2", "lastConnected": "2026-09-24T18:02:38.0",
+     "manufacturer": "GARMIN", "rechargeableSensorCapable": True},
+    {"deviceName": "HRM 600", "batteryStatus": "NEW", "batteryLevel": 83,
+     "sensorType": "HEART_RATE", "prioritySensor": False, "serialNumber": 2,
+     "softwareVersion": "5.2", "lastConnected": "2026-10-27T19:00:47.0",
+     "manufacturer": "GARMIN", "rechargeableSensorCapable": True},
+    {"deviceName": "HRM 600", "batteryStatus": "NEW", "batteryLevel": 83,
+     "sensorType": "HEART_RATE", "prioritySensor": False, "serialNumber": 3,
+     "softwareVersion": "5.2", "lastConnected": "2026-10-27T19:00:47.0",
+     "manufacturer": "GARMIN", "rechargeableSensorCapable": True},
+]
+
+
+@pytest.mark.asyncio
+async def test_one_strap_paired_again_is_one_sensor(mock_garmin_client):
+    """Garmin's serialNumber is per pairing record, not the strap's."""
+    mock_garmin_client.connectapi.return_value = _REPAIRED_SENSOR
+    payload = json.loads(
+        await _text(_app(devices, mock_garmin_client), "get_sensors", {})
+    )
+    assert payload["count"] == 1
+    sensor = payload["sensors"][0]
+    # The current state is the most recent record's.
+    assert sensor["battery_level"] == 83
+    assert sensor["last_connected"] == "2026-10-27T19:00:47.0"
+    # The older pairing stays visible; the repeated report does not.
+    assert sensor["earlier_pairings"] == [
+        {"last_connected": "2026-09-24T18:02:38.0", "battery_level": 93}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_different_sensors_stay_separate(mock_garmin_client):
+    mock_garmin_client.connectapi.return_value = [
+        _REPAIRED_SENSOR[1],
+        {"deviceName": "Index S2", "sensorType": "SCALE", "manufacturer": "GARMIN",
+         "serialNumber": 9, "batteryLevel": 50, "lastConnected": "2026-10-27T12:20:31.0"},
+    ]
+    payload = json.loads(
+        await _text(_app(devices, mock_garmin_client), "get_sensors", {})
+    )
+    assert [s["name"] for s in payload["sensors"]] == ["HRM 600", "Index S2"]
+    assert all("earlier_pairings" not in s for s in payload["sensors"])
+
+
 @pytest.mark.asyncio
 async def test_no_sensors_reports_plainly(mock_garmin_client):
     mock_garmin_client.connectapi.return_value = []
