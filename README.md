@@ -93,9 +93,12 @@ which is where the watch was; a run while travelling shows that place's time,
 as in the Garmin app. When a record carries no offset (laps, weather reports,
 device sync times, 15-minute step buckets) local time uses the time zone in
 your Garmin Connect profile, and the tool names it in `local_time_zone`.
-Tools that return Garmin's own payload keep it as-is and add local siblings
-(`eventStartTimeLocal`, `sleepStartLocal`) and `utcOffsetHours`, the day's
-offset for reading their `[UTC epoch ms, value]` series. Date defaults
+Tools that return Garmin's own payload keep its keys and give its time text
+its zone in place (`latestSpo2ReadingTimeGmt: 2026-10-28T09:59:00Z`,
+`latestSpo2ReadingTimeLocal: 2026-10-28T05:59:00-04:00`), add local siblings
+where Garmin sends a GMT time alone (`eventStartTimeLocal`, `sleepStartLocal`),
+and add `utcOffsetHours`, the day's offset for reading their
+`[UTC epoch ms, value]` series. Date defaults
 ("today") use the profile's time zone, not the server's clock.
 
 ### Gear Notes

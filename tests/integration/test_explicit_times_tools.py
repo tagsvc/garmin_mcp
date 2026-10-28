@@ -105,7 +105,8 @@ async def test_body_battery_events_payload_gets_local_start_and_offset(app, mock
     data = await _call(app, "get_body_battery_events", {"date": "2026-10-28"})
 
     event = data[0]["event"]
-    assert event["eventStartTimeGmt"] == "2026-10-28T03:17:13.0"  # Garmin's, untouched
+    # Garmin's key, its text given its zone in place.
+    assert event["eventStartTimeGmt"] == "2026-10-28T03:17:13Z"
     assert event["eventStartTimeLocal"] == "2026-10-27T23:17:13-04:00"
     assert event["utcOffsetHours"] == -4.0
     assert data[0]["stressValuesArray"] == [[1793157300000, 6]]
@@ -264,7 +265,7 @@ async def test_step_buckets_get_local_times_from_the_profile_zone(app, mock_garm
     assert data[0]["startLocal"] == "2026-10-27T14:45:00-04:00"
     assert data[0]["endLocal"] == "2026-10-27T15:00:00-04:00"
     assert data[0]["localTimeZone"] == "America/New_York"
-    assert data[0]["startGMT"] == "2026-10-27T18:45:00.0"
+    assert data[0]["startGMT"] == "2026-10-27T18:45:00Z"
 
 
 @pytest.mark.asyncio
@@ -532,12 +533,14 @@ async def test_daily_summary_gmt_times_get_local_times(app, mock_garmin_client, 
     data = await _call(app, tool, {"date": "2026-10-27"})
 
     event = data["bodyBatteryActivityEventList"][0]
-    assert event["eventStartTimeGmt"] == "2026-10-28T03:17:13"  # Garmin's, untouched
+    assert event["eventStartTimeGmt"] == "2026-10-28T03:17:13Z"  # Garmin's key, zoned
     assert event["eventStartTimeLocal"] == "2026-10-27T23:17:13-04:00"
     assert data["lastSyncTimestampLocal"] == "2026-10-28T17:18:19-04:00"
     assert data["bodyBatteryDynamicFeedbackEvent"]["eventTimestampLocal"] == "2026-10-27T20:20:46-04:00"
     assert data["utcOffsetHours"] == -4.0
-    assert data["wellnessStartTimeLocal"] == "2026-10-27T00:00:00.0"  # Garmin's local, kept
+    # Garmin's own local field gains the offset from its GMT partner.
+    assert data["wellnessStartTimeLocal"] == "2026-10-27T00:00:00-04:00"
+    assert data["wellnessStartTimeGmt"] == "2026-10-27T04:00:00Z"
 
 
 @pytest.mark.asyncio
@@ -550,4 +553,5 @@ async def test_split_end_times_get_the_splits_own_local_time(app, mock_garmin_cl
 
     split = data["splits"][0]
     assert split["endTimeLocal"] == "2026-10-27T14:46:02-04:00"
-    assert split["startTimeLocal"] == "2026-10-27T14:37:26.0"  # Garmin's, not overwritten
+    assert split["startTimeLocal"] == "2026-10-27T14:37:26-04:00"  # Garmin's, zoned
+    assert split["endTimeGMT"] == "2026-10-27T18:46:02Z"

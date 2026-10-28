@@ -2313,3 +2313,25 @@ async def test_fit_metric_fields_get_account_unit_companions(
     assert data["session"]["total_distance_m"] == 3494.78
     assert data["session"]["total_distance_miles"] == 2.17
     assert data["session"]["total_ascent_feet"] == 144
+
+
+
+def test_fit_message_utc_times_end_in_z_and_local_times_stay_local():
+    """FIT date_time values are UTC; local_date_time values are the watch's
+    clock. The message dump wrote both as bare text."""
+    from types import SimpleNamespace
+
+    from garmin_mcp.activity_analysis import _serialize_fit_field
+
+    def field(name, value, profile_type):
+        return SimpleNamespace(name=name, value=value, raw_value=1162060646, units=None,
+                               type=SimpleNamespace(name=profile_type, values=None),
+                               base_type=None, field_type=None, def_num=None)
+
+    utc = _serialize_fit_field(field("timestamp", datetime.datetime(2026, 10, 27, 18, 37, 26), "date_time"))
+    local = _serialize_fit_field(
+        field("local_timestamp", datetime.datetime(2026, 10, 27, 14, 37, 26), "local_date_time"))
+
+    assert utc["value"] == "2026-10-27T18:37:26Z"
+    assert local["value"] == "2026-10-27T14:37:26"
+    assert local["profile_type"] == "local_date_time"

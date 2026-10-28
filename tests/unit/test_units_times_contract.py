@@ -84,16 +84,41 @@ def test_result_json_reads_both_call_tool_shapes():
 
 
 def test_raw_gmt_times_need_a_local_time_or_an_offset():
-    assert output_violations({"lastSyncTimestampGMT": "2026-10-28T21:18:19.470"}) == [
+    assert output_violations({"lastSyncTimestampGMT": "2026-10-28T21:18:19Z"}) == [
         "$.lastSyncTimestampGMT: GMT time with no local time beside it"
     ]
-    assert output_violations({"lastSyncTimestampGMT": "2026-10-28T21:18:19.470",
+    assert output_violations({"lastSyncTimestampGMT": "2026-10-28T21:18:19Z",
                               "lastSyncTimestampLocal": "2026-10-28T17:18:19-04:00"}) == []
     # A payload's utcOffsetHours converts every GMT time beneath it.
     assert output_violations({"utcOffsetHours": -4.0,
-                              "sleepLevels": [{"startGMT": "2026-10-28T03:17:13.0"}]}) == []
+                              "sleepLevels": [{"startGMT": "2026-10-28T03:17:13Z"}]}) == []
     # Body composition restates timestampGMT as measuredAtLocal.
     assert output_violations({"timestampGMT": 1793103631000,
                               "measuredAtLocal": "2026-10-27T08:20:31-04:00"}) == []
     # Curated *_gmt keys are already named; this rule is for Garmin's keys.
     assert output_violations({"start_time_gmt": "2026-10-27T18:37:26Z"}) == []
+
+
+def test_raw_time_text_must_carry_its_zone():
+    """Garmin writes "2026-10-28T09:59:00.0" for GMT and local alike; only
+    the key told them apart."""
+    found = output_violations({
+        "utcOffsetHours": -4.0,
+        "latestSpo2ReadingTimeGmt": "2026-10-28T09:59:00.0",
+        "latestSpo2ReadingTimeLocal": "2026-10-28T05:59:00.0",
+        "floorValuesArray": [["2026-10-27T04:00:00.0", "2026-10-27T04:15:00.0", 0]],
+    })
+    assert found == [
+        "$.latestSpo2ReadingTimeGmt: Garmin time '2026-10-28T09:59:00.0' carries no Z or offset",
+        "$.latestSpo2ReadingTimeLocal: Garmin time '2026-10-28T05:59:00.0' carries no Z or offset",
+        "$.floorValuesArray[0]: Garmin time '2026-10-27T04:00:00.0' carries no Z or offset",
+    ]
+    assert output_violations({
+        "utcOffsetHours": -4.0,
+        "latestSpo2ReadingTimeGmt": "2026-10-28T09:59:00Z",
+        "latestSpo2ReadingTimeLocal": "2026-10-28T05:59:00-04:00",
+        "calendarDate": "2026-10-27T00:00:00.0",  # a date at midnight, exempt with its reason
+    }) == []
+    # A FIT local_date_time value is the watch's clock, named by its type.
+    assert output_violations({"name": "local_timestamp", "value": "2026-10-27T14:37:26",
+                              "profile_type": "local_date_time"}) == []

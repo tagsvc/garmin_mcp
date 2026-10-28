@@ -226,8 +226,15 @@ coverage.
   (`local_today`). The profile zone is read once per Garmin client and cached
   on it -- never on the module proxy, which every remote user shares
   (`test_the_shared_proxy_is_never_the_cache_key`). Raw payloads keep their
-  shape and gain camelCase siblings (`eventStartTimeLocal`, `sleepStartLocal`,
-  `utcOffsetHours`). `tzdata` is a dependency: Windows has no system zone
+  shape and keys and gain camelCase siblings (`eventStartTimeLocal`,
+  `sleepStartLocal`, `utcOffsetHours`); since 2026-10-28 their time *text* is
+  also given its zone in place (`times.zone_garmin_times`): `*Gmt`/`*GMT`
+  values end in `Z`, `*Local` values carry their offset (from their GMT
+  partner, the record's `timezoneOffset`, the day's offset, else the profile
+  zone), descriptor-named GMT columns in series rows end in `Z`, and FIT
+  `date_time` values end in `Z`. Epoch numbers stay numbers. This replaced an
+  earlier choice to keep Garmin's exact strings: nothing reads them but
+  Claude, and three of Garmin's own `*Local` fields had no offset anywhere. `tzdata` is a dependency: Windows has no system zone
   database. _On merge:_ keep the `_gmt`/`_local` names and do not reintroduce
   a bare time key or a server-clock "today". Pinned by `test_times.py` and
   `test_explicit_times_tools.py`.
@@ -526,7 +533,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1679 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1683 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

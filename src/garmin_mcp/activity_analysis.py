@@ -370,6 +370,15 @@ def _serialize_fit_field(field: Any, message: Any = None) -> Dict[str, Any]:
     if hasattr(field, "raw_value"):
         serialized["raw_value"] = _json_safe_fit_value(field.raw_value)
 
+    # FORK: FIT date_time values are UTC; say so (local_date_time values are
+    # the watch's clock, named by their profile_type).
+    if (
+        serialized.get("profile_type") == "date_time"
+        and isinstance(value, datetime.datetime)
+        and value.tzinfo is None
+    ):
+        serialized["value"] = value.isoformat() + "Z"
+
     return serialized
 
 
@@ -1874,6 +1883,11 @@ def register_tools(app):
         strength workout can usually be inspected efficiently with
         ["session", "lap", "set", "exercise_title"]. Message type names are
         case-insensitive and should use FIT/fitparse snake_case names.
+
+        FIT date_time values are UTC and end in Z; local_date_time values (such
+        as the activity's local_timestamp) are the watch's clock, as their
+        profile_type says. raw_value holds the undecoded number: for times,
+        seconds since FIT's 1989-12-31 epoch, not Unix time.
 
         Args:
             activity_id: Garmin activity ID.

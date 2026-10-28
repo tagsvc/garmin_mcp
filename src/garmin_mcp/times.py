@@ -211,6 +211,92 @@ def add_local_siblings(node: Any, offset: Optional[datetime.timedelta]) -> Any:
     return node
 
 
+def _zoneless_text(value: Any) -> bool:
+    """ISO date-time text with no Z or offset (Garmin's usual form)."""
+    if not isinstance(value, str):
+        return False
+    match = _ISO_PATTERN.match(value.strip())
+    return bool(match) and match.group(3) is None
+
+
+def _gmt_partner(node: dict, local_key: str) -> Any:
+    stem = local_key[: -len("Local")]
+    for suffix in ("Gmt", "GMT"):
+        if f"{stem}{suffix}" in node:
+            return node[f"{stem}{suffix}"]
+    return None
+
+
+def _gmt_columns(node: dict) -> set:
+    """Row positions a descriptor list in this dict names as GMT.
+
+    Garmin describes series rows with a descriptor list, e.g.
+    floorsValueDescriptorDTOList: [{"index": 0, "key": "startTimeGMT"}, ...].
+    """
+    columns = set()
+    for key, value in node.items():
+        if not (key.endswith("DTOList") and "Descriptor" in key and isinstance(value, list)):
+            continue
+        for descriptor in value:
+            if not isinstance(descriptor, dict):
+                continue
+            index = next((v for k, v in descriptor.items() if k.lower().endswith("index")), None)
+            name = next((v for k, v in descriptor.items() if k.lower().endswith("key")), None)
+            if isinstance(index, int) and isinstance(name, str) and name.endswith(("Gmt", "GMT")):
+                columns.add(index)
+    return columns
+
+
+def zone_garmin_times(
+    node: Any,
+    offset: Optional[datetime.timedelta] = None,
+    zone: Optional[str] = None,
+) -> Any:
+    """Give Garmin's own time text its zone, in place, keeping every key.
+
+    FORK: Garmin writes ``*Gmt``/``*GMT`` values with no ``Z`` and ``*Local``
+    values with no offset ("2026-10-28T09:59:00.0"), so a parser can only
+    tell them apart by the field name. GMT text becomes ``...Z``; local text
+    gains its offset -- from its own GMT partner when Garmin sends one
+    (``latestSpo2ReadingTimeGmt`` for ``latestSpo2ReadingTimeLocal``), else a
+    ``timezoneOffset`` on the record, else ``offset``, else the IANA ``zone``
+    (the profile's) -- and is left as sent only when none is known. Series
+    rows get ``Z`` in the columns their descriptor list names as GMT. The
+    instant never changes, and epoch numbers stay numbers (read them with
+    ``utcOffsetHours``).
+    """
+    if isinstance(node, list):
+        for item in node:
+            zone_garmin_times(item, offset, zone)
+        return node
+    if not isinstance(node, dict):
+        return node
+    offset = offset_from_ms(node.get("timezoneOffset")) or offset
+    # Local values first, while their GMT partners still read as Garmin sent.
+    for key in list(node):
+        value = node[key]
+        if key.endswith("Local") and _zoneless_text(value):
+            clock = wall_clock(value)
+            own = offset_from_pair(_gmt_partner(node, key), value) or offset
+            if own is None and zone and clock is not None:
+                own = ZoneInfo(zone).utcoffset(clock)
+            if own is not None and clock is not None:
+                node[key] = clock.replace(tzinfo=datetime.timezone(own)).isoformat(timespec="seconds")
+    columns = _gmt_columns(node)
+    for key in list(node):
+        value = node[key]
+        if isinstance(value, list) and columns and value and all(isinstance(r, list) for r in value):
+            for row in value:
+                for index in columns:
+                    if index < len(row) and _zoneless_text(row[index]):
+                        row[index] = gmt_iso(row[index])
+        elif isinstance(value, (dict, list)):
+            zone_garmin_times(value, offset, zone)
+        elif key.endswith(("Gmt", "GMT")) and _zoneless_text(value):
+            node[key] = gmt_iso(value)
+    return node
+
+
 def profile_time_zone(client: Any) -> Optional[str]:
     """The Garmin Connect profile's time zone (``America/New_York``), or None.
 

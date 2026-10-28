@@ -153,7 +153,10 @@ def _garmin_double():
     client.get_heart_rates.return_value = {**DAY_SERIES, "heartRateValues": [[EPOCH_GMT, 60]],
                                            "restingHeartRate": 55}
     client.get_respiration_data.return_value = dict(DAY_SERIES)
-    client.get_floors.return_value = dict(DAY_SERIES)
+    client.get_floors.return_value = {**DAY_SERIES, "floorsValueDescriptorDTOList": [
+        {"index": 0, "key": "startTimeGMT"}, {"index": 1, "key": "endTimeGMT"},
+        {"index": 2, "key": "floorsAscended"}],
+        "floorValuesArray": [["2026-10-27T18:45:00.0", "2026-10-27T19:00:00.0", 12]]}
     client.get_steps_data.return_value = [{"startGMT": GMT, "endGMT": "2026-10-27T18:52:26.0",
                                            "steps": 300}]
     client.get_spo2_data.return_value = {"calendarDate": D, "latestSpO2": 97,
@@ -176,7 +179,8 @@ def _garmin_double():
     client.get_weigh_ins.return_value = {"dailyWeightSummaries": [{"allWeightMetrics": [WEIGH_IN]}],
                                          "totalAverage": {"weight": 72000.0}}
     client.get_daily_weigh_ins.return_value = {"dateWeightList": [WEIGH_IN]}
-    client.get_hydration_data.return_value = {"valueInML": 2000.0, "goalInML": 2500.0}
+    client.get_hydration_data.return_value = {"valueInML": 2000.0, "goalInML": 2500.0,
+                                              "lastEntryTimestampLocal": "2026-10-27T22:58:29.7"}
     client.get_hrv_data.return_value = {
         "hrvSummary": {"calendarDate": D2, "lastNightAvg": 50},
         "sleepStartTimestampGMT": "2026-10-28T03:17:13.0",
@@ -235,6 +239,7 @@ def _garmin_double():
         "fitnessAge": 40, "chronologicalAge": 45, "lastUpdated": "2026-10-27T00:00:00.0"}
     client.get_all_day_events.return_value = [{
         "calendarDate": D, "startTimestampGMT": GMT, "startTimestampLocal": LOCAL,
+        "endTimestampGMT": "2026-10-27T18:59:00.0", "endTimestampLocal": "2026-10-27T14:59:00.0",
         "duration": 23}]
     client.get_blood_pressure.return_value = {"measurementSummaries": []}
     client.get_lifestyle_logging_data.return_value = {"calendarDate": D, "dailyLogsReport": []}

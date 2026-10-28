@@ -8,7 +8,13 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import add_local_siblings, offset_from_pair, profile_time_zone, put_times
+from garmin_mcp.times import (
+    add_local_siblings,
+    offset_from_pair,
+    profile_time_zone,
+    put_times,
+    zone_garmin_times,
+)
 from garmin_mcp.units import account_unit_system, add_account_units
 from garmin_mcp.write_errors import WriteTracker
 
@@ -39,9 +45,9 @@ def _label_split_times(payload, key):
     splits = payload.get(key) if isinstance(payload, dict) else None
     for split in splits if isinstance(splits, list) else []:
         if isinstance(split, dict):
-            add_local_siblings(
-                split, offset_from_pair(split.get('startTimeGMT'), split.get('startTimeLocal'))
-            )
+            offset = offset_from_pair(split.get('startTimeGMT'), split.get('startTimeLocal'))
+            add_local_siblings(split, offset)
+            zone_garmin_times(split, offset)
     return payload
 
 
@@ -883,6 +889,8 @@ def register_tools(app):
 
         Garmin sends startTimeGMT with startTimeLocal but endTimeGMT alone; each
         split also gets endTimeLocal, with its UTC offset, at the split's own offset.
+        Garmin's time text is given its zone in place: *GMT values end in Z and
+        startTimeLocal carries its offset.
 
         Args:
             activity_id: ID of the activity to retrieve typed splits for
@@ -920,6 +928,8 @@ def register_tools(app):
 
         Garmin sends startTimeGMT with startTimeLocal but endTimeGMT alone; each
         split also gets endTimeLocal, with its UTC offset, at the split's own offset.
+        Garmin's time text is given its zone in place: *GMT values end in Z and
+        startTimeLocal carries its offset.
 
         Args:
             activity_id: ID of the activity to retrieve split summaries for
