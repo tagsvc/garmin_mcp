@@ -1264,6 +1264,7 @@ Client → 401 → OAuth2 discovery
 - Reflected values on the login/MFA pages are **HTML-escaped**, and untrusted values are escaped before logging (no log injection).
 - **Remote tools never read the server's filesystem.** `upload_course` takes `gpx_base64` in remote mode and refuses `gpx_path` — see [Courses](#courses-and-gpx-uploads).
 - **Three tools are stdio-only.** `check_garmin_auth` and `login_to_garmin` (on a network server, `login_to_garmin` would let any authenticated user store tokens for *any* Garmin account, bypassing the email allowlist), and `delete_activity` (irreversible, and an activity is the training history that Garmin Coach grades and every load and analytics figure is computed from). `delete_workout` and `delete_course` remain available — a workout or course can be recreated.
+- **Stateless transport.** The server runs Streamable HTTP in stateless mode: no `Mcp-Session-Id`, nothing held per session, so there is no session state to accumulate or to expire under an idle client.
 - **Every remote tool carries effect annotations** (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`), so a client can tell a delete from a read and ask before running one. Results are returned as plain text, not additionally wrapped as `{"result": ...}` structured content.
 - The container **does not run the server as root**: the entrypoint takes ownership of `/data`, then drops to an unprivileged user.
 

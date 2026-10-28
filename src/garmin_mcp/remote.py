@@ -271,6 +271,18 @@ def main():
         host=config.host,
         port=config.port,
         streamable_http_path=config.path,
+        # Stateless Streamable HTTP: a fresh transport per request, no
+        # Mcp-Session-Id, no per-session server state. Two reasons:
+        #  - CVE-2026-59951 (mcp <= 1.29.1): stateful servers never reclaimed
+        #    sessions, so any token holder could grow memory without bound.
+        #    1.30.0 caps and expires them; stateless keeps none at all.
+        #  - 1.30.0 expires a stateful session after 30 min idle, and claude.ai
+        #    connectors then report the first call after an idle gap as failed
+        #    rather than replaying it (seen by upstream, eed4e8a).
+        # No tool uses session-bound features, and the caller is identified per
+        # request from the OAuth bearer token, so nothing depends on sessions.
+        # Pinned end to end by tests/integration/test_remote_end_to_end.py.
+        stateless_http=True,
     )
 
     # RFC 9728 protected resource metadata. Claude.ai requires this endpoint

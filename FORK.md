@@ -77,6 +77,15 @@ coverage.
 - **No live-Garmin validation of imported tokens.** Validation is structural only — a live
   check would make the server a good/bad token oracle and re-introduce the 429 surface.
 - **`auth_tools` is stdio-only** — registered in `__init__.py`, never in `remote.py`.
+- **The remote server is stateless Streamable HTTP** (`stateless_http=True` in
+  `remote.py`). Stateful servers on `mcp` <= 1.29.1 never reclaimed sessions
+  (CVE-2026-59951), so any token holder could grow server memory without bound;
+  1.30.0 caps and expires them, but its 30-minute idle expiry makes claude.ai
+  report the first call after a quiet spell as failed. Stateless keeps no
+  sessions at all. Nothing needs them: the caller is identified per request
+  from the OAuth bearer token. `mcp` is floored at 1.30.0 in `pyproject.toml`.
+  Pinned by `tests/integration/test_remote_end_to_end.py`, which drives
+  authenticated requests from two users through the real remote stack.
 - **Each tool call keeps its caller's identity on the worker thread.** Since the
   2026-10-27 sync, `_ToolFilter` runs every tool body as
   `anyio.to_thread.run_sync(lambda: asyncio.run(...))` (upstream #449), so the
@@ -424,7 +433,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1447 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1452 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools

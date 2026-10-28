@@ -5,6 +5,44 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## mcp 1.30.0 and certifi 2026.10.23; remote runs stateless — 2026-10-28
+
+Five advisories published after the 2026-10-14 audit, all already present on
+`main` (none introduced by the 2026-10-27 sync):
+
+| package | advisory | reaches this server? |
+|---|---|---|
+| mcp 1.29.0 | CVE-2026-59951 — stateful Streamable HTTP never reclaimed sessions | **yes**: remote ran stateful Streamable HTTP. OAuth limits who can open sessions, not how many a token holder can |
+| certifi 2026.7.22 | PYSEC-2026-4320 — compromised emSign root CA | **yes**: every outbound Garmin call trusts the bundle (exploitation needs an on-path attacker) |
+| mcp 1.29.0 | CVE-2026-116684 — bearer token audience unchecked | no: combined authorization + resource server, issuing tokens only for itself |
+| mcp 1.29.0 | CVE-2026-116685 — client follows cross-origin redirects | no: client-side; the server is never an MCP client |
+| mcp 1.29.0 | CVE-2026-116686 — client fetches output-schema `$ref`s | no: client-side |
+
+**Fix:** `mcp` 1.30.0 (floored in `pyproject.toml`) and `certifi` 2026.10.23.
+`remote.py` now passes `stateless_http=True`: no sessions are kept, so there is
+nothing to accumulate, and 1.30.0's 30-minute idle expiry — which upstream saw
+make claude.ai report the first call after a quiet spell as failed — cannot
+occur. No tool uses session state; callers are identified per request by bearer
+token.
+
+**Verified before committing,** on 1.30.0:
+
+- `oauth_claude` monkeypatches SDK internals, the main risk in an SDK bump. Over
+  HTTP against the real app: the authorization-server metadata still advertises
+  `none`, an unauthenticated `/mcp` request still gets 401 with the
+  `resource_metadata` challenge, a bad token gets `invalid_token`, and the
+  security headers are present.
+- A new end-to-end test, `tests/integration/test_remote_end_to_end.py`, boots
+  the real remote `main()` in a subprocess and drives authenticated MCP requests
+  — two users, four concurrent sessions, one tool through `get_client(ctx)` and
+  one through the module-level proxy — through the OAuth middleware, transport,
+  worker threads and client resolution. Each caller got only their own data;
+  handing every caller the same client fails it, and so does turning stateless
+  off. It also pins both claude.ai OAuth behaviours above.
+
+`test_project_dependencies` now checks the `<2` cap and the 1.30.0 floor rather
+than one literal constraint string. Suite: 1452 passed; `pip-audit` clean.
+
 ## Recovery hours no longer zeroed by Garmin's change phrase — 2026-10-27
 
 **72 hours of recovery was reported as 0.** After a run, Garmin Connect showed
