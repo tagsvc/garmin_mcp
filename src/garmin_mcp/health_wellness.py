@@ -222,11 +222,10 @@ def _safe_call(
         return None
 
 
-def _collect_recovery_time(
-    client: Any, date_str: str, now: Optional[datetime.datetime] = None
-) -> Dict[str, Any]:
-    """Resolve daily recovery-time remaining from readiness, then activities."""
-    source_errors: List[Dict[str, str]] = []
+def _recovery_snapshot_for_date(
+    client: Any, date_str: str, source_errors: List[Dict[str, str]]
+) -> Optional[Dict[str, Any]]:
+    """The latest Training Readiness recovery snapshot filed under ``date_str``."""
     readiness = _safe_call(
         getattr(client, "get_training_readiness", None), date_str,
         source="get_training_readiness", source_errors=source_errors,
@@ -244,7 +243,76 @@ def _collect_recovery_time(
     if curated:
         curated.setdefault("date", date_str)
         if source_errors:
+            curated["source_errors"] = list(source_errors)
+        return curated
+    return None
+
+
+def _collect_latest_recovery_time(
+    client: Any, now: Optional[datetime.datetime] = None
+) -> Dict[str, Any]:
+    """FORK: the current recovery value -- the most recent snapshot, any day.
+
+    Garmin recomputes recovery at events (waking, an activity, a nap) and a
+    snapshot holds until the next one, so "now" is the latest snapshot,
+    whichever day it falls on. Upstream defaulted to the SERVER's local date;
+    on a UTC server that is already tomorrow for an athlete in the Americas
+    every evening, and has no snapshot overnight until the wake-up one exists,
+    so the tool answered "unavailable" while a 72h snapshot was current.
+
+    Snapshots are filed under the athlete's local calendar date, which only
+    moves forward, so the latest snapshot is on the latest date that has any.
+    The athlete's local date is always within a day of UTC, so this checks
+    UTC tomorrow, today and yesterday, newest first -- no timezone lookup, no
+    assumption about where the server or the athlete is. A date in the
+    athlete's future simply has no snapshots (verified: an empty result).
+    """
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    utc_today = now.astimezone(datetime.timezone.utc).date()
+    candidates = [utc_today + datetime.timedelta(days=d) for d in (1, 0, -1)]
+
+    source_errors: List[Dict[str, str]] = []
+    for day in candidates:
+        curated = _recovery_snapshot_for_date(client, day.isoformat(), source_errors)
+        if curated:
+            curated["resolved_as"] = "latest_snapshot"
+            # A failed lookup on a NEWER date means this may not be the latest.
+            if source_errors:
+                curated["source_errors"] = list(source_errors)
+            return curated
+
+    curated = _recovery_from_recent_activities(client, now, source_errors)
+    if curated:
+        curated.setdefault("date", utc_today.isoformat())
+        if source_errors:
             curated["source_errors"] = source_errors
+        return curated
+
+    if source_errors:
+        raise RuntimeError("; ".join(
+            f"{error['source']}: {error['error']}" for error in source_errors
+        ))
+    return {
+        "remaining_hours": None,
+        "state": "unavailable",
+        "checked_dates": [d.isoformat() for d in candidates],
+        "message": (
+            "No Training Readiness recovery snapshot in the last day and recent "
+            "activities did not include recoveryTime. Some devices (for example "
+            "Forerunner 255) show recovery on-device without publishing a Connect "
+            "Training Readiness feed."
+        ),
+    }
+
+
+def _collect_recovery_time(
+    client: Any, date_str: str, now: Optional[datetime.datetime] = None
+) -> Dict[str, Any]:
+    """Resolve recovery-time remaining for an explicit date: readiness, then activities."""
+    source_errors: List[Dict[str, str]] = []
+    curated = _recovery_snapshot_for_date(client, date_str, source_errors)
+    if curated:
         return curated
 
     if now is None:
@@ -1847,11 +1915,17 @@ def register_tools(app):
         and from Training Status ACWR. Training Readiness values are snapshots:
         remaining_hours and state describe the snapshot at as_of (Garmin's local
         timestamp when available), not a live countdown. remaining_hours_at_snapshot
-        retains the same value explicitly. For today only, when snapshots are
-        absent, the tool estimates remaining recovery by decaying recent activity
-        assignments and reports the estimate's as_of time. Today uses the server's
-        local date. Request failures are reported as errors, or source_errors when
-        another source supplies usable data.
+        retains the same value explicitly. Request failures are reported as
+        errors, or source_errors when another source supplies usable data.
+
+        Omit `date` for the current value: the most recent snapshot, whichever
+        day it was taken (reported with `resolved_as: latest_snapshot`; its own
+        `date` and `as_of` say when). This does not depend on the server's
+        timezone -- in the evening in the Americas a UTC server is already on
+        tomorrow's date, which has no snapshot yet. Only when no snapshot exists
+        within the last day does it fall back to estimating remaining recovery by
+        decaying recent activity assignments. Pass `date` for a specific day's
+        latest snapshot.
 
         Garmin recomputes recovery at events -- waking, finishing an activity,
         a nap -- and `input_context` names the event behind the snapshot (e.g.
@@ -1863,16 +1937,21 @@ def register_tools(app):
         Readiness score, not a recovery measure.
 
         Args:
-            date: Date in YYYY-MM-DD format. Defaults to today.
+            date: Date in YYYY-MM-DD format. Omit for the current value (the
+                most recent snapshot, on whatever day it was taken).
         """
-        try:
-            date = (date or "").strip() or datetime.date.today().isoformat()
-            datetime.datetime.strptime(date, "%Y-%m-%d")
-        except ValueError:
-            return f"Invalid date {date!r}. Use YYYY-MM-DD."
+        date = (date or "").strip()
+        if date:
+            try:
+                datetime.datetime.strptime(date, "%Y-%m-%d")
+            except ValueError:
+                return f"Invalid date {date!r}. Use YYYY-MM-DD."
 
         try:
-            curated = _collect_recovery_time(garmin_client, date)
+            curated = (
+                _collect_recovery_time(garmin_client, date) if date
+                else _collect_latest_recovery_time(garmin_client)
+            )
             return json.dumps(curated, indent=2)
         except Exception as e:
             return f"Error retrieving recovery time remaining: {str(e)}"

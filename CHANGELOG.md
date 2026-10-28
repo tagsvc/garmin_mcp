@@ -5,6 +5,33 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Current recovery no longer "unavailable" in the evening — 2026-10-28
+
+Right after the recovery fix went live, `get_recovery_time_remaining` called
+without a date returned `state: "unavailable"` at 8:20 PM in New York, while a 72h
+snapshot from that afternoon was current. With no date, it looked up the
+**server's** date (upstream #469: "Today uses the server's local date"). Railway
+runs on UTC, so from 8 PM Eastern (7 PM in winter) until midnight it is already
+tomorrow there; and overnight, until the wake-up snapshot exists, "today" has
+none either.
+
+**Fix:** with no date, the tool now reports the most recent snapshot, on whatever
+day it was taken, marked `resolved_as: latest_snapshot` — consistent with how
+Garmin works: a snapshot holds until the next wake-up, activity or nap. Snapshots
+are filed under the athlete's local calendar date, which only moves forward and
+is always within a day of UTC, so it checks UTC tomorrow, today and yesterday,
+newest first, and takes the first with snapshots. No timezone lookup, and no
+assumption about where the server or the athlete is; a date in the athlete's
+future simply comes back empty (verified live). A failed lookup on a newer date
+is reported in `source_errors`, since the result may then not be the latest.
+Only if nothing is found within a day does it fall back to upstream's
+activity-based estimate. An explicit `date` behaves as before.
+
+Tests: the live evening case (00:20 UTC = 20:20 EDT), daytime, newest date
+winning, an athlete east of UTC found on UTC tomorrow, a failed newer lookup,
+nothing in range, and the tool's no-date call — which fails on the old default.
+Suite: 1459 passed.
+
 ## mcp 1.30.0 and certifi 2026.10.23; remote runs stateless — 2026-10-28
 
 Five advisories published after the 2026-10-14 audit, all already present on

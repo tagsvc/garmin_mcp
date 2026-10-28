@@ -162,8 +162,14 @@ coverage.
   web client has no display text for the phrase and shows hours from
   `recoveryTime`. Snapshots are event-driven (wake, activity, nap) and hold until
   the next event, so values are reported with `as_of` and `input_context`, never
-  as a live countdown. _On merge:_ do not take an upstream change that lets the
-  phrase alter the hours. Pinned by `test_recovery_live_snapshots.py`, built from
+  as a live countdown. With no date given, `get_recovery_time_remaining`
+  reports the most recent snapshot on any day (`resolved_as: latest_snapshot`),
+  not the server's "today": on Railway's UTC clock it is already tomorrow every
+  evening in New York, and the tool said "unavailable" while a 72h snapshot was
+  current. Snapshots are filed under the athlete's local date, so it checks UTC
+  tomorrow, today and yesterday, newest first, with no timezone lookup. _On
+  merge:_ do not take an upstream change that lets the phrase alter the hours,
+  or that defaults the date to the server's clock. Pinned by `test_recovery_live_snapshots.py`, built from
   the real payload and confirmed to fail on the upstream rule.
 - **Garmin's "completed" means ended, not finished.** A cancelled (quit) plan is
   listed under `/atp-api/atp/athlete/completed` and carries `planCompleted: true`
@@ -433,7 +439,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1452 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1459 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
