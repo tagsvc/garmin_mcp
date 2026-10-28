@@ -1213,6 +1213,15 @@ def register_tools(app):
         totalDistanceMeters gets totalDistanceMiles (statute) or totalDistanceKm;
         floorsAscendedInMeters/floorsDescendedInMeters get *Feet (statute).
 
+        Times: Garmin's payload is kept as sent (for garminconnect-ha), and its
+        values carry no zone marker -- *Gmt/*GMT values have no Z and *Local values
+        no offset. Use the fields this tool adds instead: beside each GMT time a
+        *Local sibling with its UTC offset (lastSyncTimestampLocal,
+        latestRespirationTimeLocal, bodyBatteryDynamicFeedbackEvent.eventTimestampLocal,
+        bodyBatteryActivityEventList[].eventStartTimeLocal / eventUpdateTimeLocal,
+        each event at its own timezoneOffset), and utcOffsetHours, the day's offset
+        from Garmin's wellnessStartTimeGmt/wellnessStartTimeLocal pair.
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -1266,6 +1275,15 @@ def register_tools(app):
         Distance and floor heights get account-unit companions as in
         get_user_summary; weight, boneMass and muscleMass are grams and get *Lb on
         a US account.
+
+        Times: Garmin's payload is kept as sent (for garminconnect-ha), and its
+        values carry no zone marker -- *Gmt/*GMT values have no Z and *Local values
+        no offset. Use the fields this tool adds instead: beside each GMT time a
+        *Local sibling with its UTC offset (lastSyncTimestampLocal,
+        latestRespirationTimeLocal, bodyBatteryDynamicFeedbackEvent.eventTimestampLocal,
+        bodyBatteryActivityEventList[].eventStartTimeLocal / eventUpdateTimeLocal,
+        each event at its own timezoneOffset), and utcOffsetHours, the day's offset
+        from Garmin's wellnessStartTimeGmt/wellnessStartTimeLocal pair.
 
         Args:
             date: Date in YYYY-MM-DD format

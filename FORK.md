@@ -246,7 +246,9 @@ coverage.
   In Garmin's own payloads, a `*Gmt`/`*GMT` time needs a `*Local` beside it
   (`times.add_local_siblings`, at the record's own offset) or a
   `utcOffsetHours` above it; the sweep's stand-in returns a fresh copy per
-  call, since tools label payloads in place.
+  call, since tools label payloads in place. A tool whose output carries
+  `utcOffsetHours`, `local_time_zone`, `localTimeZone` or `utc_offset_hours`
+  must name it in its description (checked by the sweep).
   Reintroducing a bare `start_time`, an unwrapped tool, a server-clock
   timestamp or a bare sleep epoch each fails these tests (checked
   2026-10-28). _On merge:_ fix a contract failure; do not widen the
@@ -524,7 +526,7 @@ taken whole.
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1678 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass (1679 at time of writing).
 - Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
