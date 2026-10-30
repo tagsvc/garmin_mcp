@@ -555,3 +555,17 @@ async def test_split_end_times_get_the_splits_own_local_time(app, mock_garmin_cl
     assert split["endTimeLocal"] == "2026-10-27T14:46:02-04:00"
     assert split["startTimeLocal"] == "2026-10-27T14:37:26-04:00"  # Garmin's, zoned
     assert split["endTimeGMT"] == "2026-10-27T18:46:02Z"
+
+
+
+@pytest.mark.asyncio
+async def test_body_battery_raw_returns_garmins_report_unchanged(app, mock_garmin_client):
+    report = [{"date": "2026-10-30", "charged": 51, "drained": 1,
+               "bodyBatteryValuesArray": [[1793160000000, 40], [1793195000000, 90]],
+               "bodyBatteryActivityEvent": [{"eventStartTimeGmt": "2026-10-30T04:10:55.0"}]}]
+    mock_garmin_client.get_body_battery.return_value = json.loads(json.dumps(report))
+
+    data = await _call(app, "get_body_battery",
+                       {"start_date": "2026-10-30", "end_date": "2026-10-30", "raw": True})
+
+    assert data == report

@@ -1392,7 +1392,9 @@ def register_tools(app):
             return f"Error retrieving training readiness data: {str(e)}"
 
     @app.tool()
-    async def get_body_battery(ctx: Context, start_date: str, end_date: str) -> str:
+    async def get_body_battery(
+        ctx: Context, start_date: str, end_date: str, raw: bool = False
+    ) -> str:
         """Get body battery data with events
 
         Event times: start_time_gmt, and start_time_local from the event's own
@@ -1401,11 +1403,16 @@ def register_tools(app):
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
+            raw: Return Garmin's daily body battery report exactly as sent (keys,
+                values and time text unchanged) instead of the curated summary,
+                which leaves fields out. For checking what the summary omits.
         """
         try:
             battery_data = get_client(ctx).get_body_battery(start_date, end_date)
             if not battery_data:
                 return f"No body battery data found between {start_date} and {end_date}"
+            if raw:
+                return json.dumps(battery_data, indent=2)
 
             # Curate each day's data
             curated = []
