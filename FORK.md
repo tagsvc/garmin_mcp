@@ -46,6 +46,7 @@ coverage.
 | Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
 | Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. |
+| Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
 ## Invariants that must NOT regress
@@ -528,6 +529,19 @@ taken whole.
   `client`; the broken callers of `_put_activity_update` were in no conflict
   hunk at all. When a hunk changes a helper's signature, grep every call site
   across the package and adopt upstream's caller text along with the helper.
+
+**Check what the tools leave out.** The suite runs on synthetic replies, so it
+cannot see a field Garmin sends that a tool drops. After a sync that touches a
+tool module, run the coverage check on a machine with real Garmin tokens and
+review any field newly listed against the previous run:
+
+```bash
+uv run python scripts/field_coverage.py --output field_coverage.txt
+```
+
+The report holds field names and counts only, never values, but it shows which
+of your data types have data, so it stays out of the repo (`.gitignore` covers
+`field_coverage*.txt`).
 
 **Definition of done:** suite green, invariants intact, tool counts stdio 174 / remote 171.
 

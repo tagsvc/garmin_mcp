@@ -5,6 +5,32 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Field-coverage check — 2026-10-30
+
+`scripts/field_coverage.py` lists, for each read-only tool, the fields in
+Garmin's reply that the tool's output leaves out. A curated output cannot
+show what it omits. The body battery level was missing until PR #61, and a
+reader concluded it did not exist. Upstream's curation (`f060072`) rebuilt
+about 40 tools the same way.
+
+Run it locally with real Garmin tokens:
+
+```bash
+uv run python scripts/field_coverage.py --output field_coverage.txt
+```
+
+How it works:
+- **One call per tool.** It calls every read-only tool once and records a
+  copy of each reply Garmin sent that tool.
+- **Matching.** A field counts as shown when its value is in the output.
+  Times match in any zone or form, and common unit conversions count when
+  the keys are related.
+- **Report.** The report holds field names and counts only, never values.
+  Keys that look like data (dates, ids, serials) print as `{key}`.
+- **No writes.** It never calls a tool that writes. The analytics tools are
+  skipped unless `--include-derived`, since they compute reports rather than
+  show a reply.
+
 ## `get_body_battery` gives the level as a number — 2026-10-30
 
 The curated summary now carries each day's body battery level, 0-100, from
