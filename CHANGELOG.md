@@ -5,6 +5,25 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Field-coverage check: readable report — 2026-10-30
+
+The first live run listed about 2,000 fields, most of them noise.
+
+- **Noise hidden.** Fields every tool omits on purpose are hidden by default:
+  ids, record owners, images, coordinates, Garmin's internal flags, and the
+  ~300 device capability flags. The report gives their count, and `--all`
+  lists them.
+- **False alarms fixed.** These now count as shown:
+  - `maximumMeters` shown as `max_distance_km` (*maximum*/*max* and
+    *average*/*avg* are one word);
+  - a time shown as its date alone under a related key (gear dates, badge
+    dates);
+  - a value turned into a key (health status metric types);
+  - a tenfold scale (lactate threshold speed).
+- **`pyproject.toml`.** Dev dependencies moved from the deprecated
+  `tool.uv.dev-dependencies` to `[dependency-groups] dev`, so `uv` no longer
+  warns. The lockfile is unchanged.
+
 ## Field-coverage check — 2026-10-30
 
 `scripts/field_coverage.py` lists, for each read-only tool, the fields in

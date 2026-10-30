@@ -158,3 +158,63 @@ def test_an_id_argument_with_nothing_to_use_skips_its_tools():
 
     assert report["skipped"] == {
         "get_coach_plan_details": "needs plan_id (none found; pass it as a flag)"}
+
+
+# --- false alarms the first live run (2026-10-30) showed ---------------------
+
+def test_maximum_and_max_are_the_same_word():
+    assert _missing({"maximumMeters": 800000.0}, {"max_distance_km": 800.0}) == {}
+
+
+def test_a_time_the_tool_shows_as_a_date_counts_under_a_related_key():
+    reply = {"dateBegin": "2026-03-01T00:00:00.0", "badgeEarnedDate": "2026-05-12T10:23:11.0"}
+    assert _missing(reply, {"date_begin": "2026-03-01", "earned_date": "2026-05-12"}) == {}
+    assert _missing({"badgeEarnedDate": "2026-05-12T10:23:11.0"}, {"week_start": "2026-05-12"}) \
+        == {"badgeEarnedDate": (0, 1)}
+
+
+def test_a_value_the_tool_turns_into_a_key_counts():
+    reply = {"metrics": [{"type": "HRV", "value": 45.5}, {"type": "SKIN_TEMP_C", "value": 0.3}]}
+    output = {"hrv": {"value": 45.5}, "skin_temperature_deviation_celsius": 0.3}
+    assert _missing(reply, output) == {"metrics[].type": (1, 2)}
+
+
+def test_a_tenfold_scale_counts_when_the_keys_are_related():
+    # Garmin's lactate threshold speed is a tenth of the m/s value.
+    assert _missing({"speed": 0.36}, {"lactate_threshold_speed_mps": 3.6}) == {}
+
+
+@pytest.mark.parametrize("field, noise", [
+    ("get_devices: [].ac3Capable", True),
+    ("get_devices: [].capabilities[].capable", True),
+    ("get_activity: metadataDTO.userInfoDto.fullname", True),
+    ("get_workouts: [].author.userPro", True),
+    ("get_activities: [].ownerProfileImageUrlLarge", True),
+    ("get_activity: summaryDTO.startLatitude", True),
+    ("get_sleep_data: dailySleepDTO.userProfilePK", True),
+    ("get_activity: activityTypeDTO.typeId", True),
+    ("get_devices: [].minGCMiOSVersion", True),
+    ("get_activity: summaryDTO.beginPotentialStamina", False),
+    ("get_sleep_data: dailySleepDTO.sleepNeed.actual", False),
+    ("get_devices: [].currentFirmwareVersion", False),
+    ("get_stats: bodyBatteryAtWakeTime", False),
+    ("get_activity: activityTypeDTO.typeKey", False),
+])
+def test_noise_is_what_every_tool_omits_on_purpose(field, noise):
+    assert fc.is_noise(field) is noise
+
+
+def test_the_report_hides_noise_unless_asked():
+    missing = [("get_devices: [].ac3Capable", 0, 1), ("get_devices: [].deviceId", 0, 1),
+               ("get_devices: [].currentFirmwareVersion", 0, 1)]
+    report = {"date": "2026-10-30", "days": 7, "skipped": {},
+              "tools": {"get_devices": {"methods": ["get_devices"], "binary": [], "missing": missing},
+                        "get_sensors": {"methods": ["connectapi"], "binary": [],
+                                        "missing": [("connectapi: [].imageUrl", 0, 1)]}}}
+
+    text = fc.render(report)
+    assert "currentFirmwareVersion" in text
+    assert "ac3Capable" not in text and "deviceId" not in text
+    assert "3 fields every tool omits on purpose" in text
+    assert "## Nothing left out\n  get_sensors" in text
+    assert "ac3Capable" in fc.render(report, show_all=True)
