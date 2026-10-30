@@ -35,3 +35,6 @@ required checks must pass before it can merge.
 3. Re-enumerate tool counts if registration changed (expect stdio 174 / remote 171).
 4. A new read-only tool goes in `tests/integration/test_units_times_sweep.py`'s
    table; a units/times contract failure is fixed, not allowlisted without a reason.
+5. If a tool module changed, ask the user to run
+   `uv run python scripts/field_coverage.py` locally (it needs real Garmin
+   tokens) and paste the report; review any field a tool newly leaves out.

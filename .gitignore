@@ -24,5 +24,8 @@ scratch/*
 # Written by the security.yml audit step (uv export -o); also appears locally
 # when reproducing that step by hand.
 requirements-audit.txt
+# scripts/field_coverage.py reports: field names only, but they show which data
+# types the account has.
+field_coverage*.txt
 tests/fixtures/captured/*
 !tests/fixtures/captured/poc_walk_run.json
