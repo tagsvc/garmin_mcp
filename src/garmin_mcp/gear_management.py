@@ -59,6 +59,17 @@ ACTIVITY_TYPE_MAPPING = {
 GEAR_V2_LIST_ENDPOINT = "/gear-service/gear/v2/list"
 
 
+def _catalog_name(*names: Any) -> Optional[str]:
+    """The first real brand or model name, skipping Garmin's placeholders
+    ("Other", "Unknown Shoes") that stand for no name at all."""
+    for name in names:
+        if isinstance(name, str) and name.strip():
+            lowered = name.strip().lower()
+            if lowered != "other" and not lowered.startswith("unknown"):
+                return name.strip()
+    return None
+
+
 def _parse_iso_date(iso_string: Optional[str]) -> Optional[str]:
     """Extract a date from an optional ISO datetime string."""
     if not iso_string:
@@ -120,9 +131,11 @@ def register_tools(app):
             if not gear_list:
                 return "No gear found."
 
-            # Notes are only exposed by Garmin's v2 gear endpoint. Its UUIDs are
-            # hyphenated, unlike the legacy endpoint used for the existing fields.
+            # Notes, brand and model are only exposed by Garmin's v2 gear
+            # endpoint. Its UUIDs are hyphenated, unlike the legacy endpoint
+            # used for the existing fields.
             notes_by_uuid: Dict[str, Optional[str]] = {}
+            v2_by_uuid: Dict[str, Dict[str, Any]] = {}
             try:
                 gear_v2_list = garmin_client.connectapi(GEAR_V2_LIST_ENDPOINT) or []
                 if not isinstance(gear_v2_list, list):
@@ -137,6 +150,7 @@ def register_tools(app):
                     normalized_v2_uuid = _normalize_gear_uuid(gear_v2.get("uuid"))
                     if normalized_v2_uuid:
                         notes_by_uuid[normalized_v2_uuid] = gear_v2.get("notes")
+                        v2_by_uuid[normalized_v2_uuid] = gear_v2
             except Exception as exc:
                 logger.debug(
                     "Garmin v2 gear list unavailable: %s", exc, exc_info=True
@@ -175,8 +189,20 @@ def register_tools(app):
                     "uuid": uuid,
                     "name": g.get("displayName"),
                     "full_name": g.get("customMakeModel"),
-                    "make": g.get("gearMakeName"),
-                    "model": g.get("gearModelName"),
+                    # FORK: the brand and model picked from Garmin's catalog
+                    # (verified live 2026-10-30: v2 "adidas" / "Adizero Adios
+                    # Pro 5", and the typed text for a model chosen as "Other").
+                    # The legacy list's gearMakeName/gearModelName read
+                    # "Other" / "Unknown Shoes" even for catalog gear, and v2
+                    # lists only active gear, so a retired shoe has neither.
+                    "make": _catalog_name(
+                        v2_by_uuid.get(_normalize_gear_uuid(uuid), {}).get("brand"),
+                        g.get("gearMakeName"),
+                    ),
+                    "model": _catalog_name(
+                        v2_by_uuid.get(_normalize_gear_uuid(uuid), {}).get("model"),
+                        g.get("gearModelName"),
+                    ),
                     "type": g.get("gearTypeName"),
                     "status": status,
                     "date_begin": _parse_iso_date(g.get("dateBegin")),

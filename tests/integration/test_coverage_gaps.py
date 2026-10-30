@@ -539,3 +539,45 @@ async def test_gear_gives_make_and_model(app, mock_garmin_client):
     item = (gear["gear"] if isinstance(gear, dict) else gear)[0]
 
     assert (item["make"], item["model"]) == ("Brooks", "Ghost 16")
+
+
+@pytest.mark.asyncio
+async def test_gear_takes_brand_and_model_from_the_v2_list_not_the_legacy_placeholders(app, mock_garmin_client):
+    """Live, 2026-10-30: every shoe was picked from Garmin's catalog, yet the
+    legacy list read "Other" / "Unknown Shoes" for all six. The v2 list has
+    the names, and only lists active gear."""
+    mock_garmin_client.get_device_last_used.return_value = {"userProfileNumber": 1}
+    placeholders = {"gearMakeName": "Other", "gearModelName": "Unknown Shoes"}
+    mock_garmin_client.get_gear.return_value = [
+        {"uuid": "aaaa1111bbbb2222cccc3333dddd4444", "customMakeModel": "Brooks Ghost AMP",
+         "gearStatusName": "active", **placeholders},
+        {"uuid": "eeee5555ffff6666aaaa7777bbbb8888", "customMakeModel": "ASICS Gel-Cumulus 28",
+         "gearStatusName": "retired", **placeholders},
+    ]
+    mock_garmin_client.get_gear_defaults.return_value = []
+    mock_garmin_client.connectapi.return_value = [{
+        # Hyphenated, as v2 writes UUIDs; the model is the text typed for "Other".
+        "uuid": "aaaa1111-bbbb-2222-cccc-3333dddd4444", "status": "ACTIVE",
+        "brand": "Brooks", "model": "Ghost AMP"}]
+
+    gear = await _call(app, "get_gear", {"include_stats": False})
+    active, retired = gear["gear"]
+
+    assert (active["make"], active["model"]) == ("Brooks", "Ghost AMP")
+    # get_gear keeps empty fields as null, like name and date_end.
+    assert (retired["make"], retired["model"]) == (None, None)
+    assert retired["full_name"] == "ASICS Gel-Cumulus 28"
+
+
+@pytest.mark.parametrize("names, expected", [
+    (("adidas", "Other"), "adidas"),
+    ((None, "Brooks"), "Brooks"),
+    (("Other", "Unknown Shoes"), None),
+    (("", "  "), None),
+    (("unknown bike", None), None),
+    ((" ASICS ",), "ASICS"),
+])
+def test_catalog_name_skips_garmins_placeholders(names, expected):
+    from garmin_mcp.gear_management import _catalog_name
+
+    assert _catalog_name(*names) == expected
