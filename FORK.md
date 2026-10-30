@@ -46,11 +46,18 @@ coverage.
 | Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
 | Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. |
+| Diagnostics (1 tool) | `diagnostics.py`, `payload_recording.py`, `field_coverage.py` | `inspect_garmin`: runs one read-only tool with its Garmin replies recorded and returns them, optionally with the fields its output leaves out; or GETs one Garmin Connect API path. `find`/`fields` narrow a reply; replies cap at ~20 KB. Registered in both servers. |
 | Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
 ## Invariants that must NOT regress
 
+- **`inspect_garmin` stays read-only.** It runs only tools annotated read-only
+  (never itself), and its endpoint mode calls `connectapi`, which only sends
+  GET, on a rooted Garmin Connect path (no host, no `..`, no `//`). Recording is
+  per request (a contextvar in `payload_recording.py`): a call made for one
+  request is never recorded into another's, and the wrapped client is never a
+  cache key (`profile_settings` unwraps it).
 - **`mcp` stays capped `<2`.** mcp 2.x renames `mcp.server.fastmcp` -> `mcp.server.mcpserver`
   (`FastMCP` -> `MCPServer`); the server is not ported. Don't remove the upper bound
   until that port is done.
@@ -543,12 +550,12 @@ The report holds field names and counts only, never values, but it shows which
 of your data types have data, so it stays out of the repo (`.gitignore` covers
 `field_coverage*.txt`).
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 174 / remote 171.
+**Definition of done:** suite green, invariants intact, tool counts stdio 175 / remote 172.
 
 ## Expected state after a clean build
 
 - Full suite: `uv run pytest -m "not e2e"` → all pass (1683 at time of writing).
-- Tool counts: **stdio 174**, **remote 171** (`auth_tools` and `delete_activity` are stdio-only).
+- Tool counts: **stdio 175**, **remote 172** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.

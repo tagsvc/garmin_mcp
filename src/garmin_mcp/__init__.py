@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from garminconnect import Garmin, GarminConnectAuthenticationError, GarminConnectConnectionError, GarminConnectTooManyRequestsError
 
 # Import all modules
+from garmin_mcp import payload_recording
 from garmin_mcp import token_utils
 from garmin_mcp import activity_management
 from garmin_mcp import health_wellness
@@ -39,6 +40,7 @@ from garmin_mcp import activity_analysis
 from garmin_mcp import analytics
 from garmin_mcp import auth_tools
 from garmin_mcp import calendar_events
+from garmin_mcp import diagnostics
 from garmin_mcp.client_resolver import set_global_client
 from garmin_mcp.tool_annotations import annotations_for
 from garmin_mcp.tool_profiles import resolve_tool_profile
@@ -205,15 +207,21 @@ class _GarminProxy:
         ),
     }
 
-    def __init__(self, client, timeout=None):
+    # FORK: inspect_garmin's recording (payload_recording.py). The stdio
+    # module globals call Garmin through this proxy, not get_client(), so it
+    # records those calls itself -- unless what it wraps already records.
+    _records_calls = True
+
+    def __init__(self, client, timeout=None, record_prefix=""):
         self._client = client
         self._timeout = _resolve_call_timeout() if timeout is None else timeout
+        self._record_prefix = record_prefix
 
     def __getattr__(self, name):
         attr = getattr(self._client, name)
         if name == "client":
             # Direct HTTP writes must share runtime hints and the call bound.
-            return _GarminProxy(attr, timeout=self._timeout)
+            return _GarminProxy(attr, timeout=self._timeout, record_prefix="client.")
         if not callable(attr):
             return attr
 
@@ -274,7 +282,17 @@ class _GarminProxy:
                 raise outcome["error"]
             return outcome.get("value")
 
-        return _call
+        calls = payload_recording.active_calls()
+        if calls is None or payload_recording.records_itself(self._client):
+            return _call
+        record_as = self._record_prefix + name
+
+        def _recorded(*args, **kwargs):
+            reply = _call(*args, **kwargs)
+            payload_recording.record(calls, record_as, reply)
+            return reply
+
+        return _recorded
 
 
 class _ThreadFilteredStream:
@@ -823,6 +841,7 @@ def main():
     activity_analysis.configure(garmin_client)
     analytics.configure(garmin_client)
     calendar_events.configure(garmin_client)
+    diagnostics.configure(garmin_client)
     # auth_tools activates the live client after a successful runtime login;
     # wrap it the same way so runtime-login clients get friendly error messages.
     auth_tools.configure(lambda c: set_global_client(_GarminProxy(c)))
@@ -868,6 +887,7 @@ def main():
     app = activity_analysis.register_tools(app)
     app = analytics.register_tools(app)
     app = calendar_events.register_tools(app)
+    app = diagnostics.register_tools(app)
     app = auth_tools.register_tools(app)
 
     # Register resources (workout templates)

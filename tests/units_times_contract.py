@@ -57,6 +57,11 @@ RAW_UNZONED = {
     "dateEnd": "gear service dateEnd: a date written as midnight",
 }
 
+# Keys whose subtree is Garmin's reply exactly as sent, by design, and why.
+RAW_PASSTHROUGH = {
+    "garmin_replies": "inspect_garmin shows Garmin's replies unchanged, to check what tools leave out",
+}
+
 # Garmin GMT keys whose local time the tool adds under a different name.
 RAW_LOCAL_SIBLINGS = {
     "timestampGMT": ("measuredAtLocal",),  # body composition weigh-ins
@@ -132,6 +137,8 @@ def _walk(node: Any, path: str, swim: bool, offset_in_scope: bool) -> Iterator[s
     # A payload's utcOffsetHours converts every GMT time beneath it.
     offset_in_scope = offset_in_scope or "utcOffsetHours" in node
     for key, value in node.items():
+        if key in RAW_PASSTHROUGH:
+            continue
         if (
             isinstance(key, str) and not _SNAKE.match(key) and key not in RAW_UNZONED
             and isinstance(value, str) and _ISO_DATETIME.match(value)
@@ -151,6 +158,8 @@ def _walk(node: Any, path: str, swim: bool, offset_in_scope: bool) -> Iterator[s
             yield f"{path}.{key}: GMT time with no local time beside it"
     for key, value in node.items():
         here = f"{path}.{key}"
+        if key in RAW_PASSTHROUGH:
+            continue
         if isinstance(key, str) and _is_number(value) and units._is_number(value):
             for companion, converted in units._companions(key, value, units.STATUTE_US, swim):
                 if converted is not None and companion not in node:
@@ -193,6 +202,7 @@ _NOT_OUTPUT_MODULES = {
     "oauth_claude.py", "oauth_provider.py", "remote.py", "session_manager.py",
     "token_utils.py", "tool_annotations.py", "tool_profiles.py", "write_errors.py",
     "client_resolver.py", "units.py", "times.py", "profile_settings.py",
+    "field_coverage.py", "payload_recording.py",
     "workout_builders.py", "workout_templates.py",
 }
 

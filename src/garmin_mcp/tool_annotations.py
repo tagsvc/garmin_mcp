@@ -226,6 +226,8 @@ _FORK_READ_ONLY_TOOLS = frozenset(
         "get_sensors",
         "get_weekly_health_review",
         "get_wellness_anomalies",
+        # Runs only read-only tools, or GETs one Garmin Connect API path.
+        "inspect_garmin",
         "list_health_report_metrics",
         "list_saved_health_reports",
         "run_custom_health_report",
@@ -247,6 +249,11 @@ _FORK_LOCAL_ONLY_TOOLS = frozenset(
         "save_custom_health_report",
     }
 )
+
+# Display titles, for tools whose name alone would not say what they are for.
+# claude.ai groups tools by the hints above (read-only, write); a title is how a
+# diagnostic stands out within its group.
+_FORK_TITLES = {"inspect_garmin": "Diagnostic: inspect Garmin reply"}
 
 READ_ONLY_TOOLS = READ_ONLY_TOOLS | _FORK_READ_ONLY_TOOLS
 DESTRUCTIVE_TOOLS = DESTRUCTIVE_TOOLS | _FORK_DESTRUCTIVE_TOOLS
@@ -271,6 +278,7 @@ def annotations_for(name: str) -> ToolAnnotations | None:
         return None
 
     return ToolAnnotations(
+        title=_FORK_TITLES.get(name),
         readOnlyHint=read_only,
         destructiveHint=destructive,
         idempotentHint=name in IDEMPOTENT_TOOLS if not read_only else None,

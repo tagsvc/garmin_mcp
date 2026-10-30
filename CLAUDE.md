@@ -28,11 +28,11 @@ required checks must pass before it can merge.
 2. Confirm the invariants in `FORK.md` still hold (allowlist fail-closed,
    import-secret gating, `garminconnect==0.3.5` pin (security floor, CVE-2026-54447), `mcp>=1.30.0`
    floor (CVE-2026-59951), remote server stateless, `auth_tools` stdio-only, `delete_activity` withheld
-   from remote, recovery hours from `recoveryTime` (never the change phrase), account-unit
+   from remote, `inspect_garmin` read-only (read-only tools and GET only), recovery hours from `recoveryTime` (never the change phrase), account-unit
    companions added beside metric fields (never replacing them), times as `*_gmt`/`*_local`
    with local from the record's own offset before the profile zone, no `VOLUME` in
    `Dockerfile.remote`, `$PORT` handling).
-3. Re-enumerate tool counts if registration changed (expect stdio 174 / remote 171).
+3. Re-enumerate tool counts if registration changed (expect stdio 175 / remote 172).
 4. A new read-only tool goes in `tests/integration/test_units_times_sweep.py`'s
    table; a units/times contract failure is fixed, not allowlisted without a reason.
 5. If a tool module changed, ask the user to run

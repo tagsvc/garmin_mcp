@@ -268,6 +268,9 @@ def _garmin_double():
 # Tool -> arguments. Every read-only remote tool is listed (checked below).
 ARGS = {
     "count_activities": {}, "get_activities": {"limit": 1},
+    # Its own output is curated; the Garmin replies it returns are raw by design.
+    "inspect_garmin": {"tool": "get_body_battery",
+                       "arguments": {"start_date": D, "end_date": D}, "missing": True},
     "get_activities_by_date": {"start_date": D, "end_date": D},
     "get_activities_fordate": {"date": D}, "get_activity": {"activity_id": 1},
     "get_activity_splits": {"activity_id": 1}, "get_activity_typed_splits": {"activity_id": 1},
@@ -340,6 +343,7 @@ ARGS = {
 # Tools whose sweep payload carries the audited unit and time fields: these
 # must come back as JSON, so the contract check cannot pass by default.
 MUST_RETURN_JSON = {
+    "inspect_garmin",
     "get_activities", "get_activities_by_date", "get_activities_fordate", "get_activity",
     "get_activity_splits", "get_activity_typed_splits", "get_activity_split_summaries",
     "get_activity_weather", "get_activity_gear", "get_activity_exercise_sets", "get_gear",

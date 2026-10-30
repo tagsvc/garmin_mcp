@@ -25,7 +25,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~174 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
+This MCP server implements **~175 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
 
 - ✅ Activity Management (23 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only)
 - ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining
@@ -46,6 +46,7 @@ This MCP server implements **~174 tools** covering ~90% of the [python-garmincon
 - ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
 - ✅ Interactive Auth (2 tools, stdio mode) - `check_garmin_auth` / `login_to_garmin` to authenticate without restarting the client
 - ✅ Activity File Downloads (2 tools) - download activity files in FIT, GPX, TCX, or CSV format
+- ✅ Diagnostics (1 tool) - `inspect_garmin`: Garmin's raw reply for a read-only tool or an API path, and the fields a tool's output leaves out
 
 > **Note:** Activity Analysis tools require a compatible power meter (e.g., Garmin Rally, Favero Assioma, PowerTap P1) and/or Shimano Di2 / SRAM eTap electronic shifting. The `fitparse` dependency is installed automatically.
 
@@ -195,7 +196,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~174 tools by default, which can be a lot of context for
+This server registers ~175 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 three optional environment variables:
 

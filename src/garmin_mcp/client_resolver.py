@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Optional
 
 from garminconnect import Garmin
 
+from garmin_mcp.payload_recording import wrap_if_recording
+
 if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
 
@@ -89,7 +91,7 @@ def get_client(ctx: Optional[Context] = None) -> Garmin:
                 if user_id:
                     client = _session_manager.get_client(user_id)
                     if client is not None:
-                        return client
+                        return wrap_if_recording(client)
                     raise RuntimeError(
                         "Garmin session expired or not available. Please re-authenticate."
                     )
@@ -98,7 +100,7 @@ def get_client(ctx: Optional[Context] = None) -> Garmin:
 
     # Fallback to global client (stdio mode)
     if _global_client is not None:
-        return _global_client
+        return wrap_if_recording(_global_client)
 
     raise RuntimeError("Garmin client not available. Please authenticate first.")
 

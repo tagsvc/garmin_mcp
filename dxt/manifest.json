@@ -632,6 +632,10 @@
       "description": "Get all workouts with curated summary list"
     },
     {
+      "name": "inspect_garmin",
+      "description": "Diagnostic: Garmin's raw reply, to check what a tool leaves out."
+    },
+    {
       "name": "list_health_report_metrics",
       "description": "List metrics and options supported by custom health reports."
     },

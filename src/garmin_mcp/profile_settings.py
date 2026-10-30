@@ -22,9 +22,13 @@ def profile_settings(client: Any) -> Dict[str, Any]:
     key: it is resolved to the caller's own client first.
     """
     from garmin_mcp.client_resolver import _ResolvingGarminProxy, get_client
+    from garmin_mcp.payload_recording import unwrap
 
     if isinstance(client, _ResolvingGarminProxy):
         client = get_client()
+    # While inspect_garmin records, the client is wrapped per call; the cache
+    # is keyed by the client underneath.
+    client = unwrap(client)
     try:
         if client in _settings:
             return _settings[client]
