@@ -5,6 +5,22 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Sleep Coach: recommended bedtime and sleep alignment — 2026-10-30
+
+`get_sleep_summary` and `get_sleep_summary_range` now give Garmin's Sleep
+Coach:
+- `next_sleep_need_bedtime_start_clock` / `_end_clock`: the recommended
+  bedtime for tonight (`sleep_need_*` for the night just slept);
+- `sleep_alignment` (ALIGNED, BEHIND…);
+- `optimal_sleep_window_start_clock` / `_end_clock`;
+- `optimal_sleep_midpoint_clock` and `last_sleep_midpoint_clock`.
+
+Garmin sends these as minutes after local midnight, negative for the evening
+before. This was confirmed against the live Sleep Coach screen: 0/20 read
+"12:00 AM–12:20 AM", and −80/420 read "10:40 PM ~ 7:00 AM". A `*_clock`
+value is a local time of day (`HH:MM`), not an instant, so it carries no
+date or offset.
+
 ## Devices and the small gaps from the second coverage run — 2026-10-30
 
 - **`get_devices`:** firmware, status and the primary flag now show.
