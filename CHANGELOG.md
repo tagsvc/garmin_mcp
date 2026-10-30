@@ -5,6 +5,45 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Health tools: the fields the summaries left out — 2026-10-30
+
+The first live field-coverage run found these, all of which Garmin sends.
+Readers had been told, or had concluded, that they did not exist.
+
+- **`get_sleep_summary` and `get_sleep_summary_range`:**
+  - Garmin's sleep need for the night (`sleep_need_minutes`, with its
+    baseline and feedback) and for the next night (`next_sleep_need_minutes`);
+  - `body_battery_change` overnight;
+  - `avg_sleep_heart_rate_bpm`;
+  - average, lowest and highest respiration;
+  - highest SpO2;
+  - `breathing_disruption_severity`, `hrv_status`, and the skin temperature
+    deviation in °C and °F;
+  - Garmin's rating of each part of the score (`deep_sleep_rating`,
+    `stress_rating`…), with the stages' `target_range_percent`;
+  - the score feedback;
+  - naps, each with start and end `_gmt`/`_local` from the nap's own offset,
+    its length and its feedback.
+
+  SpO2 average and lowest fall back to `dailySleepDTO` when the SpO2 summary
+  block is missing.
+- **`get_stats`:**
+  - `body_battery_at_wake` and `body_battery_during_sleep`, with Garmin's
+    band and feedback;
+  - time and share of the day at each stress level (`stress_rest/low/medium/
+    high/activity_seconds` and `_percent`);
+  - `latest_spo2_percent` and `latest_respiration_brpm`, with their reading
+    times;
+  - the lowest and highest two-minute average heart rate;
+  - floors as height (`floors_ascended_meters`, with feet for US accounts:
+    `units` now treats *ascended*/*descended* as height);
+  - calories remaining against the goal.
+- **`get_training_readiness` and `get_morning_training_readiness`:**
+  `feedback_long` and `valid_sleep`. The recovery-time change phrase stays
+  out (FORK.md invariant).
+- **`get_body_battery`:** Garmin's end-of-day verdict
+  (`end_of_day_level_band`, `end_of_day_feedback`, `_long`, and its time).
+
 ## Field-coverage check: readable report — 2026-10-30
 
 The first live run listed about 2,000 fields, most of them noise.

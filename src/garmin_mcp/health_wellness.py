@@ -11,6 +11,7 @@ from garmin_mcp.profile_settings import profile_settings
 from garmin_mcp.units import account_unit_system, add_account_units, add_gram_masses
 from garmin_mcp.times import (
     add_local_siblings,
+    gmt,
     gmt_iso,
     local_from_offset,
     local_from_zone,
@@ -140,6 +141,10 @@ def _curate_training_readiness(r: Dict[str, Any]) -> Dict[str, Any]:
         "level": r.get('level'),
         "score": r.get('score'),
         "feedback": r.get('feedbackShort'),
+        # Garmin's full sentence key, beside the short one; validSleep says
+        # whether last night's sleep counted (field-coverage run, 2026-10-30).
+        "feedback_long": r.get('feedbackLong'),
+        "valid_sleep": r.get('validSleep'),
 
         # Contributing factors
         "sleep_score": r.get('sleepScore'),
@@ -374,6 +379,81 @@ def _collect_recovery_time(
     }
 
 
+# The parts of Garmin's sleep score, and the name each gets in the summary.
+_SLEEP_SCORE_PARTS = (
+    ("totalDuration", "duration"), ("stress", "stress"), ("awakeCount", "awake_count"),
+    ("restlessness", "restlessness"), ("deepPercentage", "deep_sleep"),
+    ("lightPercentage", "light_sleep"), ("remPercentage", "rem_sleep"),
+)
+
+
+def _sleep_score_parts(sleep_scores: Dict[str, Any]) -> Dict[str, Any]:
+    """Garmin's rating of each part of the score ("GOOD", "FAIR"), and for the
+    sleep stages its target share of the night, in percent."""
+    parts: Dict[str, Any] = {}
+    for garmin, name in _SLEEP_SCORE_PARTS:
+        part = sleep_scores.get(garmin)
+        if not isinstance(part, dict):
+            continue
+        parts[f"{name}_rating"] = part.get('qualifierKey')
+        low, high = part.get('optimalStart'), part.get('optimalEnd')
+        if garmin.endswith("Percentage") and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in (low, high)
+        ):
+            parts[f"{name}_target_range_percent"] = [low, high]
+    return parts
+
+
+def _sleep_need(need: Any, stem: str) -> Dict[str, Any]:
+    """Garmin's sleep need, in minutes: the night's (sleepNeed) or the next
+    one's (nextSleepNeed), with the baseline it adjusts and why."""
+    if not isinstance(need, dict):
+        return {}
+    return {
+        f"{stem}_minutes": need.get('actual'),
+        f"{stem}_baseline_minutes": need.get('baseline'),
+        f"{stem}_feedback": need.get('feedback'),
+    }
+
+
+def _offset_from_minutes(value: Any) -> Optional[datetime.timedelta]:
+    """A nap's UTC offset. Garmin writes minutes (-240 in New York); a value
+    small enough to be hours, or large enough to be seconds or milliseconds,
+    is read as that."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    for limit, unit in ((14, "hours"), (14 * 60, "minutes"), (14 * 3600, "seconds")):
+        if abs(value) <= limit:
+            return datetime.timedelta(**{unit: value})
+    return offset_from_ms(value)
+
+
+def _curate_naps(daily_sleep: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Each nap's start and end (GMT, and local from the nap's own offset,
+    else the night's), its length and Garmin's feedback."""
+    night = offset_from_pair(
+        daily_sleep.get('sleepStartTimestampGMT'), daily_sleep.get('sleepStartTimestampLocal')
+    )
+    naps = []
+    for nap in daily_sleep.get('dailyNapDTOS') or []:
+        if not isinstance(nap, dict):
+            continue
+        entry: Dict[str, Any] = {}
+        for stem, key in (("start", "napStart"), ("end", "napEnd")):
+            offset = _offset_from_minutes(nap.get(f"{key}TimeOffset"))
+            put_times(entry, stem, nap.get(f"{key}TimestampGMT"),
+                      offset=offset if offset is not None else night)
+        seconds = nap.get('napTimeSec')
+        start, end = gmt(nap.get('napStartTimestampGMT')), gmt(nap.get('napEndTimestampGMT'))
+        if seconds is None and start and end:
+            seconds = (end - start).total_seconds()
+        if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+            entry['duration_minutes'] = round(seconds / 60)
+        entry['feedback'] = nap.get('napFeedback')
+        naps.append({k: v for k, v in entry.items() if v is not None})
+    return [nap for nap in naps if nap]
+
+
 def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
     """Curate a single night's raw Garmin sleep payload down to essential metrics.
 
@@ -417,6 +497,24 @@ def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
         # Average physiological metrics
         summary['avg_sleep_stress'] = daily_sleep.get('avgSleepStress')
 
+        # FORK: from the 2026-10-30 field-coverage run. The summary left these
+        # out, so a reader could not say how much sleep was needed, or how the
+        # night's heart rate and breathing went, though get_sleep_data had them.
+        summary['avg_sleep_heart_rate_bpm'] = daily_sleep.get('avgHeartRate')
+        summary['avg_respiration_brpm'] = daily_sleep.get('averageRespirationValue')
+        summary['lowest_respiration_brpm'] = daily_sleep.get('lowestRespirationValue')
+        summary['highest_respiration_brpm'] = daily_sleep.get('highestRespirationValue')
+        summary['highest_spo2_percent'] = daily_sleep.get('highestSpO2Value')
+        summary['breathing_disruption_severity'] = daily_sleep.get('breathingDisruptionSeverity')
+        summary['sleep_score_feedback'] = daily_sleep.get('sleepScoreFeedback')
+        summary['sleep_score_insight'] = daily_sleep.get('sleepScoreInsight')
+        summary.update(_sleep_score_parts(sleep_scores))
+        summary.update(_sleep_need(daily_sleep.get('sleepNeed'), "sleep_need"))
+        summary.update(_sleep_need(daily_sleep.get('nextSleepNeed'), "next_sleep_need"))
+        naps = _curate_naps(daily_sleep)
+        if naps:
+            summary['naps'] = naps
+
     # Accept top-level physiological metrics while retaining the nested shape.
     summary['restless_moments_count'] = sleep_data.get(
         'restlessMomentsCount', daily_sleep.get('restlessMomentsCount')
@@ -430,6 +528,16 @@ def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
     if spo2_summary:
         summary['avg_spo2_percent'] = spo2_summary.get('averageSPO2', spo2_summary.get('averageSpo2'))
         summary['lowest_spo2_percent'] = spo2_summary.get('lowestSPO2', spo2_summary.get('lowestSpo2'))
+    if summary.get('avg_spo2_percent') is None:
+        summary['avg_spo2_percent'] = daily_sleep.get('averageSpO2Value')
+    if summary.get('lowest_spo2_percent') is None:
+        summary['lowest_spo2_percent'] = daily_sleep.get('lowestSpO2Value')
+
+    # Night-level values Garmin keeps beside dailySleepDTO, not inside it.
+    summary['body_battery_change'] = sleep_data.get('bodyBatteryChange')
+    summary['hrv_status'] = sleep_data.get('hrvStatus')
+    summary['skin_temperature_deviation_celsius'] = sleep_data.get('avgSkinTempDeviationC')
+    summary['skin_temperature_deviation_fahrenheit'] = sleep_data.get('avgSkinTempDeviationF')
 
     # Add HRV data if available at top level
     if 'avgOvernightHrv' in sleep_data:
@@ -764,6 +872,14 @@ def _battery_day_levels(day: dict, client: Any) -> Dict[str, Any]:
         out["current_feedback"] = feedback.get('feedbackShortType')
         out["current_feedback_long"] = feedback.get('feedbackLongType')
         place("feedback_time", feedback.get('eventTimestampGmt'))
+
+    # Garmin's verdict on the day as a whole, once the day is over.
+    end_of_day = day.get('endOfDayBodyBatteryDynamicFeedbackEvent')
+    if isinstance(end_of_day, dict) and end_of_day:
+        out["end_of_day_level_band"] = end_of_day.get('bodyBatteryLevel')
+        out["end_of_day_feedback"] = end_of_day.get('feedbackShortType')
+        out["end_of_day_feedback_long"] = end_of_day.get('feedbackLongType')
+        place("end_of_day_feedback_time", end_of_day.get('eventTimestampGmt'))
     return out
 
 
@@ -856,6 +972,13 @@ def register_tools(app):
 
         distance_meters gets distance_miles (statute) or distance_km (metric).
 
+        Body battery: body_battery_at_wake and body_battery_during_sleep (the
+        overnight gain) beside the day's highest, lowest and current, with
+        Garmin's band and feedback. Stress: time and share of the day at each
+        level (stress_rest/low/medium/high/activity_seconds and _percent).
+        latest_spo2_percent and latest_respiration_brpm come with their reading
+        times (_gmt/_local).
+
         Args:
             date: Date in YYYY-MM-DD format
         """
@@ -908,6 +1031,12 @@ def register_tools(app):
                 "body_battery_highest": stats.get('bodyBatteryHighestValue'),
                 "body_battery_lowest": stats.get('bodyBatteryLowestValue'),
                 "body_battery_current": stats.get('bodyBatteryMostRecentValue'),
+                # FORK: these and the stress levels below were left out
+                # (field-coverage run, 2026-10-30), though Garmin sends them.
+                "body_battery_at_wake": stats.get('bodyBatteryAtWakeTime'),
+                "body_battery_during_sleep": stats.get('bodyBatteryDuringSleep'),
+                "body_battery_band": (stats.get('bodyBatteryDynamicFeedbackEvent') or {}).get('bodyBatteryLevel'),
+                "body_battery_feedback": (stats.get('bodyBatteryDynamicFeedbackEvent') or {}).get('feedbackLongType'),
 
                 # SpO2
                 "avg_spo2_percent": stats.get('averageSpo2'),
@@ -917,7 +1046,33 @@ def register_tools(app):
                 "avg_waking_respiration": stats.get('avgWakingRespirationValue'),
                 "highest_respiration": stats.get('highestRespirationValue'),
                 "lowest_respiration": stats.get('lowestRespirationValue'),
+                "latest_respiration_brpm": stats.get('latestRespirationValue'),
+                "latest_spo2_percent": stats.get('latestSpo2'),
+
+                # Heart rate: the day's lowest and highest two-minute averages
+                "min_avg_heart_rate_bpm": stats.get('minAvgHeartRate'),
+                "max_avg_heart_rate_bpm": stats.get('maxAvgHeartRate'),
+
+                # Floors, as height
+                "floors_ascended_meters": stats.get('floorsAscendedInMeters'),
+                "floors_descended_meters": stats.get('floorsDescendedInMeters'),
+
+                # Calories left against the day's goal
+                "remaining_calories": stats.get('remainingKilocalories'),
+                "net_calorie_goal": stats.get('netCalorieGoal'),
             }
+            for level in ("rest", "low", "medium", "high", "activity"):
+                summary[f"stress_{level}_seconds"] = stats.get(f"{level}StressDuration")
+                summary[f"stress_{level}_percent"] = stats.get(f"{level}StressPercentage")
+            # The latest readings' times: Garmin pairs the SpO2 one with its
+            # local time; the respiration one is GMT alone, read at the day's offset.
+            day_offset = offset_from_pair(
+                stats.get('wellnessStartTimeGmt'), stats.get('wellnessStartTimeLocal')
+            )
+            put_times(summary, "latest_spo2_time", stats.get('latestSpo2ReadingTimeGmt'),
+                      stats.get('latestSpo2ReadingTimeLocal'))
+            put_times(summary, "latest_respiration_time", stats.get('latestRespirationTimeGMT'),
+                      offset=day_offset)
 
             # Remove None values for cleaner output
             summary = {k: v for k, v in summary.items() if v is not None}
@@ -1476,7 +1631,8 @@ def register_tools(app):
         reading, at latest_level_time_gmt/_local, with highest_level and
         lowest_level for the day. level_band is Garmin's word for the level
         ("HIGH"), not the number, with current_feedback, current_feedback_long
-        and feedback_time_gmt/_local. start_time and end_time (_gmt/_local)
+        and feedback_time_gmt/_local; end_of_day_* is Garmin's verdict on the
+        day once it is over. start_time and end_time (_gmt/_local)
         are the span the day's readings cover; local times come from the
         day's own UTC offset, or the profile zone (named in local_time_zone)
         on a day the clocks change.
@@ -1727,12 +1883,21 @@ def register_tools(app):
     async def get_sleep_summary(ctx: Context, date: str) -> str:
         """Get sleep summary with only essential metrics (lightweight version)
 
-        This endpoint returns a compact summary of sleep data (~350 bytes) instead of
+        This endpoint returns a compact summary of sleep data (~1 KB) instead of
         the full granular data (~50KB). Ideal for daily health checkups and LLM integrations
         where the full time-series data would overwhelm the context window.
 
+        Beside the score, stages, HRV and SpO2: sleep_need_minutes (Garmin's
+        sleep need for the night, with its baseline and feedback) and
+        next_sleep_need_minutes (tonight's); body_battery_change overnight;
+        avg_sleep_heart_rate_bpm; respiration (avg/lowest/highest_respiration_brpm);
+        breathing_disruption_severity; skin_temperature_deviation_celsius/
+        _fahrenheit; Garmin's rating of each part of the score (deep_sleep_rating,
+        stress_rating...) with the stages' target_range_percent; and naps.
+
         Sleep window: sleep_start_gmt/sleep_end_gmt, and sleep_start_local/
-        sleep_end_local with the night's own UTC offset.
+        sleep_end_local with the night's own UTC offset. Each nap's start/end
+        _gmt and _local use the nap's own offset.
 
         Args:
             date: Date in YYYY-MM-DD format
