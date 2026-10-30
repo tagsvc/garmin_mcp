@@ -787,6 +787,7 @@ def register_tools(app):
                 "current_date": score_dto.get("calendarDate"),
                 "classification": classification_label,
                 "classification_id": classification_id,
+                "feedback": score_dto.get("feedbackPhrase"),
                 # Classification thresholds for context
                 "thresholds": (
                     {
@@ -1024,7 +1025,8 @@ def register_tools(app):
         """Get training status with curated metrics
 
         Returns comprehensive training status including load, VO2 max, recovery,
-        and training readiness indicators.
+        and training readiness indicators. training_paused says whether Garmin
+        has paused the status; status_since_date is the day it began.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1093,6 +1095,11 @@ def register_tools(app):
                 ),
                 "sport": device_data.get("sport"),
                 "fitness_trend": device_data.get("fitnessTrend"),
+                # FORK: whether Garmin has paused the status (illness, rest,
+                # travel) and the day the current status began; both left out
+                # until the field-coverage run (2026-10-30).
+                "training_paused": device_data.get("trainingPaused"),
+                "status_since_date": device_data.get("sinceDate"),
                 # VO2 Max
                 "vo2_max": vo2_data.get("vo2MaxValue"),
                 "vo2_max_precise": vo2_data.get("vo2MaxPreciseValue"),
@@ -1114,6 +1121,7 @@ def register_tools(app):
                         "chronic_load": acwr_data.get("dailyTrainingLoadChronic"),
                         "load_ratio": acwr_data.get("dailyAcuteChronicWorkloadRatio"),
                         "acwr_status": acwr_data.get("acwrStatus"),
+                        "acwr_status_feedback": acwr_data.get("acwrStatusFeedback"),
                         "acwr_percent": acwr_data.get("acwrPercent"),
                         "optimal_chronic_load_min": acwr_data.get("minTrainingLoadChronic"),
                         "optimal_chronic_load_max": acwr_data.get("maxTrainingLoadChronic"),
@@ -1609,6 +1617,14 @@ def register_tools(app):
                         entry["status"] = status
                     if feedback:
                         entry["feedback"] = feedback
+                    # The night's baseline band, which the status is read
+                    # against (field-coverage run, 2026-10-30).
+                    baseline = hrv_summary.get("baseline") or {}
+                    for garmin_key, name in (("lowUpper", "baseline_low_upper_ms"),
+                                             ("balancedLow", "baseline_balanced_low_ms"),
+                                             ("balancedUpper", "baseline_balanced_high_ms")):
+                        if baseline.get(garmin_key) is not None:
+                            entry[name] = baseline[garmin_key]
                     if len(entry) > 1:
                         trend.append(entry)
             except Exception as e:

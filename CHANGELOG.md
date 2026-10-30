@@ -5,6 +5,30 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Training tools: the fields the summaries left out — 2026-10-30
+
+From the same field-coverage run.
+
+- **`get_training_status`:**
+  - `training_paused`: whether Garmin has paused the status for illness,
+    rest or travel;
+  - `status_since_date`: the day the current status began;
+  - `acwr_status_feedback`.
+- **`get_hrv_trend`:** each night's baseline band (`baseline_low_upper_ms`,
+  `baseline_balanced_low_ms`, `baseline_balanced_high_ms`). The status is
+  read against this band.
+- **`get_endurance_score`:** Garmin's `feedback` phrase.
+- **`get_personal_record`:** each record names the activity that set it
+  (`activity_name`, `activity_type`) and when its segment began
+  (`pr_start_time_gmt`/`_local`).
+- **`get_coach_plans`:** `goal_time_seconds` beside `goal_time`, plus the
+  plan's `workout_days` and `long_run_day`. `prePlanWeeklyMileage` and
+  `prePlanTrainingPace` stay out until their units are established.
+- **Field coverage script:** a tool with a `details` flag is now checked
+  with it on. `get_fitnessage_data` already shows its components (body fat,
+  resting heart rate, vigorous days and minutes, with targets) when asked.
+  The first run listed them only because it hadn't asked.
+
 ## Activity tools: the fields the summaries left out — 2026-10-30
 
 From the same field-coverage run.

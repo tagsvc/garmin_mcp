@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import put_times
 from garmin_mcp.units import METERS_PER_MILE, account_unit_system, add_account_units, is_imperial
 
 # The garmin_client will be set by the main file
@@ -434,6 +435,10 @@ def register_tools(app):
         Distance and elevation records also carry distance_meters /
         elevation_meters with account-unit companions (distance_miles,
         elevation_feet on a US account); value stays Garmin's km/m text.
+
+        Each record names the activity that set it (activity_name,
+        activity_type) and when its segment began (pr_start_time_gmt, and
+        pr_start_time_local with that activity's own offset).
         """
         try:
             records = get_client(ctx).get_personal_record()
@@ -482,6 +487,14 @@ def register_tools(app):
                 activity_id = record.get("activityId")
                 if activity_id:
                     curated_record["activity_id"] = activity_id
+                # FORK: which activity set it, and when the record's segment
+                # began -- Garmin's GMT epoch beside its local pseudo-epoch
+                # (field-coverage run, 2026-10-30).
+                curated_record["activity_name"] = record.get("activityName")
+                curated_record["activity_type"] = record.get("activityType")
+                put_times(curated_record, "pr_start_time",
+                          record.get("prStartTimeGmt"), record.get("prStartTimeLocal"))
+                curated_record = {k: v for k, v in curated_record.items() if v is not None}
 
                 curated_records.append(curated_record)
 

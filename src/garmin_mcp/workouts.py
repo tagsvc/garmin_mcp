@@ -2112,8 +2112,14 @@ def register_tools(app):
                     "race_name": race.get("raceName"),
                     "race_day": race.get("raceDay"),
                     "goal_time": goal_time,
+                    "goal_time_seconds": seconds,
                     "confidence": plan.get("confidence"),
                     "workouts_per_week": plan.get("workoutsPerWeek"),
+                    # The plan's schedule settings (field-coverage run,
+                    # 2026-10-30). prePlanWeeklyMileage and prePlanTrainingPace
+                    # stay out until their units are established.
+                    "workout_days": plan.get("workoutCalendarDays"),
+                    "long_run_day": plan.get("longRunDay"),
                     "registration_date": plan.get("registrationDate"),
                 }
                 return {k: v for k, v in summary.items() if v is not None}

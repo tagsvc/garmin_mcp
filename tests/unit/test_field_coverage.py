@@ -218,3 +218,22 @@ def test_the_report_hides_noise_unless_asked():
     assert "3 fields every tool omits on purpose" in text
     assert "## Nothing left out\n  get_sensors" in text
     assert "ac3Capable" in fc.render(report, show_all=True)
+
+
+def test_a_tool_that_leaves_detail_out_unless_asked_is_run_with_it_asked_for():
+    """get_fitnessage_data shows its components only with details=True; the
+    first live run listed them as left out."""
+    from tests.integration.test_units_times_sweep import _garmin_double
+
+    garmin = _garmin_double()
+    # The stand-in answers through side_effect (a fresh copy per call).
+    garmin.get_fitnessage_data.side_effect = lambda *_: {
+        "chronologicalAge": 44, "fitnessAge": 38.2,
+        "components": {"rhr": {"value": 48, "targetValue": 45, "potentialAge": 36.5}}}
+    try:
+        report = asyncio.run(fc.run(garmin, datetime.date(2026, 10, 27), 2,
+                                    only={"get_fitnessage_data"}))
+    finally:
+        set_global_client(None)
+
+    assert report["tools"]["get_fitnessage_data"]["missing"] == []

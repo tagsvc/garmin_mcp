@@ -11,7 +11,7 @@ import json
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from garmin_mcp import activity_management, health_wellness
+from garmin_mcp import activity_management, challenges, health_wellness, training, workouts
 from garmin_mcp.client_resolver import set_global_client
 from garmin_mcp.health_wellness import _offset_from_minutes
 
@@ -24,7 +24,7 @@ def app(mock_garmin_client):
     mock_garmin_client.get_unit_system.return_value = "statute_us"
     mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
     app = FastMCP("Coverage gaps")
-    for module in (activity_management, health_wellness):
+    for module in (activity_management, challenges, health_wellness, training, workouts):
         module.configure(mock_garmin_client)
         app = module.register_tools(app)
     yield app
@@ -388,3 +388,79 @@ async def test_laps_give_running_dynamics_power_breathing_and_temperature(app, m
     assert (lap["avg_respiration_brpm"], lap["max_respiration_brpm"]) == (31.0, 40.0)
     assert (lap["min_temperature_c"], lap["max_temperature_f"]) == (11.0, 55.4)
     assert (lap["max_elevation_feet"], lap["min_elevation_feet"]) == (98, 39)
+
+
+# --- training ---------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_training_status_says_whether_it_is_paused_and_since_when(app, mock_garmin_client):
+    mock_garmin_client.get_devices.return_value = [
+        {"deviceId": 100, "displayName": "Forerunner", "primaryDevice": True}]
+    mock_garmin_client.get_training_status.return_value = {"mostRecentTrainingStatus": {
+        "latestTrainingStatusData": {"100": {
+            "calendarDate": D, "trainingStatus": "PRODUCTIVE", "trainingPaused": True,
+            "sinceDate": "2026-10-20",
+            "acuteTrainingLoadDTO": {"dailyTrainingLoadAcute": 410, "acwrStatus": "OPTIMAL",
+                                     "acwrStatusFeedback": "FEEDBACK_2"}}}}}
+
+    status = await _call(app, "get_training_status", {"date": D})
+
+    assert status["training_paused"] is True
+    assert status["status_since_date"] == "2026-10-20"
+    assert status["acwr_status_feedback"] == "FEEDBACK_2"
+
+
+@pytest.mark.asyncio
+async def test_hrv_trend_gives_each_nights_baseline_band(app, mock_garmin_client):
+    mock_garmin_client.get_hrv_data.return_value = {"hrvSummary": {
+        "lastNightAvg": 52.0, "status": "BALANCED",
+        "baseline": {"lowUpper": 40, "balancedLow": 45, "balancedUpper": 60, "markerValue": 0.55}}}
+
+    night = (await _call(app, "get_hrv_trend", {"start_date": D, "end_date": D}))["trend"][0]
+
+    assert (night["baseline_low_upper_ms"], night["baseline_balanced_low_ms"],
+            night["baseline_balanced_high_ms"]) == (40, 45, 60)
+
+
+@pytest.mark.asyncio
+async def test_endurance_score_gives_garmins_feedback(app, mock_garmin_client):
+    mock_garmin_client.get_endurance_score.return_value = {"enduranceScoreDTO": {
+        "overallScore": 6420, "classification": 3, "feedbackPhrase": "ENDURANCE_SCORE_INCREASING"}}
+
+    score = await _call(app, "get_endurance_score", {"start_date": D, "end_date": D})
+
+    assert score["feedback"] == "ENDURANCE_SCORE_INCREASING"
+
+
+@pytest.mark.asyncio
+async def test_personal_records_name_the_activity_and_when_the_record_began(app, mock_garmin_client):
+    mock_garmin_client.get_personal_record.return_value = [{
+        "typeId": 3, "value": 1500.0, "activityId": 7, "activityName": "Parkrun",
+        "activityType": "running",
+        # 13:05 GMT, 9:05 AM in New York
+        "prStartTimeGmt": 1792587900000, "prStartTimeLocal": 1792573500000,
+        "prStartTimeLocalFormatted": "2026-10-21T09:05:00.0"}]
+
+    record = (await _call(app, "get_personal_record", {}))[0]
+
+    assert (record["activity_name"], record["activity_type"]) == ("Parkrun", "running")
+    assert record["pr_start_time_gmt"] == "2026-10-21T13:05:00Z"
+    assert record["pr_start_time_local"] == "2026-10-21T09:05:00-04:00"
+
+
+@pytest.mark.asyncio
+async def test_coach_plans_give_the_goal_in_seconds_and_the_schedule(app, mock_garmin_client):
+    def connectapi(path, **_):
+        if path.endswith("/active"):
+            return [{"athletePlanId": 9, "goalTimeSeconds": 6300, "workoutsPerWeek": 4,
+                     "workoutCalendarDays": ["TUESDAY", "THURSDAY", "SATURDAY", "SUNDAY"],
+                     "longRunDay": "SUNDAY", "athleteRace": {"raceName": "Half"}}]
+        return []
+    mock_garmin_client.connectapi.side_effect = connectapi
+
+    plan = (await _call(app, "get_coach_plans", {"include_completed": False}))["plans"][0]
+
+    assert plan["goal_time"] == "105:00"
+    assert plan["goal_time_seconds"] == 6300
+    assert plan["workout_days"] == ["TUESDAY", "THURSDAY", "SATURDAY", "SUNDAY"]
+    assert plan["long_run_day"] == "SUNDAY"
