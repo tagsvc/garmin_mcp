@@ -23,8 +23,10 @@ From the same field-coverage run.
   from Garmin's v2 gear list. The legacy list's `gearMakeName` and
   `gearModelName` read "Other" / "Unknown Shoes" even for gear picked from
   Garmin's catalog, so those placeholders are never shown. A model chosen as
-  "Other" gives its typed name. v2 lists active gear only, so retired gear
-  has `null`.
+  "Other" gives its typed name. The v2 list holds active gear only and
+  ignores a status filter. Retired gear comes from its v2 record by UUID
+  (`/gear-service/gear/v2/<hyphenated uuid>`), one request per retired item,
+  which also gives its notes.
 
 ## Training tools: the fields the summaries left out — 2026-10-30
 
