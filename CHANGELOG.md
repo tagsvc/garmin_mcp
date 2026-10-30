@@ -5,6 +5,18 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Devices: what kind each is, and which tracks activity — 2026-10-30
+
+After #70, `get_devices` showed `is_primary: true` for a watch, a scale and
+a heart rate strap. Garmin's `primary` is primary for that kind of device,
+so all three are correct. Without the kind, though, the flag read as if each
+were the main device. Now:
+- `device_type` comes from `deviceTypeSimpleName`. Upstream read
+  `deviceType`, which a live device list does not have.
+- `is_primary_activity_tracker`, from `primaryActivityTrackerIndicator`,
+  marks the one device that counts steps and sleep.
+- The description says what `is_primary` means.
+
 ## Sleep Coach: recommended bedtime and sleep alignment — 2026-10-30
 
 `get_sleep_summary` and `get_sleep_summary_range` now give Garmin's Sleep

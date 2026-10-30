@@ -24,7 +24,14 @@ def register_tools(app):
 
     @app.tool()
     async def get_devices(ctx: Context) -> str:
-        """Get all Garmin devices associated with the user account"""
+        """Get all Garmin devices associated with the user account
+
+        device_type is Garmin's kind of device (a watch, a scale, a sensor).
+        is_primary is Garmin's primary flag for that kind, so a watch, a scale
+        and a heart rate strap can each be primary.
+        is_primary_activity_tracker marks the one device that counts steps
+        and sleep; get_primary_training_device names the training device.
+        """
         try:
             devices = get_client(ctx).get_devices()
             if not devices:
@@ -55,9 +62,15 @@ def register_tools(app):
                     "battery_status": device.get("batteryStatus"),
                 }
 
-                # Add optional metadata if present
-                if device.get("deviceType"):
-                    device_info["device_type"] = device.get("deviceType")
+                # Add optional metadata if present. A live device list
+                # (2026-10-30) has deviceTypeSimpleName, not deviceType.
+                device_type = device.get("deviceType") or device.get("deviceTypeSimpleName")
+                if device_type:
+                    device_info["device_type"] = device_type
+                if device.get("primaryActivityTrackerIndicator") is not None:
+                    device_info["is_primary_activity_tracker"] = device.get(
+                        "primaryActivityTrackerIndicator"
+                    )
                 primary = device.get("primaryDevice", device.get("primary"))
                 if primary is not None:
                     device_info["is_primary"] = primary
