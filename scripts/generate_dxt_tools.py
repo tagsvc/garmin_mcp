@@ -24,6 +24,7 @@ from garmin_mcp import (
     courses,
     data_management,
     devices,
+    diagnostics,
     gear_management,
     health_wellness,
     nutrition,
@@ -59,6 +60,7 @@ MODULES = [
     activity_analysis,
     analytics,
     calendar_events,
+    diagnostics,
     auth_tools,
 ]
 

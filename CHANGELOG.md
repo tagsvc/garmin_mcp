@@ -5,6 +5,33 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## `inspect_garmin`: Garmin's raw reply, from a chat — 2026-10-30
+
+A diagnostic tool for checking what a tool leaves out without a script or a PR.
+
+- **`tool` + `arguments`:** runs that read-only tool and returns the replies
+  Garmin sent it, as sent, before the tool relabels them. With
+  `missing=true`, it also lists the reply fields the output leaves out, with
+  how many of each field's values are shown. Ids, owners, images, coordinates
+  and device capability flags stay hidden unless `include_noise=true`.
+- **`endpoint` (+ `params`):** GETs one Garmin Connect API path that no tool
+  calls yet.
+- **Narrowing:** `find` (a regex on key names) or `fields` (exact names)
+  return only the matching keys, with their paths. Replies cap at ~20 KB; a
+  bigger one is summarised by its top-level keys.
+- **Read-only:** it runs only read-only tools, never itself. The endpoint mode
+  only sends GET to a rooted Garmin path (no host, no `..`, no `//`).
+- **Recording:** replies are recorded for that one request only. A contextvar
+  in `payload_recording.py` is set by `get_client()` and the stdio proxy, each
+  call is recorded once, and the wrapper is never a cache key.
+- **Shared comparison:** the field comparison moved from
+  `scripts/field_coverage.py` to `garmin_mcp/field_coverage.py`, shared by
+  the script and the tool.
+- **Display title:** "Diagnostic: inspect Garmin reply". claude.ai groups
+  tools by read-only or write, and the title marks it within Read-only.
+
+Tool counts: stdio 175, remote 172.
+
 ## Devices: what kind each is, and which tracks activity — 2026-10-30
 
 After #70, `get_devices` showed `is_primary: true` for a watch, a scale and
