@@ -11,7 +11,10 @@ import json
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from garmin_mcp import activity_management, challenges, health_wellness, training, workouts
+from garmin_mcp import (
+    activity_management, challenges, devices, gear_management, health_wellness, nutrition,
+    training, weight_management, workouts,
+)
 from garmin_mcp.client_resolver import set_global_client
 from garmin_mcp.health_wellness import _offset_from_minutes
 
@@ -24,7 +27,8 @@ def app(mock_garmin_client):
     mock_garmin_client.get_unit_system.return_value = "statute_us"
     mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
     app = FastMCP("Coverage gaps")
-    for module in (activity_management, challenges, health_wellness, training, workouts):
+    for module in (activity_management, challenges, devices, gear_management, health_wellness,
+                   nutrition, training, weight_management, workouts):
         module.configure(mock_garmin_client)
         app = module.register_tools(app)
     yield app
@@ -464,3 +468,74 @@ async def test_coach_plans_give_the_goal_in_seconds_and_the_schedule(app, mock_g
     assert plan["goal_time_seconds"] == 6300
     assert plan["workout_days"] == ["TUESDAY", "THURSDAY", "SATURDAY", "SUNDAY"]
     assert plan["long_run_day"] == "SUNDAY"
+
+
+# --- nutrition, devices, weigh-ins, gear -------------------------------------
+
+@pytest.mark.asyncio
+async def test_nutrition_summary_gives_the_rest_of_each_days_totals_and_goals(app, mock_garmin_client):
+    mock_garmin_client.connectapi.return_value = {"dailyNutritionSummaries": [{
+        "mealDate": D,
+        "dailyNutritionContent": {"calories": 2100, "carbs": 240, "protein": 130, "fat": 70,
+                                  "fiber": 31, "sugar": 52, "addedSugars": 18, "saturatedFat": 21,
+                                  "transFat": 0, "cholesterol": 310, "sodium": 2300,
+                                  "potassium": 3400, "vitaminC": 95, "iron": None},
+        "dailyNutritionGoals": {"calories": 2200, "adjustedCalories": 2650, "protein": 140,
+                                "carbs": 250, "fat": 73, "fiber": 30},
+        "mealDetails": [{"loggedFoods": [{}, {}]}],
+    }]}
+
+    day = (await _call(app, "get_nutrition_summary_between_dates",
+                       {"start_date": D, "end_date": D}))["days"][0]
+
+    assert (day["fiber"], day["sugar"], day["added_sugars"], day["saturated_fat"]) == (31, 52, 18, 21)
+    assert day["trans_fat"] == 0  # a logged zero is kept
+    assert (day["cholesterol"], day["sodium"], day["potassium"], day["vitamin_c"]) == (310, 2300, 3400, 95)
+    assert "iron" not in day  # Garmin had none
+    assert (day["calorie_goal"], day["adjusted_calorie_goal"]) == (2200, 2650)
+    assert (day["protein_goal"], day["carbs_goal"], day["fat_goal"], day["fiber_goal"]) == (140, 250, 73, 30)
+    assert day["item_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_devices_name_the_product_beside_a_custom_name(app, mock_garmin_client):
+    mock_garmin_client.get_devices.return_value = [
+        {"deviceId": 100, "displayName": "Morning watch", "productDisplayName": "Forerunner 970"}]
+
+    device = (await _call(app, "get_devices", {}))
+    device = device[0] if isinstance(device, list) else device["devices"][0]
+
+    assert device["device_name"] == "Morning watch"
+    assert device["product_name"] == "Forerunner 970"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool, arguments", [
+    ("get_weigh_ins", {"start_date": D, "end_date": D}),
+    ("get_daily_weigh_ins", {"date": D}),
+])
+async def test_weigh_ins_give_the_change_from_the_last_one(app, mock_garmin_client, tool, arguments):
+    weigh_in = {"calendarDate": D, "weight": 72000.0, "weightDelta": -453.6,
+                "timestampGMT": 1793277000000, "date": 1793262600000}
+    mock_garmin_client.get_weigh_ins.return_value = {
+        "dailyWeightSummaries": [{"allWeightMetrics": [weigh_in]}]}
+    mock_garmin_client.get_daily_weigh_ins.return_value = {"dateWeightList": [weigh_in]}
+
+    measurement = (await _call(app, tool, arguments))["measurements"][0]
+
+    assert measurement["weight_change_grams"] == -453.6
+    assert measurement["weight_change_lb"] == -1.0
+
+
+@pytest.mark.asyncio
+async def test_gear_gives_make_and_model(app, mock_garmin_client):
+    mock_garmin_client.get_device_last_used.return_value = {"userProfileNumber": 1}
+    mock_garmin_client.get_gear.return_value = [{
+        "uuid": "g1", "displayName": "Daily trainers", "customMakeModel": "Ghost 16",
+        "gearMakeName": "Brooks", "gearModelName": "Ghost 16", "gearStatusName": "active"}]
+    mock_garmin_client.get_gear_defaults.return_value = []
+
+    gear = await _call(app, "get_gear", {"include_stats": False})
+    item = (gear["gear"] if isinstance(gear, dict) else gear)[0]
+
+    assert (item["make"], item["model"]) == ("Brooks", "Ghost 16")

@@ -38,6 +38,8 @@ def register_tools(app):
                     "device_id": device.get("deviceId"),
                     "device_name": device.get("displayName")
                     or device.get("productDisplayName"),
+                    # The product ("Forerunner 970") when the name is custom.
+                    "product_name": device.get("productDisplayName"),
                     "model": device.get("partNumber"),
                     "manufacturer": device.get("manufacturerName"),
                     "serial_number": device.get("serialNumber"),

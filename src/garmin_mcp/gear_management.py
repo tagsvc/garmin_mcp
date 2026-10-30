@@ -175,6 +175,8 @@ def register_tools(app):
                     "uuid": uuid,
                     "name": g.get("displayName"),
                     "full_name": g.get("customMakeModel"),
+                    "make": g.get("gearMakeName"),
+                    "model": g.get("gearModelName"),
                     "type": g.get("gearTypeName"),
                     "status": status,
                     "date_begin": _parse_iso_date(g.get("dateBegin")),

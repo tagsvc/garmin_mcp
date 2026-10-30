@@ -5,6 +5,22 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Nutrition, devices, weigh-ins, gear: the last coverage gaps — 2026-10-30
+
+From the same field-coverage run.
+
+- **`get_nutrition_summary_between_dates`:** each day now has the rest of
+  its totals where logged, as Garmin's food log reports them: fiber, sugar,
+  added sugars, saturated, mono- and polyunsaturated and trans fat,
+  cholesterol, sodium, potassium, calcium, iron, and vitamins A, C and D.
+  It also has the day's goals (`calorie_goal`, `adjusted_calorie_goal`, and
+  the carbs, protein, fat and fiber goals). A logged zero is kept.
+- **`get_devices`:** `product_name` (e.g. "Forerunner 970") beside a custom
+  `device_name`. The firmware was already there as `software_version`.
+- **`get_weigh_ins` and `get_daily_weigh_ins`:** `weight_change_grams` from
+  the previous weigh-in, with pounds for US accounts.
+- **`get_gear`:** `make` and `model` beside the custom `full_name`.
+
 ## Training tools: the fields the summaries left out — 2026-10-30
 
 From the same field-coverage run.
