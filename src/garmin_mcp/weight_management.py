@@ -82,6 +82,9 @@ def register_tools(app):
                     "bone_mass_grams": w.get("boneMass"),
                     "muscle_mass_grams": w.get("muscleMass"),
                     "source_type": w.get("sourceType"),
+                    # Change from the previous weigh-in, in grams like weight
+                    # (field-coverage run, 2026-10-30).
+                    "weight_change_grams": w.get("weightDelta"),
                 }
                 # FORK: timestamp_gmt was Garmin's bare epoch ms. Its "date"
                 # is a local pseudo-epoch (the wall clock written as UTC),
@@ -149,6 +152,9 @@ def register_tools(app):
                     "bone_mass_grams": w.get("boneMass"),
                     "muscle_mass_grams": w.get("muscleMass"),
                     "source_type": w.get("sourceType"),
+                    # Change from the previous weigh-in, in grams like weight
+                    # (field-coverage run, 2026-10-30).
+                    "weight_change_grams": w.get("weightDelta"),
                 }
                 # FORK: timestamp_gmt was Garmin's bare epoch ms. Its "date"
                 # is a local pseudo-epoch (the wall clock written as UTC),

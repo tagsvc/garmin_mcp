@@ -289,6 +289,23 @@ def configure(client):
     garmin_client = client
 
 
+# Garmin's daily totals beyond calories and macros, and the summary's names.
+_MICRONUTRIENTS = (
+    ("fiber", "fiber"), ("sugar", "sugar"), ("addedSugars", "added_sugars"),
+    ("saturatedFat", "saturated_fat"), ("monounsaturatedFat", "monounsaturated_fat"),
+    ("polyunsaturatedFat", "polyunsaturated_fat"), ("transFat", "trans_fat"),
+    ("cholesterol", "cholesterol"), ("sodium", "sodium"), ("potassium", "potassium"),
+    ("calcium", "calcium"), ("iron", "iron"),
+    ("vitaminA", "vitamin_a"), ("vitaminC", "vitamin_c"), ("vitaminD", "vitamin_d"),
+)
+# The day's goals; adjustedCalories is the goal after Garmin adds activity.
+_GOALS = (
+    ("calories", "calorie_goal"), ("adjustedCalories", "adjusted_calorie_goal"),
+    ("carbs", "carbs_goal"), ("protein", "protein_goal"), ("fat", "fat_goal"),
+    ("fiber", "fiber_goal"),
+)
+
+
 def register_tools(app):
     """Register all nutrition tools with the MCP server app"""
 
@@ -316,7 +333,11 @@ def register_tools(app):
         """Get per-day nutrition totals for every day in a date range.
 
         Returns one lightweight entry per day (date, calories, carbs, protein,
-        fat, item_count) instead of the full per-item food log that
+        fat, item_count, then fiber, sugar, added_sugars, saturated, mono- and
+        polyunsaturated and trans fat, cholesterol, sodium, potassium, calcium,
+        iron and vitamins A, C and D where logged, and the day's goals:
+        calorie_goal, adjusted_calorie_goal, carbs/protein/fat/fiber_goal)
+        instead of the full per-item food log that
         get_nutrition_daily_food_log returns for a single date. Use this for
         multi-day intake analysis (e.g. mean intake for a TDEE estimate)
         instead of calling get_nutrition_daily_food_log once per day.
@@ -366,14 +387,25 @@ def register_tools(app):
                 len(meal.get("loggedFoods") or [])
                 for meal in (day.get("mealDetails") or [])
             )
-            daily.append({
+            entry = {
                 "date": day.get("mealDate"),
                 "calories": content.get("calories"),
                 "carbs": content.get("carbs"),
                 "protein": content.get("protein"),
                 "fat": content.get("fat"),
                 "item_count": item_count,
-            })
+            }
+            # FORK: the rest of the day's totals and its goals, left out until
+            # the field-coverage run (2026-10-30). Values as Garmin's food log
+            # reports them; omitted when Garmin has none.
+            for garmin_key, name in _MICRONUTRIENTS:
+                if content.get(garmin_key) is not None:
+                    entry[name] = content[garmin_key]
+            goals = day.get("dailyNutritionGoals") or {}
+            for garmin_key, name in _GOALS:
+                if goals.get(garmin_key) is not None:
+                    entry[name] = goals[garmin_key]
+            daily.append(entry)
 
         return json.dumps({
             "start_date": start_date,
