@@ -5,6 +5,14 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## `get_body_battery` raw option — 2026-10-30
+
+`get_body_battery(raw=True)` returns Garmin's daily body battery report
+exactly as sent, as `get_workout_by_id(raw=True)` does for workouts. The
+curated summary keeps only the charge, the drain, the events and Garmin's
+level band ("HIGH"). One reader concluded from it that the day's number was
+unavailable, when it is not. The raw view shows what the summary leaves out.
+
 ## Garmin's own time text carries its zone — 2026-10-28
 
 The tools that pass Garmin's payload through kept its time strings exactly as
