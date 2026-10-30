@@ -43,8 +43,14 @@ def register_tools(app):
                     "model": device.get("partNumber"),
                     "manufacturer": device.get("manufacturerName"),
                     "serial_number": device.get("serialNumber"),
-                    "software_version": device.get("softwareVersionString"),
-                    "status": device.get("deviceStatusName"),
+                    # FORK: upstream reads softwareVersionString,
+                    # deviceStatusName and primaryDevice, which a live device
+                    # list (2026-10-30) does not have; it sends
+                    # currentFirmwareVersion, deviceStatus and primary, so
+                    # firmware, status and the primary flag dropped out.
+                    "software_version": device.get("softwareVersionString")
+                    or device.get("currentFirmwareVersion"),
+                    "status": device.get("deviceStatusName") or device.get("deviceStatus"),
                     "last_sync_time": device.get("lastSyncTime"),
                     "battery_status": device.get("batteryStatus"),
                 }
@@ -52,8 +58,9 @@ def register_tools(app):
                 # Add optional metadata if present
                 if device.get("deviceType"):
                     device_info["device_type"] = device.get("deviceType")
-                if device.get("primaryDevice") is not None:
-                    device_info["is_primary"] = device.get("primaryDevice")
+                primary = device.get("primaryDevice", device.get("primary"))
+                if primary is not None:
+                    device_info["is_primary"] = primary
 
                 # Remove None values
                 device_info = {k: v for k, v in device_info.items() if v is not None}
@@ -171,6 +178,34 @@ def register_tools(app):
                     )
                 if tracking_info:
                     curated["activity_tracking"] = tracking_info
+
+            # FORK: settings Garmin sends that the summary left out
+            # (field-coverage run, 2026-10-30).
+            auto_detect = settings.get("autoActivityDetect") or {}
+            if isinstance(auto_detect, dict) and auto_detect:
+                detect = {"enabled": auto_detect.get("autoActivityDetectEnabled")}
+                for sport in ("running", "walking", "cycling", "swimming", "elliptical", "driving"):
+                    detect[sport] = auto_detect.get(f"{sport}Enabled")
+                curated["auto_activity_detect"] = {k: v for k, v in detect.items() if v is not None}
+            for garmin_key, name in (
+                ("dndEnabled", "do_not_disturb_enabled"),
+                ("startOfWeek", "start_of_week"),
+                ("mountingSide", "wrist"),
+                ("moderateIntensityMinutesHrZone", "moderate_intensity_minutes_hr_zone"),
+                ("vigorousIntensityMinutesHrZone", "vigorous_intensity_minutes_hr_zone"),
+                ("intensityMinutesCalcMethod", "intensity_minutes_method"),
+                ("lactateThresholdAutoDetectEnabled", "lactate_threshold_auto_detect"),
+            ):
+                if settings.get(garmin_key) is not None:
+                    curated[name] = settings.get(garmin_key)
+            language = settings.get("language")
+            if language is not None:
+                names = {
+                    entry.get("id"): entry.get("name")
+                    for entry in settings.get("supportedLanguages") or []
+                    if isinstance(entry, dict)
+                }
+                curated["language"] = names.get(language, language)
 
             # Alarm count
             alarms = settings.get("alarms", [])

@@ -5,6 +5,33 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Devices and the small gaps from the second coverage run — 2026-10-30
+
+- **`get_devices`:** firmware, status and the primary flag now show.
+  Upstream reads `softwareVersionString`, `deviceStatusName` and
+  `primaryDevice`. A live device list has none of those; it sends
+  `currentFirmwareVersion`, `deviceStatus` and `primary`, so all three had
+  dropped out. Upstream's names still win where a device has them. (PR #67
+  wrongly said the firmware was already shown.)
+- **`get_device_settings`:**
+  - auto activity detection, overall and per sport;
+  - do-not-disturb and start of week;
+  - the wrist the watch is worn on;
+  - the heart rate zones counted as moderate and vigorous intensity
+    minutes, and the counting method;
+  - lactate threshold auto-detect;
+  - the language, named from Garmin's own list.
+- **`get_health_status` and `get_health_status_range`:** Garmin's
+  `feedback` for each metric.
+- **`get_sleep_summary` and `get_sleep_summary_range`:** what moved the
+  sleep need off its baseline (`*_hrv_adjustment`, `*_nap_adjustment`,
+  `*_sleep_history_adjustment`, `*_training_feedback`).
+- **`get_stats_range`:** each day's `step_goal` and `distance_meters`. The
+  output now gets account-unit companions; it had none, which the CI
+  contract caught.
+- **Activity lists:** time in each power zone (`power_zone_1..5_seconds`),
+  plus `max_power_watts` and `normalized_power_watts`.
+
 ## Nutrition, devices, weigh-ins, gear: the last coverage gaps — 2026-10-30
 
 From the same field-coverage run.
@@ -16,7 +43,7 @@ From the same field-coverage run.
   It also has the day's goals (`calorie_goal`, `adjusted_calorie_goal`, and
   the carbs, protein, fat and fiber goals). A logged zero is kept.
 - **`get_devices`:** `product_name` (e.g. "Forerunner 970") beside a custom
-  `device_name`. The firmware was already there as `software_version`.
+  `device_name`.
 - **`get_weigh_ins` and `get_daily_weigh_ins`:** `weight_change_grams` from
   the previous weigh-in, with pounds for US accounts.
 - **`get_gear`:** `make` and `model` beside the custom `full_name`. They come

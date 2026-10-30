@@ -78,8 +78,11 @@ def _list_activity_details(a: Dict[str, Any]) -> Dict[str, Any]:
         "location_name": a.get('locationName'),
         "personal_record": a.get('pr'),
     }
+    details["max_power_watts"] = a.get('maxPower')
+    details["normalized_power_watts"] = a.get('normPower')
     for zone in range(1, 6):
         details[f"hr_zone_{zone}_seconds"] = a.get(f'hrTimeInZone_{zone}')
+        details[f"power_zone_{zone}_seconds"] = a.get(f'powerTimeInZone_{zone}')
     for meters, name in ((1000, "km"), (1609, "mile"), (5000, "5k")):
         details[f"fastest_{name}_seconds"] = a.get(f'fastestSplit_{meters}')
     return details

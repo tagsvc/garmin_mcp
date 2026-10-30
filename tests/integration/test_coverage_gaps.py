@@ -608,3 +608,107 @@ def test_catalog_name_skips_garmins_placeholders(names, expected):
     from garmin_mcp.gear_management import _catalog_name
 
     assert _catalog_name(*names) == expected
+
+
+# --- second live run (2026-10-30): devices and the small gaps -----------------
+
+@pytest.mark.asyncio
+async def test_devices_read_garmins_live_names_for_firmware_status_and_primary(app, mock_garmin_client):
+    """Upstream reads softwareVersionString, deviceStatusName and
+    primaryDevice; a live device list has currentFirmwareVersion,
+    deviceStatus and primary instead, so all three dropped out."""
+    mock_garmin_client.get_devices.return_value = [
+        {"deviceId": 1, "productDisplayName": "fenix 8", "currentFirmwareVersion": "21.19",
+         "deviceStatus": "ACTIVE", "primary": True},
+        {"deviceId": 2, "productDisplayName": "Older", "softwareVersionString": "9.10",
+         "currentFirmwareVersion": "9.1", "deviceStatusName": "Active", "deviceStatus": "ACTIVE",
+         "primaryDevice": False, "primary": True},
+    ]
+
+    live, upstream = await _call(app, "get_devices", {})
+
+    assert (live["software_version"], live["status"], live["is_primary"]) == ("21.19", "ACTIVE", True)
+    # Upstream's names, where a device has them, still win.
+    assert (upstream["software_version"], upstream["status"], upstream["is_primary"]) == \
+        ("9.10", "Active", False)
+
+
+@pytest.mark.asyncio
+async def test_device_settings_give_auto_detect_do_not_disturb_and_intensity_zones(app, mock_garmin_client):
+    mock_garmin_client.get_device_settings.return_value = {
+        "deviceId": 1, "timeFormat": "time_twelve_hr",
+        "autoActivityDetect": {"autoActivityDetectEnabled": True, "runningEnabled": True,
+                               "walkingEnabled": True, "cyclingEnabled": False,
+                               "swimmingEnabled": False, "drivingEnabled": None},
+        "dndEnabled": False, "startOfWeek": "SUNDAY", "mountingSide": "LEFT",
+        "moderateIntensityMinutesHrZone": 2, "vigorousIntensityMinutesHrZone": 4,
+        "intensityMinutesCalcMethod": "AUTO", "lactateThresholdAutoDetectEnabled": True,
+        "language": 0, "supportedLanguages": [{"id": 0, "name": "English"}, {"id": 1, "name": "French"}],
+    }
+
+    settings = await _call(app, "get_device_settings", {"device_id": 1})
+
+    assert settings["auto_activity_detect"] == {
+        "enabled": True, "running": True, "walking": True, "cycling": False, "swimming": False}
+    assert (settings["do_not_disturb_enabled"], settings["start_of_week"], settings["wrist"]) == \
+        (False, "SUNDAY", "LEFT")
+    assert (settings["moderate_intensity_minutes_hr_zone"],
+            settings["vigorous_intensity_minutes_hr_zone"]) == (2, 4)
+    assert settings["lactate_threshold_auto_detect"] is True
+    assert settings["language"] == "English"  # Garmin's id, named from its own list
+
+
+@pytest.mark.asyncio
+async def test_health_status_gives_garmins_feedback_for_each_metric(app, mock_garmin_client):
+    day = {"calendarDate": D, "metrics": [
+        {"type": "HRV", "value": 55, "status": "IN_RANGE", "feedbackKey": "HRV_NORMAL"}]}
+    mock_garmin_client.connectapi.side_effect = lambda path, **_: [day] if path.count("/") > 4 else day
+
+    single = await _call(app, "get_health_status", {"date": D})
+    ranged = await _call(app, "get_health_status_range", {"start_date": D, "end_date": D})
+
+    assert single["heart_rate_variability_ms"]["feedback"] == "HRV_NORMAL"
+    days = ranged["days"] if isinstance(ranged, dict) else ranged
+    assert days[0]["heart_rate_variability_ms"]["feedback"] == "HRV_NORMAL"
+
+
+@pytest.mark.asyncio
+async def test_sleep_need_says_what_moved_it_off_the_baseline(app, mock_garmin_client):
+    night = json.loads(json.dumps(NIGHT))
+    night["dailySleepDTO"]["sleepNeed"].update(
+        hrvAdjustment="INCREASING", napAdjustment="NO_CHANGE",
+        sleepHistoryAdjustment="DECREASING", trainingFeedback="CHRONIC")
+    mock_garmin_client.get_sleep_data.return_value = night
+
+    summary = await _call(app, "get_sleep_summary", {"date": D})
+
+    assert (summary["sleep_need_hrv_adjustment"], summary["sleep_need_nap_adjustment"],
+            summary["sleep_need_sleep_history_adjustment"], summary["sleep_need_training_feedback"]) == \
+        ("INCREASING", "NO_CHANGE", "DECREASING", "CHRONIC")
+
+
+@pytest.mark.asyncio
+async def test_stats_range_gives_each_days_step_goal_and_distance(app, mock_garmin_client):
+    def connectapi(path, params=None, **_):
+        if (params or {}).get("statsType") == "STEPS":
+            return {"values": [{"calendarDate": D, "values": {
+                "totalSteps": 12061, "stepGoal": 5000, "totalDistance": 9624}}]}
+        return {"values": [{"calendarDate": D, "values": {"totalCalories": 2594}}]}
+    mock_garmin_client.connectapi.side_effect = connectapi
+
+    day = (await _call(app, "get_stats_range", {"start_date": D, "end_date": D}))["days"][0]
+
+    assert (day["steps"], day["step_goal"], day["distance_meters"]) == (12061, 5000, 9624)
+    assert day["distance_miles"] == 5.98
+
+
+@pytest.mark.asyncio
+async def test_activity_list_gives_power_zones_and_power(app, mock_garmin_client):
+    mock_garmin_client.get_activities.return_value = [dict(
+        LISTED, maxPower=410.0, normPower=262.0,
+        **{f"powerTimeInZone_{n}": float(n * 60) for n in range(1, 6)})]
+
+    activity = (await _call(app, "get_activities", {"start": 0, "limit": 1}))["activities"][0]
+
+    assert [activity[f"power_zone_{n}_seconds"] for n in range(1, 6)] == [60.0, 120.0, 180.0, 240.0, 300.0]
+    assert (activity["max_power_watts"], activity["normalized_power_watts"]) == (410.0, 262.0)

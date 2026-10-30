@@ -413,6 +413,11 @@ def _sleep_need(need: Any, stem: str) -> Dict[str, Any]:
         f"{stem}_minutes": need.get('actual'),
         f"{stem}_baseline_minutes": need.get('baseline'),
         f"{stem}_feedback": need.get('feedback'),
+        # What moved it off the baseline (Garmin's words, e.g. "NO_CHANGE").
+        f"{stem}_hrv_adjustment": need.get('hrvAdjustment'),
+        f"{stem}_nap_adjustment": need.get('napAdjustment'),
+        f"{stem}_sleep_history_adjustment": need.get('sleepHistoryAdjustment'),
+        f"{stem}_training_feedback": need.get('trainingFeedback'),
     }
 
 
@@ -1104,6 +1109,9 @@ def register_tools(app):
         and null values rather than zeros, so a missing day never silently
         enters an average as zero.
 
+        Each day also has step_goal and distance_meters (with distance_miles
+        or distance_km in the account's units).
+
         Maximum range: 28 days per call (Garmin's own limit for this endpoint).
 
         Args:
@@ -1153,6 +1161,8 @@ def register_tools(app):
                 "active_calories": (cal or {}).get("activeCalories"),
                 "resting_calories": (cal or {}).get("restingCalories"),
                 "steps": (steps or {}).get("totalSteps"),
+                "step_goal": (steps or {}).get("stepGoal"),
+                "distance_meters": (steps or {}).get("totalDistance"),
                 "has_data": cal is not None or steps is not None,
                 "is_partial": date_str == today,
             })
@@ -1161,11 +1171,12 @@ def register_tools(app):
         if not any(d["has_data"] for d in daily):
             return f"No stats found between {start_date} and {end_date}."
 
-        return json.dumps({
+        # distance_meters gets distance_miles (statute) or distance_km (metric).
+        return json.dumps(add_account_units({
             "start_date": start_date,
             "end_date": end_date,
             "days": daily,
-        }, indent=2)
+        }, account_unit_system(garmin_client)), indent=2)
 
     @app.tool()
     async def get_energy_balance(start_date: str, end_date: str) -> str:
@@ -2459,6 +2470,7 @@ def register_tools(app):
                     "baseline_low": metric.get("baselineLowerLimit"),
                     "baseline_high": metric.get("baselineUpperLimit"),
                     "percentile": metric.get("percentage"),
+                    "feedback": metric.get("feedbackKey"),
                 }
                 # Remove None values from entry
                 entry = {k: v for k, v in entry.items() if v is not None}
@@ -2518,6 +2530,7 @@ def register_tools(app):
                         "baseline_low": metric.get("baselineLowerLimit"),
                         "baseline_high": metric.get("baselineUpperLimit"),
                         "percentile": metric.get("percentage"),
+                    "feedback": metric.get("feedbackKey"),
                     }
                     entry = {k: v for k, v in entry.items() if v is not None}
                     day_summary[name] = entry
