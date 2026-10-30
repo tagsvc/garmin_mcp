@@ -400,6 +400,10 @@ async def run(
         arguments = {}
         for parameter in tools[name].inputSchema.get("required", []):
             arguments[parameter] = await resolve(parameter)
+        # A tool that leaves detail out unless asked is checked with it asked
+        # for (get_fitnessage_data's component breakdown).
+        if "details" in tools[name].inputSchema.get("properties", {}):
+            arguments["details"] = True
         unresolved = [p for p, v in arguments.items() if v is None]
         if unresolved:
             report["skipped"][name] = f"needs {', '.join(unresolved)} (none found; pass it as a flag)"

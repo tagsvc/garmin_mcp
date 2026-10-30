@@ -168,6 +168,11 @@ async def test_get_personal_record_tool(app_with_challenges, mock_garmin_client)
             # The local date, not the GMT one (2024-01-15)
             "date": "2024-01-14",
             "activity_id": 12345678901,
+            # Which activity set it, and when (field-coverage run, 2026-10-30)
+            "activity_name": "Evening Run",
+            "activity_type": "running",
+            "pr_start_time_gmt": "2024-01-15T07:45:00Z",
+            "pr_start_time_local": "2024-01-14T23:45:00-08:00",
         },
         {
             "record_type": "Most Steps Day",
@@ -175,6 +180,8 @@ async def test_get_personal_record_tool(app_with_challenges, mock_garmin_client)
             "value": "25,000",
             "raw_value": 25000.0,
             "date": "2024-01-10",
+            "pr_start_time_gmt": "2024-01-10T08:00:00Z",
+            "pr_start_time_local": "2024-01-10T00:00:00-08:00",
         },
     ]
     mock_garmin_client.get_personal_record.assert_called_once()
