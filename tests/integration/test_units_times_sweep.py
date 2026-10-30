@@ -142,9 +142,16 @@ def _garmin_double():
                                      "maximumMeters": 800000.0}]
     client.get_gear_defaults.return_value = []
     client.get_gear_stats.return_value = {"totalActivities": 3, "totalDistance": 15000.0}
-    client.get_body_battery.return_value = [{"date": D, "bodyBatteryActivityEvent": [
-        {"eventType": "ACTIVITY", "eventStartTimeGmt": GMT, "timezoneOffset": -14400000,
-         "durationInMilliseconds": 1800000}]}]
+    client.get_body_battery.return_value = [{
+        "date": D, "startTimestampGMT": GMT, "startTimestampLocal": LOCAL,
+        "bodyBatteryValuesArray": [[EPOCH_GMT, 61]],
+        "bodyBatteryValueDescriptorDTOList": [
+            {"bodyBatteryValueDescriptorIndex": 0, "bodyBatteryValueDescriptorKey": "timestamp"},
+            {"bodyBatteryValueDescriptorIndex": 1, "bodyBatteryValueDescriptorKey": "bodyBatteryLevel"}],
+        "bodyBatteryDynamicFeedbackEvent": {"eventTimestampGmt": GMT, "bodyBatteryLevel": "HIGH"},
+        "bodyBatteryActivityEvent": [
+            {"eventType": "ACTIVITY", "eventStartTimeGmt": GMT, "timezoneOffset": -14400000,
+             "durationInMilliseconds": 1800000}]}]
     client.get_body_battery_events.return_value = [{"event": {
         "eventType": "SLEEP", "eventStartTimeGmt": GMT, "timezoneOffset": -14400000}}]
     client.get_sleep_data.return_value = SLEEP
