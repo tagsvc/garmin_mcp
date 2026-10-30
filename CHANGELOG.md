@@ -5,6 +5,16 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Devices: Garmin's categories and the scale flag — 2026-10-30
+
+`inspect_garmin`'s first live use answered the device-kind question. Garmin has
+no single "watch / scale / strap" field: `deviceTypeSimpleName` is a type name
+("Garmin fenix 8", none for a scale), and `deviceCategories` lists what a
+device feeds (the fenix 8: FITNESS, WELLNESS, GOLF, OUTDOOR; the HRM 600:
+FITNESS, WELLNESS; the Index S2: WELLNESS). `get_devices` now gives
+`categories` and `is_weight_scale` (from `weightScale`), and its description
+says what `device_type` really is. #72 had described it as the kind.
+
 ## `inspect_garmin`: Garmin's raw reply, from a chat — 2026-10-30
 
 A diagnostic tool for checking what a tool leaves out without a script or a PR.

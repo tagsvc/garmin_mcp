@@ -26,9 +26,11 @@ def register_tools(app):
     async def get_devices(ctx: Context) -> str:
         """Get all Garmin devices associated with the user account
 
-        device_type is Garmin's kind of device (a watch, a scale, a sensor).
-        is_primary is Garmin's primary flag for that kind, so a watch, a scale
-        and a heart rate strap can each be primary.
+        device_type is Garmin's type name ("Garmin fenix 8"); a scale has none.
+        categories is Garmin's list of what the device feeds (FITNESS,
+        WELLNESS, GOLF, OUTDOOR...), and is_weight_scale marks a scale.
+        is_primary is Garmin's primary flag for that kind of device, so a
+        watch, a scale and a heart rate strap can each be primary.
         is_primary_activity_tracker marks the one device that counts steps
         and sleep; get_primary_training_device names the training device.
         """
@@ -67,6 +69,12 @@ def register_tools(app):
                 device_type = device.get("deviceType") or device.get("deviceTypeSimpleName")
                 if device_type:
                     device_info["device_type"] = device_type
+                # What it feeds, and whether it is a scale -- Garmin has no
+                # single "watch / scale / strap" field (live, 2026-10-30).
+                if device.get("deviceCategories"):
+                    device_info["categories"] = device.get("deviceCategories")
+                if device.get("weightScale") is not None:
+                    device_info["is_weight_scale"] = device.get("weightScale")
                 if device.get("primaryActivityTrackerIndicator") is not None:
                     device_info["is_primary_activity_tracker"] = device.get(
                         "primaryActivityTrackerIndicator"

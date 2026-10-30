@@ -752,16 +752,22 @@ def test_minutes_from_midnight_read_as_a_local_time_of_day(minutes, clock):
 async def test_devices_say_what_kind_each_is_and_which_tracks_activity(app, mock_garmin_client):
     """Live, 2026-10-30: a watch, a scale and a strap were each primary --
     primary for their kind. The kind and the activity tracker say which is which."""
+    # The live shape (2026-10-30): a type name, feature categories, a scale flag.
     mock_garmin_client.get_devices.return_value = [
-        {"deviceId": 1, "productDisplayName": "fenix 8", "deviceTypeSimpleName": "Watch",
+        {"deviceId": 1, "productDisplayName": "fenix 8", "deviceTypeSimpleName": "Garmin fenix 8",
+         "deviceCategories": ["FITNESS", "WELLNESS", "GOLF", "OUTDOOR"], "weightScale": False,
          "primary": True, "primaryActivityTrackerIndicator": True},
-        {"deviceId": 2, "productDisplayName": "Index S2", "deviceTypeSimpleName": "Scale",
+        {"deviceId": 2, "productDisplayName": "Index S2", "deviceTypeSimpleName": None,
+         "deviceCategories": ["WELLNESS"], "weightScale": True,
          "primary": True, "primaryActivityTrackerIndicator": False},
     ]
 
     watch, scale = await _call(app, "get_devices", {})
 
     assert (watch["device_type"], watch["is_primary"], watch["is_primary_activity_tracker"]) == \
-        ("Watch", True, True)
-    assert (scale["device_type"], scale["is_primary"], scale["is_primary_activity_tracker"]) == \
-        ("Scale", True, False)
+        ("Garmin fenix 8", True, True)
+    assert watch["categories"] == ["FITNESS", "WELLNESS", "GOLF", "OUTDOOR"]
+    assert watch["is_weight_scale"] is False
+    assert "device_type" not in scale  # Garmin gives a scale no type name
+    assert (scale["categories"], scale["is_weight_scale"], scale["is_primary_activity_tracker"]) == \
+        (["WELLNESS"], True, False)
