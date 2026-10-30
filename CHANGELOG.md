@@ -5,6 +5,25 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## `get_body_battery` gives the level as a number — 2026-10-30
+
+The curated summary now carries each day's body battery level, 0-100, from
+Garmin's `bodyBatteryValuesArray`. It used to keep only the feedback event's
+band ("HIGH"), under the key `body_battery_level`, so a reader could not say
+the number. Each day now has:
+- `latest_level`, the most recent reading, at `latest_level_time_gmt`/`_local`;
+- `highest_level` and `lowest_level` for the day;
+- `level_band`, Garmin's word for the level. **Renamed** from
+  `body_battery_level`, which read as the number;
+- `current_feedback_long` (Garmin's `feedbackLongType`) beside
+  `current_feedback`, which Garmin often leaves null;
+- `feedback_time_gmt`/`_local`, when Garmin judged the band;
+- `start_time`/`end_time` (`_gmt`/`_local`), the span the readings cover.
+
+Local times use the day's own UTC offset, from Garmin's start and end pairs.
+On a day the clocks change the two disagree, so the profile zone places each
+time and `local_time_zone` names it.
+
 ## `get_body_battery` raw option — 2026-10-30
 
 `get_body_battery(raw=True)` returns Garmin's daily body battery report

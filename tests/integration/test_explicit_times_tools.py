@@ -569,3 +569,116 @@ async def test_body_battery_raw_returns_garmins_report_unchanged(app, mock_garmi
                        {"start_date": "2026-10-30", "end_date": "2026-10-30", "raw": True})
 
     assert data == report
+
+
+# The shape of Garmin's daily report, seen live with raw=True on 2026-10-30;
+# the values here are synthetic.
+BATTERY_DESCRIPTORS = [
+    {"bodyBatteryValueDescriptorIndex": 0, "bodyBatteryValueDescriptorKey": "timestamp"},
+    {"bodyBatteryValueDescriptorIndex": 1, "bodyBatteryValueDescriptorKey": "bodyBatteryLevel"},
+]
+
+
+def _battery_day(**overrides):
+    day = {
+        "date": "2026-10-30", "charged": 44, "drained": 2,
+        "startTimestampGMT": "2026-10-30T04:00:00.0", "endTimestampGMT": "2026-10-30T13:10:00.0",
+        "startTimestampLocal": "2026-10-30T00:00:00.0", "endTimestampLocal": "2026-10-30T09:10:00.0",
+        "bodyBatteryValuesArray": [[1793332800000, 35], [1793343600000, 58],
+                                   [1793354400000, 84], [1793365200000, 77]],
+        "bodyBatteryValueDescriptorDTOList": BATTERY_DESCRIPTORS,
+        "bodyBatteryDynamicFeedbackEvent": {
+            "eventTimestampGmt": "2026-10-30T12:40:00.0", "bodyBatteryLevel": "HIGH",
+            "feedbackShortType": None, "feedbackLongType": "EARLY_MORNING_HIGH_GOOD_SLEEP"},
+        "bodyBatteryActivityEvent": [],
+    }
+    day.update(overrides)
+    return day
+
+
+@pytest.mark.asyncio
+async def test_body_battery_gives_the_level_as_a_number_not_only_garmins_band(app, mock_garmin_client):
+    """The summary kept only the feedback band ("HIGH", as body_battery_level),
+    so a reader could not say the level; the number is in Garmin's series."""
+    mock_garmin_client.get_body_battery.return_value = [_battery_day()]
+
+    day = (await _call(app, "get_body_battery", {"start_date": "2026-10-30", "end_date": "2026-10-30"}))[0]
+
+    assert day["latest_level"] == 77
+    assert day["latest_level_time_gmt"] == "2026-10-30T13:00:00Z"
+    assert day["latest_level_time_local"] == "2026-10-30T09:00:00-04:00"
+    assert (day["highest_level"], day["lowest_level"]) == (84, 35)
+    assert day["level_band"] == "HIGH"
+    assert "body_battery_level" not in day
+    assert day["current_feedback"] is None
+    assert day["current_feedback_long"] == "EARLY_MORNING_HIGH_GOOD_SLEEP"
+    assert day["feedback_time_local"] == "2026-10-30T08:40:00-04:00"
+    assert day["start_time_local"] == "2026-10-30T00:00:00-04:00"
+    assert day["end_time_gmt"] == "2026-10-30T13:10:00Z"
+    assert day["end_time_local"] == "2026-10-30T09:10:00-04:00"
+    assert "local_time_zone" not in day
+    mock_garmin_client.get_userprofile_settings.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_body_battery_latest_level_is_the_latest_reading_not_the_last_row(app, mock_garmin_client):
+    mock_garmin_client.get_body_battery.return_value = [_battery_day(
+        bodyBatteryValuesArray=[[1793365200000, 77], [1793332800000, 35],
+                                [1793354400000, None], "junk", [1793343600000]],
+    )]
+
+    day = (await _call(app, "get_body_battery", {"start_date": "2026-10-30", "end_date": "2026-10-30"}))[0]
+
+    assert day["latest_level"] == 77
+    assert day["latest_level_time_gmt"] == "2026-10-30T13:00:00Z"
+    assert (day["highest_level"], day["lowest_level"]) == (77, 35)
+
+
+@pytest.mark.asyncio
+async def test_body_battery_reads_the_columns_its_descriptor_names(app, mock_garmin_client):
+    mock_garmin_client.get_body_battery.return_value = [_battery_day(
+        bodyBatteryValuesArray=[[35, 1793332800000], [77, 1793365200000]],
+        bodyBatteryValueDescriptorDTOList=[
+            {"bodyBatteryValueDescriptorIndex": 1, "bodyBatteryValueDescriptorKey": "timestamp"},
+            {"bodyBatteryValueDescriptorIndex": 0, "bodyBatteryValueDescriptorKey": "bodyBatteryLevel"},
+        ],
+    )]
+
+    day = (await _call(app, "get_body_battery", {"start_date": "2026-10-30", "end_date": "2026-10-30"}))[0]
+
+    assert day["latest_level"] == 77
+    assert day["latest_level_time_gmt"] == "2026-10-30T13:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_body_battery_on_a_clock_change_day_places_times_by_the_profile_zone(app, mock_garmin_client):
+    """New York leaves daylight saving at 2 AM on 2026-11-01: the day opens at
+    -04:00 and closes at -05:00, so neither offset fits every reading."""
+    _zone(mock_garmin_client)
+    mock_garmin_client.get_body_battery.return_value = [_battery_day(
+        date="2026-11-01",
+        startTimestampGMT="2026-11-01T04:00:00.0", startTimestampLocal="2026-11-01T00:00:00.0",
+        endTimestampGMT="2026-11-01T14:00:00.0", endTimestampLocal="2026-11-01T09:00:00.0",
+        bodyBatteryValuesArray=[[1793505600000, 30], [1793539800000, 80]],
+        bodyBatteryDynamicFeedbackEvent=None,
+    )]
+
+    day = (await _call(app, "get_body_battery", {"start_date": "2026-11-01", "end_date": "2026-11-01"}))[0]
+
+    assert day["start_time_local"] == "2026-11-01T00:00:00-04:00"
+    assert day["end_time_local"] == "2026-11-01T09:00:00-05:00"
+    assert day["latest_level_time_local"] == "2026-11-01T08:30:00-05:00"
+    assert day["local_time_zone"] == "America/New_York"
+    assert "level_band" not in day
+
+
+@pytest.mark.asyncio
+async def test_body_battery_day_with_no_series_adds_no_levels(app, mock_garmin_client):
+    mock_garmin_client.get_body_battery.return_value = [_battery_day(
+        bodyBatteryValuesArray=None, bodyBatteryDynamicFeedbackEvent={},
+    )]
+
+    day = (await _call(app, "get_body_battery", {"start_date": "2026-10-30", "end_date": "2026-10-30"}))[0]
+
+    assert not {"latest_level", "highest_level", "lowest_level", "level_band"} & set(day)
+    assert day["charged"] == 44

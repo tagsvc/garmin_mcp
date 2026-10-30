@@ -692,6 +692,81 @@ def _label_body_battery_events(events: Any) -> Any:
     return zone_garmin_times(events)
 
 
+def _battery_series(day: dict) -> List[tuple]:
+    """(GMT epoch ms, level) rows of a day's bodyBatteryValuesArray, oldest first.
+
+    The day's descriptor list names the columns (timestamp, bodyBatteryLevel);
+    without one, Garmin's usual 0 and 1. Rows with no level are dropped.
+    """
+    columns = {}
+    for descriptor in day.get('bodyBatteryValueDescriptorDTOList') or []:
+        if isinstance(descriptor, dict):
+            columns[descriptor.get('bodyBatteryValueDescriptorKey')] = \
+                descriptor.get('bodyBatteryValueDescriptorIndex')
+    time_at, level_at = columns.get('timestamp', 0), columns.get('bodyBatteryLevel', 1)
+    if not (isinstance(time_at, int) and isinstance(level_at, int)):
+        time_at, level_at = 0, 1
+    rows = []
+    for row in day.get('bodyBatteryValuesArray') or []:
+        if not isinstance(row, list) or max(time_at, level_at) >= len(row):
+            continue
+        moment, level = row[time_at], row[level_at]
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (moment, level)):
+            rows.append((moment, level))
+    return sorted(rows)
+
+
+def _battery_day_offset(day: dict) -> Optional[datetime.timedelta]:
+    """The day's UTC offset from its own GMT/local window pairs.
+
+    None when it has neither, or when the two disagree because the clocks
+    changed that day; the profile zone then places each time.
+    """
+    start = offset_from_pair(day.get('startTimestampGMT'), day.get('startTimestampLocal'))
+    end = offset_from_pair(day.get('endTimestampGMT'), day.get('endTimestampLocal'))
+    if start is not None and end is not None and start != end:
+        return None
+    return start if start is not None else end
+
+
+def _battery_day_levels(day: dict, client: Any) -> Dict[str, Any]:
+    """A day's body battery numbers and Garmin's word for them, with times.
+
+    FORK: the curated summary used to keep only the feedback event's band
+    ("HIGH", as body_battery_level), so a reader could not give the number;
+    Garmin sends it as the bodyBatteryValuesArray series.
+    """
+    out: Dict[str, Any] = {}
+    put_times(out, "start_time", day.get('startTimestampGMT'), day.get('startTimestampLocal'))
+    put_times(out, "end_time", day.get('endTimestampGMT'), day.get('endTimestampLocal'))
+    offset = _battery_day_offset(day)
+    zone: Optional[str] = None
+
+    def place(stem: str, value: Any) -> None:
+        nonlocal zone
+        if value is None:
+            return
+        if offset is None and zone is None:
+            zone = profile_time_zone(client)
+        if put_times(out, stem, value, offset=offset, zone=zone):
+            out["local_time_zone"] = zone
+
+    series = _battery_series(day)
+    if series:
+        out["latest_level"] = series[-1][1]
+        place("latest_level_time", series[-1][0])
+        out["highest_level"] = max(level for _, level in series)
+        out["lowest_level"] = min(level for _, level in series)
+
+    feedback = day.get('bodyBatteryDynamicFeedbackEvent')
+    if isinstance(feedback, dict) and feedback:
+        out["level_band"] = feedback.get('bodyBatteryLevel')
+        out["current_feedback"] = feedback.get('feedbackShortType')
+        out["current_feedback_long"] = feedback.get('feedbackLongType')
+        place("feedback_time", feedback.get('eventTimestampGmt'))
+    return out
+
+
 def _label_steps(steps: Any, client: Any) -> Any:
     """15-minute step buckets carry GMT only: local from the profile zone."""
     if not isinstance(steps, list) or not steps:
@@ -1397,6 +1472,15 @@ def register_tools(app):
     ) -> str:
         """Get body battery data with events
 
+        Each day's level is a number (0-100): latest_level is the most recent
+        reading, at latest_level_time_gmt/_local, with highest_level and
+        lowest_level for the day. level_band is Garmin's word for the level
+        ("HIGH"), not the number, with current_feedback, current_feedback_long
+        and feedback_time_gmt/_local. start_time and end_time (_gmt/_local)
+        are the span the day's readings cover; local times come from the
+        day's own UTC offset, or the profile zone (named in local_time_zone)
+        on a day the clocks change.
+
         Event times: start_time_gmt, and start_time_local from the event's own
         UTC offset (where the watch was).
 
@@ -1421,6 +1505,7 @@ def register_tools(app):
                     "date": day.get('date'),
                     "charged": day.get('charged'),
                     "drained": day.get('drained'),
+                    **_battery_day_levels(day, get_client(ctx)),
 
                     # Curate activity events
                     "events": []
@@ -1446,12 +1531,6 @@ def register_tools(app):
                     if duration is not None:
                         curated_event['duration_minutes'] = round(duration / 60000, 1)
                     entry["events"].append(curated_event)
-
-                # Add dynamic feedback if present
-                feedback = day.get('bodyBatteryDynamicFeedbackEvent', {})
-                if feedback:
-                    entry["current_feedback"] = feedback.get('feedbackShortType')
-                    entry["body_battery_level"] = feedback.get('bodyBatteryLevel')
 
                 curated.append(entry)
 
