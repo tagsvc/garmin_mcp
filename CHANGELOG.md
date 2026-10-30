@@ -5,6 +5,36 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Activity tools: the fields the summaries left out — 2026-10-30
+
+From the same field-coverage run.
+
+- **`get_activity`:**
+  - stamina (`stamina_start/end/min_available_percent`);
+  - respiration (`avg/min/max_respiration_brpm`);
+  - `sweat_loss_ml`, with `sweat_loss_fl_oz` for US accounts;
+  - `impact_load`;
+  - Garmin's training effect messages;
+  - temperature at the watch (with °F for US accounts);
+  - running dynamics: vertical ratio, ground contact balance, step speed
+    loss, grade-adjusted speed (with its pace companion) and minimum power;
+  - `location_name`, `time_zone` (the zone it was recorded in) and
+    `personal_record`.
+- **`get_activities`, `get_activities_by_date` and `get_activities_fordate`:**
+  each activity now has:
+  - its training effect (aerobic, anaerobic, label, load);
+  - time in each heart rate zone (`hr_zone_1..5_seconds`);
+  - the fastest km, mile and 5K inside it (`fastest_km/mile/5k_seconds`);
+  - `body_battery_impact`, `vo2_max`, intensity minutes, respiration,
+    cadence, power, lap count, `location_name` and `personal_record`.
+- **`get_activity_splits`:** each lap now has its running dynamics (ground
+  contact time and balance, stride length, vertical oscillation and ratio,
+  step speed loss), power (max, min, normalized), respiration, temperature
+  and elevation range.
+
+`get_gear_activities` stays a mileage audit: name, date, distance and
+duration only.
+
 ## Health tools: the fields the summaries left out — 2026-10-30
 
 The first live field-coverage run found these, all of which Garmin sends.

@@ -11,7 +11,7 @@ import json
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from garmin_mcp import health_wellness
+from garmin_mcp import activity_management, health_wellness
 from garmin_mcp.client_resolver import set_global_client
 from garmin_mcp.health_wellness import _offset_from_minutes
 
@@ -24,7 +24,7 @@ def app(mock_garmin_client):
     mock_garmin_client.get_unit_system.return_value = "statute_us"
     mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
     app = FastMCP("Coverage gaps")
-    for module in (health_wellness,):
+    for module in (activity_management, health_wellness):
         module.configure(mock_garmin_client)
         app = module.register_tools(app)
     yield app
@@ -235,3 +235,156 @@ async def test_body_battery_gives_garmins_end_of_day_verdict(app, mock_garmin_cl
     assert day["end_of_day_feedback"] == "BALANCED_DAY"
     assert day["end_of_day_feedback_long"] == "BALANCED_DAY_WITH_RECOVERY"
     assert day["end_of_day_feedback_time_local"] == "2026-10-29T23:59:00-04:00"
+
+
+# --- activities ---------------------------------------------------------------
+
+ACTIVITY = {
+    "activityId": 1, "activityName": "Morning Run", "locationName": "Brooklyn",
+    "activityTypeDTO": {"typeKey": "running"},
+    "timeZoneUnitDTO": {"unitKey": "America/New_York", "timeZone": "America/New_York"},
+    "metadataDTO": {"personalRecord": True, "lapCount": 5},
+    "summaryDTO": {
+        "startTimeGMT": "2026-10-29T11:00:00.0", "startTimeLocal": "2026-10-29T07:00:00.0",
+        "distance": 8046.72, "duration": 2700.0, "averageSpeed": 2.98,
+        "aerobicTrainingEffectMessage": "IMPROVING_AEROBIC_BASE_8",
+        "anaerobicTrainingEffectMessage": "NO_ANAEROBIC_BENEFIT_0",
+        "impactLoad": 41.2,
+        "beginPotentialStamina": 100.0, "endPotentialStamina": 72.0, "minAvailableStamina": 68.0,
+        "avgRespirationRate": 32.5, "minRespirationRate": 18.0, "maxRespirationRate": 44.0,
+        "waterEstimated": 591.47,
+        "verticalRatio": 8.1, "groundContactBalanceLeft": 49.6, "stepSpeedLossPercent": 4.2,
+        "avgGradeAdjustedSpeed": 3.05, "minPower": 120,
+        "averageTemperature": 12.0, "minTemperature": 10.0, "maxTemperature": 15.0,
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_activity_gives_stamina_breathing_sweat_and_where_it_was(app, mock_garmin_client):
+    mock_garmin_client.get_activity.return_value = ACTIVITY
+
+    run = await _call(app, "get_activity", {"activity_id": 1})
+
+    assert (run["stamina_start_percent"], run["stamina_end_percent"],
+            run["stamina_min_available_percent"]) == (100.0, 72.0, 68.0)
+    assert (run["avg_respiration_brpm"], run["min_respiration_brpm"],
+            run["max_respiration_brpm"]) == (32.5, 18.0, 44.0)
+    assert run["sweat_loss_ml"] == 591.47
+    assert run["sweat_loss_fl_oz"] == 20.0
+    assert run["impact_load"] == 41.2
+    assert run["training_effect_message"] == "IMPROVING_AEROBIC_BASE_8"
+    assert run["anaerobic_training_effect_message"] == "NO_ANAEROBIC_BENEFIT_0"
+    assert (run["avg_vertical_ratio_percent"], run["avg_ground_contact_balance_left_percent"],
+            run["step_speed_loss_percent"]) == (8.1, 49.6, 4.2)
+    assert run["min_power_watts"] == 120
+    assert run["location_name"] == "Brooklyn"
+    assert run["time_zone"] == "America/New_York"
+    assert run["personal_record"] is True
+
+
+@pytest.mark.asyncio
+async def test_activity_temperature_and_grade_adjusted_pace_get_us_companions(app, mock_garmin_client):
+    mock_garmin_client.get_activity.return_value = ACTIVITY
+
+    run = await _call(app, "get_activity", {"activity_id": 1})
+
+    assert (run["min_temperature_c"], run["max_temperature_c"]) == (10.0, 15.0)
+    assert (run["min_temperature_f"], run["max_temperature_f"]) == (50.0, 59.0)
+    assert run["avg_temperature_f"] == 53.6
+    assert run["avg_grade_adjusted_speed_mps"] == 3.05
+    assert run["avg_grade_adjusted_pace_per_mile"] == "8:48"  # 1609.344 / 3.05 = 527.7 s
+
+
+@pytest.mark.asyncio
+async def test_activity_sweat_loss_stays_in_ml_for_a_metric_account(app, mock_garmin_client):
+    mock_garmin_client.get_unit_system.return_value = "metric"
+    mock_garmin_client.get_activity.return_value = ACTIVITY
+
+    run = await _call(app, "get_activity", {"activity_id": 1})
+
+    assert run["sweat_loss_ml"] == 591.47
+    assert "sweat_loss_fl_oz" not in run
+
+
+LISTED = {
+    "activityId": 1, "activityName": "Morning Run", "activityType": {"typeKey": "running"},
+    "startTimeGMT": "2026-10-29 11:00:00", "startTimeLocal": "2026-10-29 07:00:00",
+    "distance": 8046.72, "duration": 2700.0, "averageSpeed": 2.98,
+    "aerobicTrainingEffect": 3.4, "anaerobicTrainingEffect": 0.8,
+    "trainingEffectLabel": "AEROBIC_BASE", "activityTrainingLoad": 112.5,
+    "differenceBodyBattery": -14, "vO2MaxValue": 51.0,
+    "moderateIntensityMinutes": 12, "vigorousIntensityMinutes": 30,
+    "avgRespirationRate": 32.5, "averageRunningCadenceInStepsPerMinute": 168.0, "avgPower": 255.0,
+    "lapCount": 5, "locationName": "Brooklyn", "pr": True,
+    "hrTimeInZone_1": 60.0, "hrTimeInZone_2": 600.0, "hrTimeInZone_3": 1500.0,
+    "hrTimeInZone_4": 480.0, "hrTimeInZone_5": 60.0,
+    "fastestSplit_1000": 318.2, "fastestSplit_1609": 520.4, "fastestSplit_5000": 1650.9,
+}
+
+
+def _assert_list_details(activity):
+    assert [activity[f"hr_zone_{n}_seconds"] for n in range(1, 6)] == [60.0, 600.0, 1500.0, 480.0, 60.0]
+    assert (activity["fastest_km_seconds"], activity["fastest_mile_seconds"],
+            activity["fastest_5k_seconds"]) == (318.2, 520.4, 1650.9)
+    assert (activity["aerobic_training_effect"], activity["anaerobic_training_effect"]) == (3.4, 0.8)
+    assert activity["training_effect_label"] == "AEROBIC_BASE"
+    assert activity["training_load"] == 112.5
+    assert activity["body_battery_impact"] == -14
+    assert activity["vo2_max"] == 51.0
+    assert activity["avg_respiration_brpm"] == 32.5
+    assert activity["location_name"] == "Brooklyn"
+    assert activity["personal_record"] is True
+
+
+@pytest.mark.asyncio
+async def test_activity_list_gives_zones_fastest_splits_and_training_effect(app, mock_garmin_client):
+    mock_garmin_client.get_activities.return_value = [LISTED]
+
+    data = await _call(app, "get_activities", {"start": 0, "limit": 1})
+
+    _assert_list_details(data["activities"][0])
+
+
+@pytest.mark.asyncio
+async def test_activities_by_date_give_the_same_details(app, mock_garmin_client):
+    mock_garmin_client.connectapi.return_value = [LISTED]
+
+    data = await _call(app, "get_activities_by_date", {"start_date": D, "end_date": D})
+
+    _assert_list_details(data["activities"][0])
+
+
+@pytest.mark.asyncio
+async def test_activities_for_a_date_give_the_same_details(app, mock_garmin_client):
+    mock_garmin_client.get_activities_fordate.return_value = {"ActivitiesForDay": {"payload": [LISTED]}}
+
+    activity = (await _call(app, "get_activities_fordate", {"date": D}))["activities"][0]
+
+    _assert_list_details(activity)
+
+
+@pytest.mark.asyncio
+async def test_laps_give_running_dynamics_power_breathing_and_temperature(app, mock_garmin_client):
+    mock_garmin_client.get_activity_splits.return_value = {"activityId": 1, "lapDTOs": [{
+        "lapIndex": 1, "startTimeGMT": "2026-10-29T11:00:00.0", "distance": 1609.34,
+        "duration": 540.0, "averageSpeed": 2.98,
+        "maxRunCadence": 182, "maxPower": 390, "minPower": 140, "normalizedPower": 262,
+        "groundContactTime": 248.0, "groundContactBalanceLeft": 49.7, "strideLength": 107.0,
+        "verticalOscillation": 8.6, "verticalRatio": 8.0, "stepSpeedLossPercent": 4.1,
+        "avgRespirationRate": 31.0, "maxRespirationRate": 40.0,
+        "averageTemperature": 12.0, "minTemperature": 11.0, "maxTemperature": 13.0,
+        "maxElevation": 30.0, "minElevation": 12.0,
+    }]}
+
+    lap = (await _call(app, "get_activity_splits", {"activity_id": 1}))["laps"][0]
+
+    assert (lap["max_cadence"], lap["max_power_watts"], lap["min_power_watts"],
+            lap["normalized_power_watts"]) == (182, 390, 140, 262)
+    assert (lap["avg_ground_contact_time_ms"], lap["avg_ground_contact_balance_left_percent"]) == (248.0, 49.7)
+    assert (lap["avg_stride_length_cm"], lap["avg_stride_length_in"]) == (107.0, 42.1)
+    assert (lap["avg_vertical_oscillation_cm"], lap["avg_vertical_ratio_percent"]) == (8.6, 8.0)
+    assert lap["step_speed_loss_percent"] == 4.1
+    assert (lap["avg_respiration_brpm"], lap["max_respiration_brpm"]) == (31.0, 40.0)
+    assert (lap["min_temperature_c"], lap["max_temperature_f"]) == (11.0, 55.4)
+    assert (lap["max_elevation_feet"], lap["min_elevation_feet"]) == (98, 39)
