@@ -174,7 +174,11 @@ def _garmin_double():
                                          "spO2HourlyAverages": [[EPOCH_GMT, 96]]}
     client.get_training_readiness.return_value = [READINESS]
     client.get_morning_training_readiness.return_value = READINESS
-    client.get_stats.return_value = {"totalDistanceMeters": 8000.0, "totalSteps": 9000}
+    client.get_stats.return_value = {
+        "totalDistanceMeters": 8000.0, "totalSteps": 9000, "floorsAscendedInMeters": 30.0,
+        "wellnessStartTimeGmt": "2026-10-27T04:00:00.0", "wellnessStartTimeLocal": "2026-10-27T00:00:00.0",
+        "latestSpo2ReadingTimeGmt": GMT, "latestSpo2ReadingTimeLocal": LOCAL,
+        "latestRespirationTimeGMT": GMT}
     client.get_user_summary.return_value = json.loads(json.dumps(DAILY_SUMMARY))
     client.get_stats_and_body.return_value = {**json.loads(json.dumps(DAILY_SUMMARY)), "weight": 72000.0}
     client.get_daily_steps.return_value = [{"calendarDate": D, "totalSteps": 9000,

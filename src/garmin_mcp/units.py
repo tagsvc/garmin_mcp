@@ -37,7 +37,7 @@ STATUTE_UK = "statute_uk"
 METRIC = "metric"
 _KNOWN_UNIT_SYSTEMS = frozenset({STATUTE_US, STATUTE_UK, METRIC})
 
-_HEIGHT_WORDS = ("elevation", "altitude", "ascent", "descent")
+_HEIGHT_WORDS = ("elevation", "altitude", "ascent", "descent", "ascended", "descended")
 _MASS_WORDS = ("weight", "mass")
 # Keys whose string value names the sport of the dict they sit in.
 _SPORT_KEYS = ("type", "activity_type", "activity", "sport", "splitType")
