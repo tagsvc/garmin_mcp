@@ -37,8 +37,8 @@ garmin-mcp-remote = "garmin_mcp.remote:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/garmin_mcp"]
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=0.25.2",
     "pytest-mock>=3.14.0",

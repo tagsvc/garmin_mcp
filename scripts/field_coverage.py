@@ -55,9 +55,11 @@ ID_SOURCES = {
 # Unit conversions a tool may apply to a raw number: ms, s -> min, h; m -> km,
 # mi, ft; g, kg -> lb; fraction -> percent; cm -> m.
 FACTORS = (
-    1 / 60, 1 / 3600, 1 / 60000, 1 / 3600000, 1 / 1000, 1000, 1 / 100, 100,
+    1 / 60, 1 / 3600, 1 / 60000, 1 / 3600000, 1 / 1000, 1000, 1 / 100, 100, 10, 1 / 10,
     1 / 1609.344, 1000 / 1609.344, 3.28084, 2.2046226, 0.0022046226,
 )
+# The same word, spelt two ways in Garmin's keys and ours.
+SYNONYMS = {"maximum": "max", "minimum": "min", "average": "avg", "averages": "avg"}
 # Words that say how a value is measured, not what it is.
 UNIT_WORDS = {
     "in", "of", "value", "values", "gmt", "local", "ms", "milliseconds", "millis",
@@ -67,6 +69,7 @@ UNIT_WORDS = {
 }
 _EPOCH_MS = (10**12, 2.5 * 10**12)
 _TIME_TEXT = re.compile(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(\.\d+)?(Z|[+-]\d{2}:?\d{2}|\s?GMT|\s?UTC)?$")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DATA_KEY = re.compile(
     r"^(\d{4}-\d{2}-\d{2}.*|-?\d+|[0-9a-f]{8}-[0-9a-f]{4}-.*|.*\d{6,}.*)$", re.IGNORECASE
 )
@@ -76,7 +79,7 @@ _DATA_KEY = re.compile(
 
 def _words(key: str) -> Set[str]:
     parts = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", key)
-    return {p.lower() for p in parts} - UNIT_WORDS
+    return {SYNONYMS.get(p.lower(), p.lower()) for p in parts} - UNIT_WORDS
 
 
 def _number(value: Any) -> bool:
@@ -151,6 +154,8 @@ class _Output:
         self.times: Dict[str, Set[str]] = defaultdict(set)
         self.numbers: Dict[int, Dict[float, Set[str]]] = defaultdict(lambda: defaultdict(set))
         self.bools: Dict[bool, Set[str]] = defaultdict(set)
+        self.dates: Dict[str, Set[str]] = defaultdict(set)
+        self.keys: Set[str] = set()
         for path, value in _leaves(data):
             key = _last_key(path)
             instant, clock = _instant_and_clock(value)
@@ -163,6 +168,9 @@ class _Output:
                 self.numbers[_decimals(value)][round(float(value), _decimals(value))].add(key)
             elif isinstance(value, str):
                 self.texts[value].add(key)
+                if _DATE.match(value):
+                    self.dates[value].add(key)
+        self.keys = {_norm(path[-1]) for path in _paths(data) if path}
 
     def holders(self, value: Any) -> List[Tuple[Set[str], bool]]:
         """Output keys holding the value: (keys, converted?) per way it matched."""
@@ -172,6 +180,9 @@ class _Output:
             for text in {instant, clock}:
                 if text in self.times:
                     found.append((self.times[text], False))
+                # A time the tool shows as its date alone, under a related key.
+                if text[:10] in self.dates:
+                    found.append((self.dates[text[:10]], True))
             return found
         if isinstance(value, bool):
             return [(self.bools[value], False)] if value in self.bools else []
@@ -190,8 +201,21 @@ def _norm(key: str) -> str:
     return re.sub(r"[^a-z0-9]", "", key.lower())
 
 
+def _paths(node: Any, path: Tuple[str, ...] = ()) -> Iterator[Tuple[str, ...]]:
+    """Every key path in a tree, whatever its value."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield path + (str(key),)
+            yield from _paths(value, path + (str(key),))
+    elif isinstance(node, list):
+        for item in node:
+            yield from _paths(item, path)
+
+
 def _surfaced(path: Tuple[str, ...], value: Any, output: _Output) -> bool:
     key = _last_key(path)
+    if isinstance(value, str) and len(_norm(value)) > 1 and _norm(value) in output.keys:
+        return True  # the tool turned the value into a key, as health status does
     words = _words(key)
     for keys, converted in output.holders(value):
         related = any(words & _words(held) for held in keys) or _norm(key) in {_norm(k) for k in keys}
@@ -209,6 +233,25 @@ def _shown(path: Sequence[str]) -> str:
         else:
             text += ("." if text else "") + ("{key}" if _DATA_KEY.match(part) else part)
     return text or "(reply)"
+
+
+# Fields every tool leaves out on purpose: ids, who owns a record, pictures,
+# coordinates, Garmin's internal flags and versions, and the ~300 device
+# capability flags. The report hides them unless --all.
+_NOISE_KEY = re.compile(
+    r"Capable$|Id$|ID$|Pk$|PK$|Uuid$|UUID$|^(id|uuid|pk)$|[Ii]mage|[Tt]humbnail|[Uu]rl$|URL$"
+    r"|[Ll]atitude$|[Ll]ongitude$|^owner|^userProfile|^user(Id|Pk|Pro|Roles)$"
+    r"|^(display|full|first|last)[Nn]ame$|^profileImg|^vivokidUser$"
+    r"|^(sortOrder|displayOrder|isHidden|restricted|trimmable|statusCode|successful|messageIndex)$"
+    r"|^min\w+Version$|^(respiration|sleep|bodyBattery|respirationAlgorithm)Version$"
+)
+_NOISE_BLOCKS = {"author", "userInfoDto", "capabilities"}
+
+
+def is_noise(field: str) -> bool:
+    """A reported field ("method: a.b[].c") of a kind every tool omits on purpose."""
+    parts = [p for p in re.split(r"[.\[\]]+", field.split(": ", 1)[-1]) if p and not p.isdigit()]
+    return bool(parts) and (bool(_NOISE_KEY.search(parts[-1])) or bool(_NOISE_BLOCKS & set(parts)))
 
 
 def missing_fields(replies: Sequence[Tuple[str, Any]], output: Any) -> List[Tuple[str, int, int]]:
@@ -388,11 +431,13 @@ async def run(
     return report
 
 
-def render(report: Dict[str, Any]) -> str:
+def render(report: Dict[str, Any], show_all: bool = False) -> str:
     """The report as text: field names and counts only."""
     tools = report["tools"]
-    lacking = {n: t for n, t in tools.items() if t["missing"]}
-    complete = sorted(n for n, t in tools.items() if not t["missing"] and t["methods"])
+    shown = {n: [f for f in t["missing"] if show_all or not is_noise(f[0])] for n, t in tools.items()}
+    hidden = sum(len(t["missing"]) - len(shown[n]) for n, t in tools.items())
+    lacking = {n: dict(tools[n], missing=shown[n]) for n in tools if shown[n]}
+    complete = sorted(n for n, t in tools.items() if not shown[n] and t["methods"])
     no_calls = sorted(n for n, t in tools.items() if not t["methods"])
     lines = [
         f"Field coverage, {report['date']} ({report['days']}-day ranges): "
@@ -400,8 +445,11 @@ def render(report: Dict[str, Any]) -> str:
         f"{len(report['skipped'])} skipped.",
         "A field marked 'some' is in the output for only part of its values,",
         "as when a tool summarises a series.",
-        "",
     ]
+    if hidden:
+        lines.append(f"{hidden} fields every tool omits on purpose (ids, owners, images, coordinates, "
+                     "device capability flags) are hidden; --all shows them.")
+    lines.append("")
     for name in sorted(lacking, key=lambda n: (-len(lacking[n]["missing"]), n)):
         entry = lacking[name]
         lines.append(f"## {name}  ({len(entry['missing'])} fields; from {', '.join(entry['methods'])})")
@@ -436,6 +484,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--pause", type=float, default=0.5,
                         help="seconds between tools, to stay under Garmin's rate limit")
     parser.add_argument("--output", help="also write the report to this file")
+    parser.add_argument("--all", action="store_true",
+                        help="also list ids, owners, images, coordinates and device capability flags")
     args = parser.parse_args(argv)
 
     from garmin_mcp import init_api
@@ -447,7 +497,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     started = time.monotonic()
     report = asyncio.run(run(client, args.date, args.days, ids, args.include_derived,
                              args.pause, set(args.tool) if args.tool else None))
-    text = render(report)
+    text = render(report, args.all)
     print(text)
     if args.output:
         with open(args.output, "w") as handle:
