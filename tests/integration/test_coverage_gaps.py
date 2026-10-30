@@ -712,3 +712,37 @@ async def test_activity_list_gives_power_zones_and_power(app, mock_garmin_client
 
     assert [activity[f"power_zone_{n}_seconds"] for n in range(1, 6)] == [60.0, 120.0, 180.0, 240.0, 300.0]
     assert (activity["max_power_watts"], activity["normalized_power_watts"]) == (410.0, 262.0)
+
+
+@pytest.mark.asyncio
+async def test_sleep_summary_gives_sleep_coach_bedtime_and_alignment_as_clock_times(app, mock_garmin_client):
+    """Garmin's minutes after local midnight, negative for the evening
+    before; verified live against the Sleep Coach screen (2026-10-30)."""
+    night = json.loads(json.dumps(NIGHT))
+    night["dailySleepDTO"]["sleepNeed"].update(recommendedBedtimeStartMins=-30, recommendedBedtimeEndMins=-10)
+    night["dailySleepDTO"]["nextSleepNeed"].update(recommendedBedtimeStartMins=15, recommendedBedtimeEndMins=35)
+    night["dailySleepDTO"]["sleepAlignment"] = {
+        "status": "AHEAD", "optimalSleepWindowStartMins": -60, "optimalSleepWindowEndMins": 450,
+        "optimalSleepWindowMidpointMins": 195, "lastSleepMidpointMins": 150}
+    mock_garmin_client.get_sleep_data.return_value = night
+
+    summary = await _call(app, "get_sleep_summary", {"date": D})
+
+    assert (summary["next_sleep_need_bedtime_start_clock"],
+            summary["next_sleep_need_bedtime_end_clock"]) == ("00:15", "00:35")
+    assert (summary["sleep_need_bedtime_start_clock"],
+            summary["sleep_need_bedtime_end_clock"]) == ("23:30", "23:50")
+    assert summary["sleep_alignment"] == "AHEAD"
+    assert (summary["optimal_sleep_window_start_clock"],
+            summary["optimal_sleep_window_end_clock"]) == ("23:00", "07:30")
+    assert (summary["optimal_sleep_midpoint_clock"], summary["last_sleep_midpoint_clock"]) == ("03:15", "02:30")
+
+
+@pytest.mark.parametrize("minutes, clock", [
+    (0, "00:00"), (20, "00:20"), (-80, "22:40"), (420, "07:00"), (1440, "00:00"),
+    (-1, "23:59"), (89.6, "01:30"), (None, None), (True, None), ("60", None),
+])
+def test_minutes_from_midnight_read_as_a_local_time_of_day(minutes, clock):
+    from garmin_mcp.health_wellness import _clock_from_midnight
+
+    assert _clock_from_midnight(minutes) == clock

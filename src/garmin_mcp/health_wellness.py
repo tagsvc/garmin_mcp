@@ -404,6 +404,35 @@ def _sleep_score_parts(sleep_scores: Dict[str, Any]) -> Dict[str, Any]:
     return parts
 
 
+def _clock_from_midnight(minutes: Any) -> Optional[str]:
+    """A local time of day, "HH:MM", from Garmin's minutes after local
+    midnight; negative is the evening before (-80 is 22:40).
+
+    Verified live 2026-10-30 against Garmin Connect's Sleep Coach: bedtime
+    0/20 read "12:00 AM-12:20 AM", the sleep window -80/420 "10:40 PM ~
+    7:00 AM", and a last-sleep midpoint of 264 sat at the middle of a night
+    slept 00:10-08:37.
+    """
+    if not isinstance(minutes, (int, float)) or isinstance(minutes, bool):
+        return None
+    whole = int(round(minutes)) % (24 * 60)
+    return f"{whole // 60:02d}:{whole % 60:02d}"
+
+
+def _sleep_alignment(alignment: Any) -> Dict[str, Any]:
+    """Garmin's Sleep Alignment: whether the night sat on the athlete's
+    internal rhythm, and that rhythm's window, as local times of day."""
+    if not isinstance(alignment, dict):
+        return {}
+    return {
+        "sleep_alignment": alignment.get('status'),
+        "optimal_sleep_window_start_clock": _clock_from_midnight(alignment.get('optimalSleepWindowStartMins')),
+        "optimal_sleep_window_end_clock": _clock_from_midnight(alignment.get('optimalSleepWindowEndMins')),
+        "optimal_sleep_midpoint_clock": _clock_from_midnight(alignment.get('optimalSleepWindowMidpointMins')),
+        "last_sleep_midpoint_clock": _clock_from_midnight(alignment.get('lastSleepMidpointMins')),
+    }
+
+
 def _sleep_need(need: Any, stem: str) -> Dict[str, Any]:
     """Garmin's sleep need, in minutes: the night's (sleepNeed) or the next
     one's (nextSleepNeed), with the baseline it adjusts and why."""
@@ -418,6 +447,9 @@ def _sleep_need(need: Any, stem: str) -> Dict[str, Any]:
         f"{stem}_nap_adjustment": need.get('napAdjustment'),
         f"{stem}_sleep_history_adjustment": need.get('sleepHistoryAdjustment'),
         f"{stem}_training_feedback": need.get('trainingFeedback'),
+        # When to go to sleep to meet it, as local times of day.
+        f"{stem}_bedtime_start_clock": _clock_from_midnight(need.get('recommendedBedtimeStartMins')),
+        f"{stem}_bedtime_end_clock": _clock_from_midnight(need.get('recommendedBedtimeEndMins')),
     }
 
 
@@ -516,6 +548,7 @@ def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
         summary.update(_sleep_score_parts(sleep_scores))
         summary.update(_sleep_need(daily_sleep.get('sleepNeed'), "sleep_need"))
         summary.update(_sleep_need(daily_sleep.get('nextSleepNeed'), "next_sleep_need"))
+        summary.update(_sleep_alignment(daily_sleep.get('sleepAlignment')))
         naps = _curate_naps(daily_sleep)
         if naps:
             summary['naps'] = naps
@@ -1905,6 +1938,11 @@ def register_tools(app):
         breathing_disruption_severity; skin_temperature_deviation_celsius/
         _fahrenheit; Garmin's rating of each part of the score (deep_sleep_rating,
         stress_rating...) with the stages' target_range_percent; and naps.
+        Sleep Coach: next_sleep_need_bedtime_start_clock/_end_clock is the
+        recommended bedtime for tonight; sleep_alignment (ALIGNED, BEHIND...)
+        with optimal_sleep_window_start/end_clock and the optimal and last
+        sleep midpoint_clock. A *_clock value is a local time of day, "HH:MM",
+        in the zone the night was slept in.
 
         Sleep window: sleep_start_gmt/sleep_end_gmt, and sleep_start_local/
         sleep_end_local with the night's own UTC offset. Each nap's start/end
