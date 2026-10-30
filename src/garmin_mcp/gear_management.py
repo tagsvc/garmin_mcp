@@ -59,6 +59,19 @@ ACTIVITY_TYPE_MAPPING = {
 GEAR_V2_LIST_ENDPOINT = "/gear-service/gear/v2/list"
 
 
+def _gear_v2_record(uuid: Optional[str]) -> Dict[str, Any]:
+    """One gear item's v2 record, by UUID; {} when Garmin has none."""
+    hyphenated = _hyphenated_gear_uuid(uuid)
+    if not hyphenated:
+        return {}
+    try:
+        record = garmin_client.connectapi(f"/gear-service/gear/v2/{hyphenated}")
+    except Exception as exc:
+        logger.debug("Garmin v2 gear record unavailable: %s", exc, exc_info=True)
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
 def _catalog_name(*names: Any) -> Optional[str]:
     """The first real brand or model name, skipping Garmin's placeholders
     ("Other", "Unknown Shoes") that stand for no name at all."""
@@ -75,6 +88,14 @@ def _parse_iso_date(iso_string: Optional[str]) -> Optional[str]:
     if not iso_string:
         return None
     return iso_string.split("T")[0] if "T" in iso_string else iso_string
+
+
+def _hyphenated_gear_uuid(uuid: Optional[str]) -> Optional[str]:
+    """A legacy 32-hex gear UUID in the 8-4-4-4-12 form the v2 endpoints take."""
+    plain = _normalize_gear_uuid(uuid)
+    if not plain or len(plain) != 32:
+        return None
+    return f"{plain[:8]}-{plain[8:12]}-{plain[12:16]}-{plain[16:20]}-{plain[20:]}"
 
 
 def _normalize_gear_uuid(uuid: Optional[str]) -> Optional[str]:
@@ -179,6 +200,12 @@ def register_tools(app):
             for g in gear_list:
                 uuid = g.get("uuid")
                 status = g.get("gearStatusName", "").lower()
+                v2 = v2_by_uuid.get(_normalize_gear_uuid(uuid))
+                if v2 is None:
+                    # The v2 list leaves retired gear out (its status filter is
+                    # ignored); the v2 record by UUID has it (verified live
+                    # 2026-10-30: ASICS / Gel-Cumulus 28, retired).
+                    v2 = _gear_v2_record(uuid)
 
                 if status == "active":
                     active_count += 1
@@ -193,22 +220,15 @@ def register_tools(app):
                     # (verified live 2026-10-30: v2 "adidas" / "Adizero Adios
                     # Pro 5", and the typed text for a model chosen as "Other").
                     # The legacy list's gearMakeName/gearModelName read
-                    # "Other" / "Unknown Shoes" even for catalog gear, and v2
-                    # lists only active gear, so a retired shoe has neither.
-                    "make": _catalog_name(
-                        v2_by_uuid.get(_normalize_gear_uuid(uuid), {}).get("brand"),
-                        g.get("gearMakeName"),
-                    ),
-                    "model": _catalog_name(
-                        v2_by_uuid.get(_normalize_gear_uuid(uuid), {}).get("model"),
-                        g.get("gearModelName"),
-                    ),
+                    # "Other" / "Unknown Shoes" even for catalog gear.
+                    "make": _catalog_name(v2.get("brand"), g.get("gearMakeName")),
+                    "model": _catalog_name(v2.get("model"), g.get("gearModelName")),
                     "type": g.get("gearTypeName"),
                     "status": status,
                     "date_begin": _parse_iso_date(g.get("dateBegin")),
                     "date_end": _parse_iso_date(g.get("dateEnd")),
                     "notes": notes_by_uuid.get(
-                        _normalize_gear_uuid(uuid), g.get("notes")
+                        _normalize_gear_uuid(uuid), v2.get("notes", g.get("notes"))
                     ),
                 }
 

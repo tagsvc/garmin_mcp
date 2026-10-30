@@ -542,10 +542,11 @@ async def test_gear_gives_make_and_model(app, mock_garmin_client):
 
 
 @pytest.mark.asyncio
-async def test_gear_takes_brand_and_model_from_the_v2_list_not_the_legacy_placeholders(app, mock_garmin_client):
+async def test_gear_takes_brand_and_model_from_v2_not_the_legacy_placeholders(app, mock_garmin_client):
     """Live, 2026-10-30: every shoe was picked from Garmin's catalog, yet the
     legacy list read "Other" / "Unknown Shoes" for all six. The v2 list has
-    the names, and only lists active gear."""
+    the names for active gear; a retired shoe's are in its v2 record by UUID
+    (the list ignores a status filter)."""
     mock_garmin_client.get_device_last_used.return_value = {"userProfileNumber": 1}
     placeholders = {"gearMakeName": "Other", "gearModelName": "Unknown Shoes"}
     mock_garmin_client.get_gear.return_value = [
@@ -553,20 +554,46 @@ async def test_gear_takes_brand_and_model_from_the_v2_list_not_the_legacy_placeh
          "gearStatusName": "active", **placeholders},
         {"uuid": "eeee5555ffff6666aaaa7777bbbb8888", "customMakeModel": "ASICS Gel-Cumulus 28",
          "gearStatusName": "retired", **placeholders},
+        {"uuid": "99990000aaaabbbbccccddddeeeeffff", "customMakeModel": "Old shoe",
+         "gearStatusName": "retired", **placeholders},
     ]
     mock_garmin_client.get_gear_defaults.return_value = []
-    mock_garmin_client.connectapi.return_value = [{
-        # Hyphenated, as v2 writes UUIDs; the model is the text typed for "Other".
-        "uuid": "aaaa1111-bbbb-2222-cccc-3333dddd4444", "status": "ACTIVE",
-        "brand": "Brooks", "model": "Ghost AMP"}]
+    asked = []
 
-    gear = await _call(app, "get_gear", {"include_stats": False})
-    active, retired = gear["gear"]
+    def connectapi(path, **_):
+        asked.append(path)
+        if path == "/gear-service/gear/v2/list":
+            # Hyphenated, as v2 writes UUIDs; the model is the text typed for "Other".
+            return [{"uuid": "aaaa1111-bbbb-2222-cccc-3333dddd4444", "status": "ACTIVE",
+                     "brand": "Brooks", "model": "Ghost AMP", "notes": "Sunday easy"}]
+        if path == "/gear-service/gear/v2/eeee5555-ffff-6666-aaaa-7777bbbb8888":
+            return {"uuid": "eeee5555-ffff-6666-aaaa-7777bbbb8888", "status": "RETIRED",
+                    "brand": "ASICS", "model": "Gel-Cumulus 28", "notes": "Replaced"}
+        if path == "/gear-service/gear/v2/99990000-aaaa-bbbb-cccc-ddddeeeeffff":
+            return []  # an answer that is not a record
+        raise RuntimeError("API call client error (404)")
+    mock_garmin_client.connectapi.side_effect = connectapi
 
-    assert (active["make"], active["model"]) == ("Brooks", "Ghost AMP")
-    # get_gear keeps empty fields as null, like name and date_end.
-    assert (retired["make"], retired["model"]) == (None, None)
-    assert retired["full_name"] == "ASICS Gel-Cumulus 28"
+    active, retired, unknown = (await _call(app, "get_gear", {"include_stats": False}))["gear"]
+
+    assert (active["make"], active["model"], active["notes"]) == ("Brooks", "Ghost AMP", "Sunday easy")
+    assert (retired["make"], retired["model"], retired["notes"]) == ("ASICS", "Gel-Cumulus 28", "Replaced")
+    # Garmin has no record: no names rather than its placeholders.
+    assert (unknown["make"], unknown["model"]) == (None, None)
+    # Only gear the list left out is asked for by UUID.
+    assert "/gear-service/gear/v2/aaaa1111-bbbb-2222-cccc-3333dddd4444" not in asked
+
+
+@pytest.mark.parametrize("uuid, expected", [
+    ("0a5f2f9e63a742b4bf326dcc84fe8ce6", "0a5f2f9e-63a7-42b4-bf32-6dcc84fe8ce6"),
+    ("0A5F2F9E-63A7-42B4-BF32-6DCC84FE8CE6", "0a5f2f9e-63a7-42b4-bf32-6dcc84fe8ce6"),
+    ("short", None),
+    (None, None),
+])
+def test_a_legacy_gear_uuid_is_hyphenated_for_the_v2_record(uuid, expected):
+    from garmin_mcp.gear_management import _hyphenated_gear_uuid
+
+    assert _hyphenated_gear_uuid(uuid) == expected
 
 
 @pytest.mark.parametrize("names, expected", [
