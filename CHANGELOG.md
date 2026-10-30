@@ -19,7 +19,12 @@ From the same field-coverage run.
   `device_name`. The firmware was already there as `software_version`.
 - **`get_weigh_ins` and `get_daily_weigh_ins`:** `weight_change_grams` from
   the previous weigh-in, with pounds for US accounts.
-- **`get_gear`:** `make` and `model` beside the custom `full_name`.
+- **`get_gear`:** `make` and `model` beside the custom `full_name`. They come
+  from Garmin's v2 gear list. The legacy list's `gearMakeName` and
+  `gearModelName` read "Other" / "Unknown Shoes" even for gear picked from
+  Garmin's catalog, so those placeholders are never shown. A model chosen as
+  "Other" gives its typed name. v2 lists active gear only, so retired gear
+  has `null`.
 
 ## Training tools: the fields the summaries left out — 2026-10-30
 
