@@ -15,7 +15,7 @@ from garmin_mcp.times import (
     put_times,
     zone_garmin_times,
 )
-from garmin_mcp.units import account_unit_system, add_account_units
+from garmin_mcp.units import account_unit_system, add_account_units, is_imperial
 from garmin_mcp.write_errors import WriteTracker
 
 # FIT stores lap distance as uint32 centimetres. A device that writes a small
@@ -49,6 +49,40 @@ def _label_split_times(payload, key):
             add_local_siblings(split, offset)
             zone_garmin_times(split, offset)
     return payload
+
+
+# Millilitres in a US fluid ounce.
+_ML_PER_FL_OZ = 29.5735
+
+
+def _list_activity_details(a: Dict[str, Any]) -> Dict[str, Any]:
+    """Per-activity fields from Garmin's activity list that the list tools
+    left out (field-coverage run, 2026-10-30): training effect, heart rate
+    zones, the fastest km, mile and 5K inside the activity, and more.
+
+    Garmin's list keys; hrTimeInZone_N and fastestSplit_N are in seconds.
+    """
+    details = {
+        "aerobic_training_effect": a.get('aerobicTrainingEffect'),
+        "anaerobic_training_effect": a.get('anaerobicTrainingEffect'),
+        "training_effect_label": a.get('trainingEffectLabel'),
+        "training_load": a.get('activityTrainingLoad'),
+        "body_battery_impact": a.get('differenceBodyBattery'),
+        "vo2_max": a.get('vO2MaxValue'),
+        "moderate_intensity_minutes": a.get('moderateIntensityMinutes'),
+        "vigorous_intensity_minutes": a.get('vigorousIntensityMinutes'),
+        "avg_respiration_brpm": a.get('avgRespirationRate'),
+        "avg_cadence": a.get('averageRunningCadenceInStepsPerMinute'),
+        "avg_power_watts": a.get('avgPower'),
+        "lap_count": a.get('lapCount'),
+        "location_name": a.get('locationName'),
+        "personal_record": a.get('pr'),
+    }
+    for zone in range(1, 6):
+        details[f"hr_zone_{zone}_seconds"] = a.get(f'hrTimeInZone_{zone}')
+    for meters, name in ((1000, "km"), (1609, "mile"), (5000, "5k")):
+        details[f"fastest_{name}_seconds"] = a.get(f'fastestSplit_{meters}')
+    return details
 
 
 def _laps_are_swim(laps) -> bool:
@@ -273,6 +307,11 @@ def register_tools(app):
         Start times: start_time_gmt, and start_time_local with the activity's own
         UTC offset.
 
+        Each activity also has its training effect (aerobic, anaerobic,
+        label, load), time in each heart rate zone (hr_zone_1..5_seconds), the
+        fastest km, mile and 5K inside it (fastest_km/mile/5k_seconds),
+        body_battery_impact, vo2_max, intensity minutes and location_name.
+
         Args:
             start_date: Start date in YYYY-MM-DD format
             end_date: End date in YYYY-MM-DD format
@@ -342,6 +381,7 @@ def register_tools(app):
                     "elevation_gain_meters": a.get('elevationGain'),
                     "elevation_loss_meters": a.get('elevationLoss'),
                 }
+                activity.update(_list_activity_details(a))
                 # FORK: was "start_time", local time with no zone -- the same
                 # key get_activity_fit_data used for UTC. Garmin's GMT/local
                 # pair gives the activity's own offset.
@@ -405,6 +445,7 @@ def register_tools(app):
                     "moderate_intensity_minutes": a.get('moderateIntensityMinutes'),
                     "vigorous_intensity_minutes": a.get('vigorousIntensityMinutes'),
                 }
+                activity.update(_list_activity_details(a))
                 # FORK: was "start_time", local time with no zone -- the same
                 # key get_activity_fit_data used for UTC. Garmin's GMT/local
                 # pair gives the activity's own offset.
@@ -435,7 +476,14 @@ def register_tools(app):
         avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
         Times are explicit: *_gmt is GMT (ends in Z) and *_local is local time
-        with its UTC offset (e.g. 2026-10-27T14:37:26-04:00).
+        with its UTC offset (e.g. 2026-10-27T14:37:26-04:00). time_zone is the
+        zone the activity was recorded in.
+
+        Also: stamina (stamina_start/end/min_available_percent), respiration
+        (avg/min/max_respiration_brpm), sweat_loss_ml (and sweat_loss_fl_oz for
+        a US account), impact_load, Garmin's training effect messages,
+        temperature at the watch, running dynamics (vertical ratio, ground
+        contact balance, step speed loss), location_name and personal_record.
 
         Args:
             activity_id: ID of the activity to retrieve
@@ -516,6 +564,36 @@ def register_tools(app):
                 "workout_feel": summary.get('directWorkoutFeel'),
                 "workout_rpe": summary.get('directWorkoutRpe'),
 
+                # FORK: left out until the field-coverage run (2026-10-30),
+                # though Garmin sends them in summaryDTO.
+                "training_effect_message": summary.get('aerobicTrainingEffectMessage'),
+                "anaerobic_training_effect_message": summary.get('anaerobicTrainingEffectMessage'),
+                "impact_load": summary.get('impactLoad'),
+                # Stamina, as Garmin's percentages of full potential
+                "stamina_start_percent": summary.get('beginPotentialStamina'),
+                "stamina_end_percent": summary.get('endPotentialStamina'),
+                "stamina_min_available_percent": summary.get('minAvailableStamina'),
+                # Breathing
+                "avg_respiration_brpm": summary.get('avgRespirationRate'),
+                "min_respiration_brpm": summary.get('minRespirationRate'),
+                "max_respiration_brpm": summary.get('maxRespirationRate'),
+                # Estimated sweat loss
+                "sweat_loss_ml": summary.get('waterEstimated'),
+                # Running dynamics beyond cadence, stride and oscillation
+                "avg_vertical_ratio_percent": summary.get('verticalRatio'),
+                "avg_ground_contact_balance_left_percent": summary.get('groundContactBalanceLeft'),
+                "step_speed_loss_percent": summary.get('stepSpeedLossPercent'),
+                "avg_grade_adjusted_speed_mps": summary.get('avgGradeAdjustedSpeed'),
+                "min_power_watts": summary.get('minPower'),
+                # Temperature at the watch
+                "avg_temperature_c": summary.get('averageTemperature'),
+                "min_temperature_c": summary.get('minTemperature'),
+                "max_temperature_c": summary.get('maxTemperature'),
+                # Where and in which zone it was recorded
+                "location_name": activity.get('locationName'),
+                "time_zone": (activity.get('timeZoneUnitDTO') or {}).get('timeZone'),
+                "personal_record": metadata.get('personalRecord'),
+
                 # Metadata
                 "lap_count": metadata.get('lapCount'),
                 "has_splits": metadata.get('hasSplits'),
@@ -526,10 +604,11 @@ def register_tools(app):
 
             # Remove None values
             curated = {k: v for k, v in curated.items() if v is not None}
+            unit_system = account_unit_system(get_client(ctx))
+            if is_imperial(unit_system) and isinstance(curated.get("sweat_loss_ml"), (int, float)):
+                curated["sweat_loss_fl_oz"] = round(curated["sweat_loss_ml"] / _ML_PER_FL_OZ, 1)
 
-            return json.dumps(
-                add_account_units(curated, account_unit_system(get_client(ctx))), indent=2
-            )
+            return json.dumps(add_account_units(curated, unit_system), indent=2)
         except Exception as e:
             return f"Error retrieving activity: {str(e)}"
 
@@ -781,6 +860,10 @@ def register_tools(app):
         avg_speed_mph and elevation_gain_feet for a US account; distance_km and
         avg_pace_per_km for a metric one. Quote the companion; do not convert.
 
+        Each lap also has its running dynamics (ground contact time and
+        balance, stride length, vertical oscillation and ratio, step speed
+        loss), power (max, min, normalized), respiration and temperature.
+
         Args:
             activity_id: ID of the activity to retrieve splits for
         """
@@ -828,6 +911,25 @@ def register_tools(app):
                     "elevation_gain_meters": lap.get('elevationGain'),
                     "elevation_loss_meters": lap.get('elevationLoss'),
                     "workout_step_index": lap.get('wktStepIndex'),
+                    # FORK: lap-level fields Garmin sends that the laps left
+                    # out (field-coverage run, 2026-10-30).
+                    "max_cadence": lap.get('maxRunCadence'),
+                    "max_power_watts": lap.get('maxPower'),
+                    "min_power_watts": lap.get('minPower'),
+                    "normalized_power_watts": lap.get('normalizedPower'),
+                    "avg_ground_contact_time_ms": lap.get('groundContactTime'),
+                    "avg_ground_contact_balance_left_percent": lap.get('groundContactBalanceLeft'),
+                    "avg_stride_length_cm": lap.get('strideLength'),
+                    "avg_vertical_oscillation_cm": lap.get('verticalOscillation'),
+                    "avg_vertical_ratio_percent": lap.get('verticalRatio'),
+                    "step_speed_loss_percent": lap.get('stepSpeedLossPercent'),
+                    "avg_respiration_brpm": lap.get('avgRespirationRate'),
+                    "max_respiration_brpm": lap.get('maxRespirationRate'),
+                    "avg_temperature_c": lap.get('averageTemperature'),
+                    "min_temperature_c": lap.get('minTemperature'),
+                    "max_temperature_c": lap.get('maxTemperature'),
+                    "max_elevation_meters": lap.get('maxElevation'),
+                    "min_elevation_meters": lap.get('minElevation'),
                 }
                 put_times(lap_data, "start_time", lap.get('startTimeGMT'), zone=zone)
                 if lap.get('distance') is not None and sanitize_lap_distance(lap.get('distance')) is None:
@@ -1257,6 +1359,11 @@ def register_tools(app):
         Start times: start_time_gmt, and start_time_local with the activity's own
         UTC offset.
 
+        Each activity also has its training effect (aerobic, anaerobic,
+        label, load), time in each heart rate zone (hr_zone_1..5_seconds), the
+        fastest km, mile and 5K inside it (fastest_km/mile/5k_seconds),
+        body_battery_impact, vo2_max, intensity minutes and location_name.
+
         Args:
             start: Starting index (default 0)
             limit: Maximum number of activities to return (default 20, max 100)
@@ -1297,6 +1404,7 @@ def register_tools(app):
                     "elevation_loss_meters": a.get('elevationLoss'),
                     "owner_display_name": a.get('ownerDisplayName'),
                 }
+                activity.update(_list_activity_details(a))
                 # FORK: was "start_time", local time with no zone -- the same
                 # key get_activity_fit_data used for UTC. Garmin's GMT/local
                 # pair gives the activity's own offset.
