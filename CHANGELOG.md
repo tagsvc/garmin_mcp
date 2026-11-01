@@ -5,6 +5,35 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Times on the day the clocks change — 2026-11-01
+
+New York left daylight saving at 2 AM on 2026-11-01. Day-level payloads took
+one offset for the whole day from the day's opening GMT/local pair (-04:00), so
+everything after the change read an hour ahead of the wall clock. The last sync
+at 4:48 PM showed as `17:48:03-04:00`. The underlying instant was right; the
+clock reading was not. Garmin's own steps chart does the same that day.
+
+- **Daily summary** (`get_user_summary`, `get_stats_and_body`), **day series**
+  (`get_heart_rates`, `get_stress_data`, `get_all_day_stress`,
+  `get_respiration_data`, `get_floors`), **`get_stats`**' latest respiration time
+  and **SpO2 hourly rows**: on a day the profile zone's clocks change, each time
+  without its own offset is placed by that zone. The payload also gains
+  `utcOffsetHoursAfterChange`, `clockChangeGmt`/`clockChangeLocal` and
+  `localTimeZone`. `utcOffsetHours` is still the offset the day opened with.
+- **Only when the zone is where the watch was:** its offset at the day's opening
+  must match the day's own. A day recorded elsewhere keeps its own offset. A
+  record's own offset (`timezoneOffset`, or a real GMT/local pair) still wins.
+- **Sleep is unchanged.** Garmin labels the night with its own offset, which the
+  invariant keeps, even where that offset is the post-change one for a bedtime
+  before the change.
+- **Also fixed, every day:** a day series' `endTimestampLocal` is the day's end
+  (next midnight) beside the GMT time of its last reading, not its pair. Read as
+  a pair it got the offset `+02:15`. It is now the wall clock at the zone's
+  offset there, or the day's own.
+
+New helpers: `times.clock_change`, `times.zone_offset`, `times.local_wall_clock`,
+and a `zone` argument on `times.add_local_siblings`.
+
 ## `get_activity`: where the distance came from — 2026-11-01
 
 A fenix 8 took speed and distance from a paired HRM 600 on every run from

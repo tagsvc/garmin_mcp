@@ -682,3 +682,151 @@ async def test_body_battery_day_with_no_series_adds_no_levels(app, mock_garmin_c
 
     assert not {"latest_level", "highest_level", "lowest_level", "level_band"} & set(day)
     assert day["charged"] == 44
+
+
+# --- clock-change days ------------------------------------------------------------
+# New York leaves daylight saving at 2 AM on 2026-11-01: the day opens at -04:00
+# and, from 06:00 GMT, runs at -05:00. A day read at its opening offset put every
+# time after the change an hour ahead of the wall clock.
+
+CHANGE_DAY = {
+    "calendarDate": "2026-11-01",
+    "startTimestampGMT": "2026-11-01T04:00:00.0", "startTimestampLocal": "2026-11-01T00:00:00.0",
+    # The day's end (next midnight) beside the GMT time of its last reading.
+    "endTimestampGMT": "2026-11-01T21:48:00.0", "endTimestampLocal": "2026-11-02T00:00:00.0",
+    "values": [[1793505600000, 14]],
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool, method",
+    [("get_stress_data", "get_stress_data"), ("get_all_day_stress", "get_all_day_stress"),
+     ("get_heart_rates", "get_heart_rates"), ("get_respiration_data", "get_respiration_data"),
+     ("get_floors", "get_floors")],
+)
+async def test_day_series_on_a_clock_change_day_name_both_offsets(app, mock_garmin_client, tool, method):
+    _zone(mock_garmin_client)
+    getattr(mock_garmin_client, method).return_value = json.loads(json.dumps(CHANGE_DAY))
+
+    data = await _call(app, tool, {"date": "2026-11-01"})
+
+    assert data["utcOffsetHours"] == -4.0
+    assert data["utcOffsetHoursAfterChange"] == -5.0
+    assert data["clockChangeGmt"] == "2026-11-01T06:00:00Z"
+    assert data["clockChangeLocal"] == "2026-11-01T01:00:00-05:00"
+    assert data["localTimeZone"] == "America/New_York"
+    assert data["endTimestampLocal"] == "2026-11-02T00:00:00-05:00"
+    assert data["values"] == [[1793505600000, 14]]
+
+
+@pytest.mark.asyncio
+async def test_day_series_end_of_day_is_not_read_from_its_last_reading(app, mock_garmin_client):
+    """An ordinary day: the end-of-day local time beside the last reading's GMT
+    implied "+02:15"; it is midnight at the day's own offset."""
+    _zone(mock_garmin_client)
+    mock_garmin_client.get_heart_rates.return_value = {
+        "startTimestampGMT": "2026-10-30T04:00:00.0", "startTimestampLocal": "2026-10-30T00:00:00.0",
+        "endTimestampGMT": "2026-10-30T21:48:00.0", "endTimestampLocal": "2026-10-31T00:00:00.0",
+    }
+
+    data = await _call(app, "get_heart_rates", {"date": "2026-10-30"})
+
+    assert data["endTimestampLocal"] == "2026-10-31T00:00:00-04:00"
+    assert "clockChangeGmt" not in data
+
+
+@pytest.mark.asyncio
+async def test_day_series_without_a_profile_zone_keep_the_days_offset(app, mock_garmin_client):
+    mock_garmin_client.get_heart_rates.return_value = json.loads(json.dumps(CHANGE_DAY))
+
+    data = await _call(app, "get_heart_rates", {"date": "2026-11-01"})
+
+    assert data["utcOffsetHours"] == -4.0
+    assert data["endTimestampLocal"] == "2026-11-02T00:00:00-04:00"
+    assert "clockChangeGmt" not in data
+
+
+CHANGE_SUMMARY = {
+    "calendarDate": "2026-11-01",
+    "wellnessStartTimeGmt": "2026-11-01T04:00:00.0", "wellnessStartTimeLocal": "2026-11-01T00:00:00.0",
+    "wellnessEndTimeGmt": "2026-11-01T21:48:00.0", "wellnessEndTimeLocal": "2026-11-01T16:48:00.0",
+    "lastSyncTimestampGMT": "2026-11-01T21:48:03.0",
+    "latestSpo2ReadingTimeGmt": "2026-11-01T09:59:00.0", "latestSpo2ReadingTimeLocal": "2026-11-01T05:59:00.0",
+    "bodyBatteryDynamicFeedbackEvent": {"eventTimestampGmt": "2026-11-01T05:30:00.0"},
+    "bodyBatteryActivityEventList": [{
+        "eventType": "ACTIVITY", "eventStartTimeGmt": "2026-11-01T17:06:39.0", "timezoneOffset": -18000000}],
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool, method", [("get_user_summary", "get_user_summary"),
+                                          ("get_stats_and_body", "get_stats_and_body")])
+async def test_daily_summary_on_a_clock_change_day_places_each_time_by_the_zone(
+        app, mock_garmin_client, tool, method):
+    _zone(mock_garmin_client)
+    getattr(mock_garmin_client, method).return_value = json.loads(json.dumps(CHANGE_SUMMARY))
+
+    data = await _call(app, tool, {"date": "2026-11-01"})
+
+    # After the change: -05:00 (it read 17:48:03-04:00, an hour ahead of the clock).
+    assert data["lastSyncTimestampLocal"] == "2026-11-01T16:48:03-05:00"
+    # Before it: still -04:00.
+    assert data["bodyBatteryDynamicFeedbackEvent"]["eventTimestampLocal"] == "2026-11-01T01:30:00-04:00"
+    # Garmin's own pair and an event's own offset are kept.
+    assert data["latestSpo2ReadingTimeLocal"] == "2026-11-01T05:59:00-04:00"
+    assert data["bodyBatteryActivityEventList"][0]["eventStartTimeLocal"] == "2026-11-01T12:06:39-05:00"
+    assert data["utcOffsetHours"] == -4.0
+    assert data["utcOffsetHoursAfterChange"] == -5.0
+    assert data["clockChangeGmt"] == "2026-11-01T06:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_a_day_recorded_in_another_zone_keeps_its_own_offset(app, mock_garmin_client):
+    """The watch in India (+05:30), the profile in New York: the profile's clock
+    change is not that day's."""
+    _zone(mock_garmin_client)
+    mock_garmin_client.get_user_summary.return_value = {
+        "wellnessStartTimeGmt": "2026-10-31T18:30:00.0", "wellnessStartTimeLocal": "2026-11-01T00:00:00.0",
+        "wellnessEndTimeGmt": "2026-11-01T16:18:00.0", "wellnessEndTimeLocal": "2026-11-01T21:48:00.0",
+        "lastSyncTimestampGMT": "2026-11-01T16:18:00.0",
+    }
+
+    data = await _call(app, "get_user_summary", {"date": "2026-11-01"})
+
+    assert data["lastSyncTimestampLocal"] == "2026-11-01T21:48:00+05:30"
+    assert data["utcOffsetHours"] == 5.5
+    assert "clockChangeGmt" not in data
+
+
+@pytest.mark.asyncio
+async def test_stats_latest_respiration_on_a_clock_change_day(app, mock_garmin_client):
+    _zone(mock_garmin_client)
+    mock_garmin_client.get_stats.return_value = {
+        "wellnessStartTimeGmt": "2026-11-01T04:00:00.0", "wellnessStartTimeLocal": "2026-11-01T00:00:00.0",
+        "wellnessEndTimeGmt": "2026-11-01T21:48:00.0",
+        "latestRespirationTimeGMT": "2026-11-01T21:48:00.0", "totalSteps": 8000,
+    }
+
+    data = await _call(app, "get_stats", {"date": "2026-11-01"})
+
+    assert data["latest_respiration_time_local"] == "2026-11-01T16:48:00-05:00"
+    assert data["local_time_zone"] == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_spo2_hourly_rows_on_a_clock_change_day(app, mock_garmin_client):
+    _zone(mock_garmin_client)
+    mock_garmin_client.get_spo2_data.return_value = {
+        "calendarDate": "2026-11-01",
+        "startTimestampGMT": "2026-11-01T04:00:00.0", "startTimestampLocal": "2026-11-01T00:00:00.0",
+        "endTimestampGMT": "2026-11-01T21:48:00.0", "endTimestampLocal": "2026-11-01T16:48:00.0",
+        # 05:00 GMT (before the change) and 07:00 GMT (after it)
+        "spO2HourlyAverages": [[1793509200000, 96], [1793516400000, 95]],
+    }
+
+    data = await _call(app, "get_spo2_data", {"date": "2026-11-01"})
+
+    assert [r["hour_start_local"] for r in data["hourly_averages"]] == [
+        "2026-11-01T01:00:00-04:00", "2026-11-01T02:00:00-05:00"]
+    assert data["local_time_zone"] == "America/New_York"

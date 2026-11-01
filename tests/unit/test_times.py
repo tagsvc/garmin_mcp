@@ -13,11 +13,13 @@ import pytest
 from garmin_mcp import profile_settings as profile_settings_module
 from garmin_mcp.client_resolver import _ResolvingGarminProxy, set_global_client
 from garmin_mcp.times import (
+    clock_change,
     gmt,
     gmt_iso,
     local_from_offset,
     local_from_zone,
     local_today,
+    local_wall_clock,
     offset_from_ms,
     offset_from_pair,
     profile_time_zone,
@@ -244,3 +246,51 @@ def test_zone_garmin_times_uses_the_profile_zone_for_a_lone_local_time():
     assert summer["lastEntryTimestampLocal"] == "2026-10-27T22:58:29-04:00"
     assert winter["lastEntryTimestampLocal"] == "2026-11-02T22:58:29-05:00"
     assert unknown["lastEntryTimestampLocal"] == "2026-10-27T22:58:29.7"  # no offset to add
+
+
+# --- clock changes ------------------------------------------------------------------
+
+def test_clock_change_finds_the_moment_new_york_leaves_daylight_saving():
+    change = clock_change("America/New_York", "2026-11-01T04:00:00.0")
+    assert change.moment.isoformat() == "2026-11-01T06:00:00+00:00"
+    assert change.before == datetime.timedelta(hours=-4)
+    assert change.after == datetime.timedelta(hours=-5)
+
+
+def test_clock_change_finds_the_spring_change_and_honours_an_end():
+    change = clock_change("America/New_York", "2026-03-08T05:00:00Z", "2026-03-08T12:00:00Z")
+    assert change.moment.isoformat() == "2026-03-08T07:00:00+00:00"
+    assert change.after == datetime.timedelta(hours=-4)
+    # An end before the change: no change in that span.
+    assert clock_change("America/New_York", "2026-03-08T05:00:00Z", "2026-03-08T06:59:00Z") is None
+
+
+@pytest.mark.parametrize("zone, start", [
+    ("America/New_York", "2026-10-30T04:00:00.0"),  # an ordinary day
+    ("Asia/Kolkata", "2026-10-31T18:30:00.0"),      # no daylight saving
+    (None, "2026-11-01T04:00:00.0"),
+    ("Not/AZone", "2026-11-01T04:00:00.0"),
+    ("America/New_York", None),
+])
+def test_clock_change_is_none_when_the_clocks_do_not_change(zone, start):
+    assert clock_change(zone, start) is None
+
+
+def test_local_wall_clock_takes_the_zones_offset_at_that_wall_clock():
+    assert local_wall_clock("2026-11-02T00:00:00.0", MINUS_4, "America/New_York") == "2026-11-02T00:00:00-05:00"
+    assert local_wall_clock("2026-11-02T00:00:00.0", MINUS_4) == "2026-11-02T00:00:00-04:00"
+    assert local_wall_clock("2026-11-02T00:00:00.0") is None
+    assert local_wall_clock(None, MINUS_4) is None
+
+
+def test_add_local_siblings_places_by_the_zone_when_no_offset_is_given():
+    from garmin_mcp.times import add_local_siblings
+
+    payload = {"lastSyncTimestampGMT": "2026-11-01T21:48:03.0",
+               "events": [{"eventStartTimeGmt": "2026-11-01T05:30:00.0"},
+                          {"eventStartTimeGmt": "2026-11-01T17:06:39.0", "timezoneOffset": -14400000}]}
+    add_local_siblings(payload, None, "America/New_York")
+    assert payload["lastSyncTimestampLocal"] == "2026-11-01T16:48:03-05:00"
+    assert payload["events"][0]["eventStartTimeLocal"] == "2026-11-01T01:30:00-04:00"
+    # A record's own offset still wins over the zone.
+    assert payload["events"][1]["eventStartTimeLocal"] == "2026-11-01T13:06:39-04:00"

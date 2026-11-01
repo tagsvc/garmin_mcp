@@ -22,7 +22,7 @@ that instant in New York). ``wall_clock`` reads them that way.
 
 import datetime
 import re
-from typing import Any, Optional, Tuple
+from typing import Any, NamedTuple, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from garmin_mcp.profile_settings import profile_settings
@@ -142,6 +142,81 @@ def local_from_zone(gmt_value: Any, zone: Optional[str]) -> Optional[str]:
         return None
 
 
+class ClockChange(NamedTuple):
+    """The moment a zone's UTC offset changed, and the offsets either side."""
+
+    moment: datetime.datetime  # aware UTC
+    before: datetime.timedelta
+    after: datetime.timedelta
+
+
+def clock_change(zone: Optional[str], start_gmt: Any, end_gmt: Any = None) -> Optional[ClockChange]:
+    """When the zone's clocks changed between two GMT moments, or None.
+
+    FORK: a day read at its opening offset puts everything after a daylight
+    saving change an hour off (New York left daylight saving at 2 AM on
+    2026-11-01: the day opened at -04:00 and closed at -05:00). Without
+    ``end_gmt`` the span is the 24 hours from ``start_gmt``. The moment is
+    found to the second; real changes fall on the minute.
+    """
+    start = gmt(start_gmt)
+    if start is None or not zone:
+        return None
+    end = gmt(end_gmt) if end_gmt is not None else start + datetime.timedelta(hours=24)
+    if end is None or end <= start:
+        return None
+    try:
+        tz = ZoneInfo(zone)
+    except Exception:
+        return None
+    before, after = start.astimezone(tz).utcoffset(), end.astimezone(tz).utcoffset()
+    if before == after:
+        return None
+    low, high = start, end
+    while high - low > datetime.timedelta(seconds=1):
+        middle = low + (high - low) / 2
+        if middle.astimezone(tz).utcoffset() == before:
+            low = middle
+        else:
+            high = middle
+    return ClockChange(high.replace(microsecond=0), before, after)
+
+
+def zone_offset(zone: Optional[str], gmt_value: Any) -> Optional[datetime.timedelta]:
+    """The zone's UTC offset at a GMT moment, or None."""
+    moment = gmt(gmt_value)
+    if moment is None or not zone:
+        return None
+    try:
+        return moment.astimezone(ZoneInfo(zone)).utcoffset()
+    except Exception:
+        return None
+
+
+def local_wall_clock(
+    value: Any, offset: Optional[datetime.timedelta] = None, zone: Optional[str] = None
+) -> Optional[str]:
+    """A Garmin ``*Local`` wall clock as ISO with its offset, or None.
+
+    The offset is the zone's at that wall clock when ``zone`` is given, else
+    ``offset``. For a local value whose GMT partner is not its pair -- a day
+    series' ``endTimestampLocal`` is the day's end (next midnight) beside the
+    GMT time of its last reading, so the pair implies "+02:15".
+    """
+    clock = wall_clock(value)
+    if clock is None:
+        return None
+    own = offset
+    if zone:
+        try:
+            own = ZoneInfo(zone).utcoffset(clock)
+        except Exception:
+            own = offset
+    if own is None:
+        return None
+    return clock.replace(tzinfo=datetime.timezone(own)).isoformat(timespec="seconds")
+
+
 def put_times(
     target: dict,
     stem: str,
@@ -179,18 +254,22 @@ def put_times(
     return False
 
 
-def add_local_siblings(node: Any, offset: Optional[datetime.timedelta]) -> Any:
+def add_local_siblings(
+    node: Any, offset: Optional[datetime.timedelta], zone: Optional[str] = None
+) -> Any:
     """Beside each Garmin ``*Gmt``/``*GMT`` time, its ``*Local`` at the offset.
 
     For Garmin payloads a tool returns as-is: the GMT value stays, and a
     local ISO time with its offset is added under the same name ending in
     ``Local`` (``eventStartTimeGmt`` -> ``eventStartTimeLocal``) unless Garmin
     already sends one. A dict carrying its own ``timezoneOffset`` (ms) uses
-    that, and passes it to what it contains. Walks nested dicts and lists.
+    that, and passes it to what it contains. With no offset, ``zone`` (the
+    profile's) places each time, daylight saving applied. Walks nested dicts
+    and lists.
     """
     if isinstance(node, list):
         for item in node:
-            add_local_siblings(item, offset)
+            add_local_siblings(item, offset, zone)
         return node
     if not isinstance(node, dict):
         return node
@@ -198,14 +277,14 @@ def add_local_siblings(node: Any, offset: Optional[datetime.timedelta]) -> Any:
     for key in list(node):
         value = node[key]
         if isinstance(value, (dict, list)):
-            add_local_siblings(value, offset)
+            add_local_siblings(value, offset, zone)
             continue
-        if not key.endswith(("Gmt", "GMT")) or offset is None:
+        if not key.endswith(("Gmt", "GMT")) or (offset is None and not zone):
             continue
         sibling = f"{key[:-3]}Local"
         if sibling in node:
             continue
-        local = local_from_offset(value, offset)
+        local = local_from_offset(value, offset) if offset is not None else local_from_zone(value, zone)
         if local:
             node[sibling] = local
     return node
