@@ -7,6 +7,7 @@ import sys
 from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
+from garmin_mcp import distance_check
 from garmin_mcp.client_resolver import get_client
 from garmin_mcp.times import (
     add_local_siblings,
@@ -86,6 +87,47 @@ def _list_activity_details(a: Dict[str, Any]) -> Dict[str, Any]:
     for meters, name in ((1000, "km"), (1609, "mile"), (5000, "5k")):
         details[f"fastest_{name}_seconds"] = a.get(f'fastestSplit_{meters}')
     return details
+
+
+def _sensor_names(client: Any):
+    """Product id -> a paired sensor's name, from Garmin's sensor list (fetched once, on demand)."""
+    cache: Dict[str, List[Dict[str, Any]]] = {}
+
+    def name(product: Any) -> Optional[str]:
+        if "sensors" not in cache:
+            try:
+                sensors = client.connectapi("/device-service/sensors")
+            except Exception:
+                sensors = []
+            cache["sensors"] = [s for s in sensors if isinstance(s, dict)] if isinstance(sensors, list) else []
+        return next(
+            (s["deviceName"] for s in cache["sensors"]
+             if s.get("productId") == product and isinstance(s.get("deviceName"), str)),
+            None,
+        )
+
+    return name
+
+
+def _distance_check(client: Any, activity_id: int, recorded_meters: float) -> Optional[Dict[str, Any]]:
+    """distance_check.check on the activity's original FIT file, or None when unavailable.
+
+    FORK: get_activity reads the FIT file for runs, walks and hikes to say
+    where the distance came from (distance_check.py). The activity is still
+    returned when the file cannot be fetched or read.
+    """
+    try:
+        from garminconnect import Garmin
+        from garmin_mcp.activity_analysis import _extract_fit_bytes
+
+        raw = client.download_activity(activity_id, dl_fmt=Garmin.ActivityDownloadFormat.ORIGINAL)
+        if not isinstance(raw, (bytes, bytearray)) or not raw:
+            return None
+        return distance_check.check(_extract_fit_bytes(bytes(raw)), recorded_meters, _sensor_names(client))
+    except Exception as error:
+        print(f"distance check skipped for activity {activity_id}: {type(error).__name__}: {error}",
+              file=sys.stderr)
+        return None
 
 
 def _laps_are_swim(laps) -> bool:
@@ -488,6 +530,19 @@ def register_tools(app):
         temperature at the watch, running dynamics (vertical ratio, ground
         contact balance, step speed loss), location_name and personal_record.
 
+        For a run, walk or hike, distance_check says where the distance came
+        from and whether it matches the GPS track: distance_source ("gps",
+        "watch_accelerometer" or "paired_sensor", with distance_source_sensor
+        such as "HRM 600"), distance_source_changes when it switched during
+        the activity, gps_track_distance (the track's own length) and
+        recorded_vs_gps_track_percent. agrees_with_gps_track is false past 5%,
+        with a warning: then the activity's distance, pace and speed follow
+        that sensor, and gps_track_distance is the better measure of ground
+        covered. A strap or foot pod set to supply pace and distance Always
+        overrides GPS outdoors. The check reads the activity's FIT file (about
+        a second for an hour's run); it is omitted when that file is
+        unavailable.
+
         Args:
             activity_id: ID of the activity to retrieve
         """
@@ -607,6 +662,10 @@ def register_tools(app):
 
             # Remove None values
             curated = {k: v for k, v in curated.items() if v is not None}
+            if distance_check.applies(curated.get("type"), curated.get("distance_meters")):
+                checked = _distance_check(get_client(ctx), activity_id, curated["distance_meters"])
+                if checked:
+                    curated["distance_check"] = checked
             unit_system = account_unit_system(get_client(ctx))
             if is_imperial(unit_system) and isinstance(curated.get("sweat_loss_ml"), (int, float)):
                 curated["sweat_loss_fl_oz"] = round(curated["sweat_loss_ml"] / _ML_PER_FL_OZ, 1)

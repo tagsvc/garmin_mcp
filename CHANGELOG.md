@@ -5,6 +5,40 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## `get_activity`: where the distance came from — 2026-11-01
+
+A fenix 8 took speed and distance from a paired HRM 600 on every run from
+2026-09-19 to 2026-10-27. The strap's Pace and Distance were set to Always and
+auto calibrate was off. The easy runs checked came out 24–40% longer than
+their GPS tracks, and Garmin's summary gave no sign of it: distance, pace and
+stride all looked plausible. From 2026-10-29 the watch went back to GPS within
+seconds of each start. The cause isn't recorded anywhere Garmin exposes:
+firmware didn't change, and neither did any setting the activity file records.
+
+For a run, walk or hike, `get_activity` now reads the activity's FIT file and
+adds `distance_check`:
+
+- **`distance_source`:** `gps`, `watch_accelerometer` or `paired_sensor`. A
+  paired sensor is named (`distance_source_sensor`, e.g. "HRM 600", from
+  Garmin's sensor list) and given a kind (`heart_rate_strap`, `foot_pod`).
+  `distance_source_changes` lists switches during the activity. Stretches
+  shorter than a minute aren't listed, since the watch's own sensors stand in
+  while a strap connects. The source comes from FIT message 22, which Garmin
+  doesn't document; `distance_check.py` gives the evidence for reading field 1
+  as distance.
+- **GPS track:** `gps_track_distance` (the per-second track's own length, with
+  account-unit companions) and `recorded_vs_gps_track_percent`.
+  `agrees_with_gps_track` is false past 5%, with a `warning`. On live
+  GPS-sourced runs the two agreed within 1%. The comparison is skipped when
+  fewer than 80% of records have a position. Gaps over 10 seconds (pauses)
+  aren't counted as track.
+
+The FIT file costs about half a second for a 25-minute run, about 1.5 s for an
+hour, and about 5 s for three hours. Rides and other sports skip the check.
+`get_activity` still answers if the file can't be fetched. Tests build real FIT
+bytes with a small writer (`tests/fit_builder.py`), so fitparse reads them the
+same way it reads a watch's file.
+
 ## Devices: Garmin's categories and the scale flag — 2026-10-30
 
 `inspect_garmin`'s first live use answered the device-kind question. Garmin has
