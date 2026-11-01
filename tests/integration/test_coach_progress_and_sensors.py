@@ -90,10 +90,12 @@ async def test_benchmark_flagged_only_when_true(mock_garmin_client):
 @pytest.mark.asyncio
 async def test_calls_atp_api_with_the_date_range(mock_garmin_client):
     _, client = await _progress(mock_garmin_client)
-    url = client.connectapi.call_args[0][0]
-    assert "/atp-api/atp/athlete/calendar" in url
-    assert "trainingplan-service" not in url
-    assert "startDate=2026-09-13" in url and "endDate=2026-09-19" in url
+    call = client.connectapi.call_args
+    assert call.args == ("/atp-api/atp/athlete/calendar",)
+    assert call.kwargs["params"] == {
+        "athletePlanId": 1789330190, "startDate": "2026-09-13",
+        "endDate": "2026-09-19", "lang": "en",
+    }
 
 
 @pytest.mark.asyncio
@@ -187,7 +189,7 @@ async def test_quit_is_read_from_the_detail_when_the_list_entry_lacks_it(
         await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
     )
     assert payload["plans"][0]["status"] == "quit"
-    assert "athletePlanId=1789330190" in mock_garmin_client.connectapi.call_args_list[2].args[0]
+    assert mock_garmin_client.connectapi.call_args_list[2].kwargs["params"]["athletePlanId"] == 1789330190
 
     detail_finished = dict(detail, quit=None)
     mock_garmin_client.connectapi.side_effect = [[], entry, detail_finished]
@@ -198,15 +200,18 @@ async def test_quit_is_read_from_the_detail_when_the_list_entry_lacks_it(
 
 
 @pytest.mark.asyncio
-async def test_an_undeterminable_ended_plan_is_not_called_completed(mock_garmin_client):
+async def test_an_undeterminable_ended_plan_is_not_called_completed(mock_garmin_client, caplog):
     """If quit cannot be read, say "ended" -- never the "completed" mislabel."""
     entry = [dict(_LIVE_ACTIVE[0], planCompleted=True)]
     mock_garmin_client.connectapi.side_effect = [[], entry, RuntimeError("503")]
-    payload = json.loads(
-        await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
-    )
+    with caplog.at_level("DEBUG", logger="garmin_mcp.workouts"):
+        payload = json.loads(
+            await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
+        )
     assert payload["count"] == 1
     assert payload["plans"][0]["status"] == "ended"
+    # The failure is not reported to the caller, but it is logged.
+    assert "detail unavailable: 503" in caplog.text
 
 
 @pytest.mark.asyncio

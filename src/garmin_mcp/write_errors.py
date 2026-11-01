@@ -35,8 +35,15 @@ logger = logging.getLogger(__name__)
 _MAX_BODY_CHARS = 500
 
 # garminconnect raises GarminConnectConnectionError("API Error <status> - <msg>")
-# for any HTTP status >= 400; the response object itself is not attached.
+# for any HTTP status >= 400. Some releases leave the message out unless Garmin
+# sent one as a string, and attach the response instead.
 _API_ERROR_RE = re.compile(r"API Error (\d{3})(?: - (.*))?", re.DOTALL)
+
+
+def _response_body(exc):
+    """The text of the response an error carries, or ""."""
+    text = getattr(getattr(exc, "response", None), "text", None)
+    return text.strip() if isinstance(text, str) else ""
 
 
 def _upstream(exc):
@@ -54,7 +61,7 @@ def _upstream(exc):
     for current in reversed(chain):
         match = _API_ERROR_RE.search(str(current))
         if match:
-            body = (match.group(2) or "").strip()[:_MAX_BODY_CHARS]
+            body = ((match.group(2) or "").strip() or _response_body(current))[:_MAX_BODY_CHARS]
             return int(match.group(1)), body or None
         if isinstance(current, GarminConnectTooManyRequestsError):
             return 429, str(current)[:_MAX_BODY_CHARS] or None

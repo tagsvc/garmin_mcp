@@ -38,6 +38,17 @@ def units_and_times_contract(request, monkeypatch):
 
 
 @pytest.fixture
+def offline_garmin(monkeypatch):
+    """No network for this test; garminconnect's API requests answered locally.
+
+    Returns the router (tests/offline_garmin.py), whose routes a test can add to.
+    """
+    from tests.offline_garmin import install
+
+    return install(monkeypatch)
+
+
+@pytest.fixture
 def mock_garmin_client():
     """Create a mock Garmin client with common methods stubbed"""
     client = Mock()

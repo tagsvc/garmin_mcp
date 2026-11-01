@@ -124,29 +124,6 @@ class SessionManager:
                 )
                 return None
 
-    def create_session(self, user_id: str, email: str, password: str) -> Garmin:
-        """Create a new Garmin session for a user.
-
-        Logs in with credentials and persists the garth tokens.
-
-        Raises:
-            Exception: If login fails.
-        """
-        garmin = Garmin(email=email, password=password, is_cn=False)
-        garmin.login()
-
-        # Persist tokens to disk
-        token_dir = self._user_token_dir(user_id)
-        os.makedirs(token_dir, exist_ok=True)
-        garmin.garth.dump(token_dir)
-        secure_token_dir(token_dir)
-
-        # Cache in memory
-        with self._lock:
-            self._cache[user_id] = _CachedClient(garmin, self.CACHE_TTL)
-
-        return garmin
-
     def create_session_from_garth_tokens(
         self, user_id: str, oauth1_token, oauth2_token
     ) -> None:

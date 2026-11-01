@@ -8,6 +8,7 @@ and save reusable tokens without restarting the MCP process.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import subprocess
@@ -33,7 +34,7 @@ from garmin_mcp.token_utils import (
 _activate_client: Callable[[Garmin], None] | None = None
 
 
-class MfaRequired(RuntimeError):
+class MfaRequired(GarminConnectAuthenticationError):
     """Raised when Garmin asks for MFA and no code was supplied."""
 
 
@@ -142,29 +143,50 @@ def register_tools(app):
             )
 
         try:
-            garmin = Garmin(
-                email=login_email,
-                password=login_password,
-                is_cn=False,
-                prompt_mfa=_mfa_prompt(otp_code),
-            )
+            # Exchange the credentials on the client and save the tokens before
+            # anything loads the profile. Garmin.login loads it before it
+            # returns, and a failure there (a 429, say) would lose tokens a
+            # correct code just minted. The profile then loads from the saved
+            # tokens, which also points token refreshes at them. The Garmin
+            # object holds no credentials, so that load cannot turn into a
+            # second password login.
+            garmin = Garmin(is_cn=False)
             with without_token_env():
-                garmin.login()
+                garmin.client.login(login_email, login_password, prompt_mfa=_mfa_prompt(otp_code))
             ensure_token_directory(path)
             garmin.client.dump(path)
             expanded_base64_path = resolve_path(base64_path, "~/.garminconnect_base64")
-            Path(expanded_base64_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(expanded_base64_path, "w") as token_file:
-                token_file.write(garmin.client.dumps())
+            export_warning = _export_base64(garmin.client.dumps(), expanded_base64_path)
+            saved = {
+                "email": login_email,
+                "token_path": path,
+                "token_base64_path": expanded_base64_path,
+            }
+            if export_warning:
+                saved["warning"] = export_warning
+            try:
+                garmin.login(path)
+            except Exception as e:
+                return json.dumps(
+                    {
+                        "status": "tokens_saved",
+                        "message": (
+                            "Garmin login succeeded and the tokens were saved, but loading "
+                            f"the profile from them failed ({_clean_login_error(e)}). "
+                            "Restart the MCP server to sign in with them once Garmin "
+                            "answers again."
+                        ),
+                        **saved,
+                    },
+                    indent=2,
+                )
             if _activate_client is not None:
                 _activate_client(garmin)
             return json.dumps(
                 {
                     "status": "authenticated",
                     "message": "Garmin login succeeded and tokens were saved.",
-                    "email": login_email,
-                    "token_path": path,
-                    "token_base64_path": expanded_base64_path,
+                    **saved,
                 },
                 indent=2,
             )
@@ -200,6 +222,24 @@ def register_tools(app):
             )
 
     return app
+
+
+def _export_base64(token_json: str, path: str) -> str | None:
+    """Write the optional base64 copy of the tokens, owner-only.
+
+    Other garminconnect tools read it, and the remote server's token import
+    accepts it; this server loads only the token directory, so a failure is a
+    warning, not a failed login.
+    """
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as token_file:
+            # Restrict the file before any token is written to it.
+            os.chmod(path, 0o600)
+            token_file.write(base64.b64encode(token_json.encode()).decode())
+    except OSError as e:
+        return f"The optional base64 copy at '{path}' could not be written: {e}"
+    return None
 
 
 def _mfa_prompt(otp_code: str | None) -> Callable[[], str]:

@@ -277,10 +277,9 @@ async def test_calls_atp_api_not_trainingplan_service(mock_garmin_client):
     enrolled plan as no plan.
     """
     _, client = await _detail(mock_garmin_client)
-    url = client.connectapi.call_args[0][0]
-    assert "/atp-api/atp/athlete/plan" in url
-    assert "athletePlanId=1789330190" in url
-    assert "trainingplan-service" not in url
+    call = client.connectapi.call_args
+    assert call.args == ("/atp-api/atp/athlete/plan",)
+    assert call.kwargs["params"] == {"lang": "en", "athletePlanId": 1789330190}
 
 
 @pytest.mark.asyncio

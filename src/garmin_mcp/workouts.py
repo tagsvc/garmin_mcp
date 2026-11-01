@@ -2,6 +2,7 @@
 Workout-related functions for Garmin Connect MCP Server
 """
 import json
+import logging
 import re
 import sys
 import datetime
@@ -10,6 +11,8 @@ from typing import Any, Dict, List, Optional, Union
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
 from garmin_mcp.units import account_unit_system, add_account_units, parse_pace
+
+logger = logging.getLogger(__name__)
 
 _DATE_RE = re.compile(r'\d{4}-\d{2}-\d{2}')
 
@@ -28,6 +31,15 @@ def _validate_date(value: str, field: str = "date") -> str:
 
 # The garmin_client will be set by the main file
 garmin_client = None
+
+# Garmin Coach's adaptive plans. Each query goes in params, never in the path:
+# garminconnect's newer releases refuse a path that carries a query string.
+ATP_PLAN_PATH = "/atp-api/atp/athlete/plan"
+ATP_CALENDAR_PATH = "/atp-api/atp/athlete/calendar"
+
+
+def _atp_plan_params(plan_id: Any) -> Dict[str, Any]:
+    return {"lang": "en", "athletePlanId": int(plan_id)}
 
 END_CONDITION_TYPE_IDS = {
     "lap.button": 1,
@@ -1855,7 +1867,7 @@ def register_tools(app):
             # adaptive plans live behind atp-api, on a different service
             # prefix, which is what Garmin Connect's own web client calls.
             data = get_client(ctx).connectapi(
-                f"/atp-api/atp/athlete/plan?lang=en&athletePlanId={int(plan_id)}"
+                ATP_PLAN_PATH, params=_atp_plan_params(plan_id)
             )
             if not isinstance(data, dict) or not data:
                 return f"No adaptive training plan found with id {plan_id}."
@@ -1990,8 +2002,13 @@ def register_tools(app):
             _validate_date(start_date, "start_date")
             _validate_date(end_date, "end_date")
             data = get_client(ctx).connectapi(
-                f"/atp-api/atp/athlete/calendar?athletePlanId={int(plan_id)}"
-                f"&startDate={start_date}&endDate={end_date}&lang=en"
+                ATP_CALENDAR_PATH,
+                params={
+                    "athletePlanId": int(plan_id),
+                    "startDate": start_date,
+                    "endDate": end_date,
+                    "lang": "en",
+                },
             )
             if not isinstance(data, list):
                 return json.dumps(data, indent=2)
@@ -2079,11 +2096,14 @@ def register_tools(app):
                     return "ended"
                 try:
                     detail = client.connectapi(
-                        f"/atp-api/atp/athlete/plan?lang=en&athletePlanId={int(plan_id)}"
+                        ATP_PLAN_PATH, params=_atp_plan_params(plan_id)
                     )
-                except Exception:
+                except Exception as exc:
                     # Don't fail the whole list over one plan, and don't guess:
                     # "completed" here is exactly the mislabel this corrects.
+                    logger.debug(
+                        "Coach plan %s detail unavailable: %s", plan_id, exc, exc_info=True
+                    )
                     return "ended"
                 if not isinstance(detail, dict) or "quit" not in detail:
                     return "ended"

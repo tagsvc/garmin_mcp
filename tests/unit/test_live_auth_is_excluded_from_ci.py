@@ -29,7 +29,7 @@ def _without_comments(text: str) -> str:
     return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
 
 
-# The one exemption: the installed library exercised with its transport mocked.
+# One exemption: the installed library exercised with its transport mocked.
 # A no-argument Garmin() holds no credentials and cannot log in; when the very
 # next statement replaces connectapi with a Mock, nothing can reach Garmin.
 # Upstream uses this to test the library's own request shaping.
@@ -40,9 +40,20 @@ _MOCKED_TRANSPORT = re.compile(
 )
 
 
+# The other exemption: a module whose every test runs with the offline_garmin
+# fixture (tests/offline_garmin.py), which blocks every socket and curl_cffi
+# request and answers requests' calls from memory, so even a real login cannot
+# reach Garmin. test_offline_garmin_reaches_nothing below holds it to that.
+_OFFLINE_MARK = re.compile(
+    r'^pytestmark\s*=\s*pytest\.mark\.usefixtures\("offline_garmin"\)\s*$', re.M
+)
+
+
 def _performs_live_auth(text: str) -> bool:
     code = _without_comments(text)
     if not _LIVE_CALL.search(code):
+        return False
+    if _OFFLINE_MARK.search(code):
         return False
     # Only a module that never logs in may use the exemption at all.
     if ".login(" in code:
@@ -107,7 +118,40 @@ def test_no_live_auth_module_is_collected_by_the_ci_selection():
     # still live: mock assigned to a different object
     ("    client = Garmin()\n    other.connectapi = Mock()\n", True),
     ("    g = Garmin()\n    g.login(token_dir)\n", True),
+    # exempt: every test in the module runs offline
+    ('pytestmark = pytest.mark.usefixtures("offline_garmin")\n'
+     "    g = Garmin()\n    g.login(token_dir)\n", False),
+    # still live: some other fixture, a commented-out mark, or a per-test mark
+    ('pytestmark = pytest.mark.usefixtures("mock_garmin_client")\n'
+     "    g = Garmin()\n    g.login(token_dir)\n", True),
+    ('# pytestmark = pytest.mark.usefixtures("offline_garmin")\n'
+     "    g = Garmin()\n    g.login(token_dir)\n", True),
+    ('@pytest.mark.usefixtures("offline_garmin")\n'
+     "def test_x():\n    g = Garmin()\n    g.login(token_dir)\n", True),
 ])
 def test_the_mocked_transport_exemption_is_narrow(snippet, live):
     assert _performs_live_auth(snippet) is live
+
+
+def test_offline_garmin_reaches_nothing(offline_garmin):
+    """The fixture the offline exemption trusts: nothing it allows leaves the machine."""
+    import socket
+
+    import requests
+    from curl_cffi import requests as cffi_requests
+
+    from tests.offline_garmin import NetworkBlocked
+
+    with pytest.raises(NetworkBlocked):
+        socket.create_connection(("connectapi.garmin.com", 443), timeout=1)
+    with pytest.raises(NetworkBlocked):
+        socket.socket().connect(("127.0.0.1", 9))
+    with pytest.raises(NetworkBlocked):
+        cffi_requests.Session().get("https://sso.garmin.com/sso/signin")
+    with pytest.raises(NetworkBlocked):
+        requests.post("https://sso.garmin.com/sso/signin", data={"username": "x"})
+    # Garmin Connect API requests are answered from memory instead.
+    reply = requests.get("https://connectapi.garmin.com/userprofile-service/socialProfile")
+    assert reply.json()["displayName"] == "test-runner"
+    assert offline_garmin.calls[-1]["path"] == "/userprofile-service/socialProfile"
 
