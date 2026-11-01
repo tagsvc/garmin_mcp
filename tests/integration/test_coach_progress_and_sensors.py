@@ -288,8 +288,26 @@ async def test_one_strap_paired_again_is_one_sensor(mock_garmin_client):
     assert sensor["last_connected"] == "2026-10-27T19:00:47.0"
     # The older pairing stays visible; the repeated report does not.
     assert sensor["earlier_pairings"] == [
-        {"last_connected": "2026-09-24T18:02:38.0", "battery_level": 93}
+        {"last_connected": "2026-09-24T18:02:38.0", "last_connected_gmt": "2026-09-24T18:02:38Z",
+         "battery_level": 93}
     ]
+
+
+@pytest.mark.asyncio
+async def test_sensor_last_connected_is_labelled_gmt_and_local(mock_garmin_client):
+    """lastConnected is GMT with no zone: it stays as sent, with labelled times
+    beside it, the local one in the profile's time zone."""
+    mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
+    mock_garmin_client.connectapi.return_value = _REPAIRED_SENSOR
+    payload = json.loads(
+        await _text(_app(devices, mock_garmin_client), "get_sensors", {})
+    )
+    sensor = payload["sensors"][0]
+    assert sensor["last_connected"] == "2026-10-27T19:00:47.0"
+    assert sensor["last_connected_gmt"] == "2026-10-27T19:00:47Z"
+    assert sensor["last_connected_local"] == "2026-10-27T15:00:47-04:00"
+    assert sensor["local_time_zone"] == "America/New_York"
+    assert sensor["earlier_pairings"][0]["last_connected_local"] == "2026-09-24T14:02:38-04:00"
 
 
 @pytest.mark.asyncio

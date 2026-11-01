@@ -5,6 +5,21 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Personal record and sensor times labelled — 2026-11-01
+
+- **`get_personal_record`:** Garmin gives activity records (fastest 1K, mile and
+  5K, longest run, the cycling records) no local time; `prStartTimeLocal` is null.
+  So `pr_start_time_local` was missing although the tool's description promised
+  one, and `date` fell back to the GMT day, a day late for an evening activity.
+  Those records are now placed by the profile's time zone (`local_time_zone` says
+  so), and `date` is that local day. Day records (steps, goal streaks) keep
+  Garmin's own GMT/local pair.
+- **`get_sensors`:** `last_connected` is Garmin's GMT time with no zone. It
+  matched two runs' GMT ends to the second (2026-11-01 17:30:31, 2026-09-24
+  18:02:38). It stays as sent, because the Running page reads it, with
+  `last_connected_gmt` and `last_connected_local` (profile zone) beside it, on
+  the sensor and on each earlier pairing.
+
 ## Times on the day the clocks change — 2026-11-01
 
 New York left daylight saving at 2 AM on 2026-11-01. Day-level payloads took

@@ -624,3 +624,34 @@ async def test_get_personal_record_exception(app_with_challenges, mock_garmin_cl
     # Verify error is handled gracefully
     assert result is not None
     # Should return error message, not crash
+
+
+@pytest.mark.asyncio
+async def test_activity_records_get_a_local_time_and_day_from_the_profile_zone(
+    app_with_challenges, mock_garmin_client
+):
+    """Garmin gives activity records no local time (prStartTimeLocal is null): the
+    profile's zone places them, and an evening activity keeps its own day."""
+    mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
+    mock_garmin_client.get_personal_record.return_value = [
+        # 01:30 GMT on Oct 19 is 9:30 PM on Oct 18 in New York.
+        {"typeId": 2, "value": 520.58, "activityId": 7, "activityName": "Evening Run",
+         "activityType": "running", "prStartTimeGmt": 1792373400000, "prStartTimeLocal": None,
+         "prStartTimeGmtFormatted": "2026-10-19T01:30:00.0", "prStartTimeLocalFormatted": None},
+        # A day record keeps Garmin's own GMT/local pair.
+        {"typeId": 12, "value": 9000.0, "activityId": 0,
+         "prStartTimeGmt": 1792987200000, "prStartTimeLocal": 1792972800000,
+         "prStartTimeGmtFormatted": "2026-10-26T04:00:00.0",
+         "prStartTimeLocalFormatted": "2026-10-26T00:00:00.0"},
+    ]
+
+    data = json.loads((await app_with_challenges.call_tool("get_personal_record", {}))[0][0].text)
+    mile, steps = data
+
+    assert mile["pr_start_time_gmt"] == "2026-10-19T01:30:00Z"
+    assert mile["pr_start_time_local"] == "2026-10-18T21:30:00-04:00"
+    assert mile["local_time_zone"] == "America/New_York"
+    assert mile["date"] == "2026-10-18"
+    assert steps["pr_start_time_local"] == "2026-10-26T00:00:00-04:00"
+    assert "local_time_zone" not in steps
+    assert steps["date"] == "2026-10-26"

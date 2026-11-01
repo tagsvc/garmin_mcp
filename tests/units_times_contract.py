@@ -31,7 +31,7 @@ UNLABELLED_TIME_KEYS = {
     # sends them rather than labelled with a guess.
     "created_date": "workout-service createdDate: zone not established",
     "updated_date": "workout-service updatedDate: zone not established",
-    "last_connected": "sensor lastConnected: zone not established",
+    "last_connected": "sensor lastConnected as Garmin sends it (GMT, verified 2026-11-01), kept because pages read it; last_connected_gmt/_local label it",
     "speed_hr_date": "lactate threshold calendarDate stamp: zone not established",
     "power_date": "FTP calendarDate stamp: zone not established",
     "calendar_date": "get_cycling_ftp calendarDate stamp (date and time): zone not established",
