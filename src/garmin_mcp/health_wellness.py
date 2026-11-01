@@ -10,17 +10,21 @@ from garmin_mcp.client_resolver import get_client
 from garmin_mcp.profile_settings import profile_settings
 from garmin_mcp.units import account_unit_system, add_account_units, add_gram_masses
 from garmin_mcp.times import (
+    ClockChange,
     add_local_siblings,
+    clock_change,
     gmt,
     gmt_iso,
     local_from_offset,
     local_from_zone,
     local_today,
+    local_wall_clock,
     offset_from_ms,
     offset_from_pair,
     profile_time_zone,
     put_times,
     zone_garmin_times,
+    zone_offset,
 )
 
 # The garmin_client will be set by the main file
@@ -758,19 +762,64 @@ def _offset_hours(offset: Any) -> Optional[float]:
     return offset.total_seconds() / 3600 if offset is not None else None
 
 
-def _label_day_series(payload: Any) -> Any:
-    """Stress, heart rate, respiration, floors: add the day's utcOffsetHours."""
+def _day_zone(
+    client: Any, day_offset: Optional[datetime.timedelta], start_gmt: Any, end_gmt: Any = None
+) -> "tuple[Optional[str], Optional[ClockChange]]":
+    """(the profile zone, the day's clock change) for a day payload.
+
+    FORK: a day's offset comes from its opening GMT/local pair, which is wrong
+    for everything after a daylight saving change that day (New York,
+    2026-11-01: opened -04:00, closed -05:00). The zone is returned only when
+    it is where the watch was -- its offset at the day's opening matches the
+    day's own -- so a day recorded elsewhere keeps its own offset. The change
+    is None on an ordinary day.
+    """
+    if client is None:
+        return None, None
+    zone = profile_time_zone(client)
+    if not zone:
+        return None, None
+    if day_offset is not None and zone_offset(zone, start_gmt) != day_offset:
+        return None, None
+    return zone, (clock_change(zone, start_gmt, end_gmt) if day_offset is not None else None)
+
+
+def _add_clock_change(payload: dict, change: ClockChange, zone: str) -> None:
+    """A clock-change day's second offset and the moment it took over."""
+    payload["utcOffsetHoursAfterChange"] = _offset_hours(change.after)
+    payload["clockChangeGmt"] = gmt_iso(change.moment)
+    payload["clockChangeLocal"] = local_from_zone(change.moment, zone)
+    payload["localTimeZone"] = zone
+
+
+def _label_day_series(payload: Any, client: Any = None) -> Any:
+    """Stress, heart rate, respiration, floors: add the day's utcOffsetHours.
+
+    On a day the clocks change, utcOffsetHours is the offset the day opened
+    with, utcOffsetHoursAfterChange the one from clockChangeGmt on.
+    """
     if isinstance(payload, dict):
         offset = offset_from_pair(
             payload.get("startTimestampGMT"), payload.get("startTimestampLocal")
         )
-        zone_garmin_times(payload, offset)
+        zone, change = _day_zone(client, offset, payload.get("startTimestampGMT"))
+        # FORK: endTimestampLocal is the day's end (next midnight) beside the
+        # GMT time of the last reading, not its pair, so the pair read it as
+        # "+02:15". It is the wall clock at the zone's offset there.
+        end = local_wall_clock(payload.get("endTimestampLocal"), offset=offset, zone=zone)
+        if end:
+            payload["endTimestampLocal"] = end
+        if change:
+            zone_garmin_times(payload, None, zone)
+            _add_clock_change(payload, change, zone)
+        else:
+            zone_garmin_times(payload, offset)
         if offset is not None:
             payload["utcOffsetHours"] = _offset_hours(offset)
     return payload
 
 
-def _label_daily_summary(payload: Any) -> Any:
+def _label_daily_summary(payload: Any, client: Any = None) -> Any:
     """The daily summary (user summary, stats and body): a local time beside
     each GMT one, and the day's utcOffsetHours.
 
@@ -778,15 +827,24 @@ def _label_daily_summary(payload: Any) -> Any:
     battery feedback events and the body battery event list -- came with no
     local time, so a 3:17 AM GMT sleep read as 3:17 local. Each event uses its
     own timezoneOffset; the rest use the day's, from Garmin's
-    wellnessStartTimeGmt/wellnessStartTimeLocal pair.
+    wellnessStartTimeGmt/wellnessStartTimeLocal pair -- or, on a day the
+    clocks change, the profile zone at each time.
     """
     if not isinstance(payload, dict):
         return payload
     offset = offset_from_pair(
         payload.get("wellnessStartTimeGmt"), payload.get("wellnessStartTimeLocal")
     )
-    add_local_siblings(payload, offset)
-    zone_garmin_times(payload, offset)
+    zone, change = _day_zone(
+        client, offset, payload.get("wellnessStartTimeGmt"), payload.get("wellnessEndTimeGmt")
+    )
+    if change:
+        add_local_siblings(payload, None, zone)
+        zone_garmin_times(payload, None, zone)
+        _add_clock_change(payload, change, zone)
+    else:
+        add_local_siblings(payload, offset)
+        zone_garmin_times(payload, offset)
     if offset is not None:
         payload["utcOffsetHours"] = _offset_hours(offset)
     return payload
@@ -1109,8 +1167,12 @@ def register_tools(app):
             )
             put_times(summary, "latest_spo2_time", stats.get('latestSpo2ReadingTimeGmt'),
                       stats.get('latestSpo2ReadingTimeLocal'))
-            put_times(summary, "latest_respiration_time", stats.get('latestRespirationTimeGMT'),
-                      offset=day_offset)
+            # On a day the clocks change, the profile zone places it instead.
+            zone, change = _day_zone(get_client(ctx), day_offset,
+                                     stats.get('wellnessStartTimeGmt'), stats.get('wellnessEndTimeGmt'))
+            if put_times(summary, "latest_respiration_time", stats.get('latestRespirationTimeGMT'),
+                         offset=None if change else day_offset, zone=zone if change else None):
+                summary["local_time_zone"] = zone
 
             # Remove None values for cleaner output
             summary = {k: v for k, v in summary.items() if v is not None}
@@ -1515,6 +1577,10 @@ def register_tools(app):
         bodyBatteryActivityEventList[].eventStartTimeLocal / eventUpdateTimeLocal,
         each event at its own timezoneOffset), and utcOffsetHours, the day's offset
         from Garmin's wellnessStartTimeGmt/wellnessStartTimeLocal pair.
+        On a day the clocks change (daylight saving), each time without its
+        own offset is placed by the profile's time zone, and
+        utcOffsetHoursAfterChange and clockChangeGmt say when the second
+        offset took over.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1525,7 +1591,7 @@ def register_tools(app):
                 return f"No user summary found for {date}"
 
             return json.dumps(
-                add_account_units(_label_daily_summary(summary), account_unit_system(get_client(ctx))),
+                add_account_units(_label_daily_summary(summary, get_client(ctx)), account_unit_system(get_client(ctx))),
                 indent=2,
             )
         except Exception as e:
@@ -1579,6 +1645,10 @@ def register_tools(app):
         bodyBatteryActivityEventList[].eventStartTimeLocal / eventUpdateTimeLocal,
         each event at its own timezoneOffset), and utcOffsetHours, the day's offset
         from Garmin's wellnessStartTimeGmt/wellnessStartTimeLocal pair.
+        On a day the clocks change (daylight saving), each time without its
+        own offset is placed by the profile's time zone, and
+        utcOffsetHoursAfterChange and clockChangeGmt say when the second
+        offset took over.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1590,7 +1660,7 @@ def register_tools(app):
 
             unit_system = account_unit_system(get_client(ctx))
             add_gram_masses(data, _GRAM_MASS_KEYS, unit_system)
-            _label_daily_summary(data)
+            _label_daily_summary(data, get_client(ctx))
             return json.dumps(add_account_units(data, unit_system), indent=2)
         except Exception as e:
             return f"Error retrieving stats and body composition data: {str(e)}"
@@ -1782,6 +1852,9 @@ def register_tools(app):
 
         floorValuesArray times are GMT and end in Z; add utcOffsetHours (the
         day's own offset) for local time.
+        On a day the clocks change (daylight saving), utcOffsetHours is the
+        offset the day opened with; from clockChangeGmt on, add
+        utcOffsetHoursAfterChange instead.
 
         Args:
             date: Date in YYYY-MM-DD format
@@ -1791,7 +1864,7 @@ def register_tools(app):
             if not floors_data:
                 return f"No floors data found for {date}"
 
-            return json.dumps(_label_day_series(floors_data), indent=2)
+            return json.dumps(_label_day_series(floors_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving floors data: {str(e)}"
 
@@ -1820,6 +1893,9 @@ def register_tools(app):
 
         heartRateValues timestamps are UTC epoch milliseconds; add utcOffsetHours
         (the day's own offset) for local time.
+        On a day the clocks change (daylight saving), utcOffsetHours is the
+        offset the day opened with; from clockChangeGmt on, add
+        utcOffsetHoursAfterChange instead.
 
         Garmin's start/end text is given its zone in place (*GMT ends in Z,
         *Local carries its offset).
@@ -1832,7 +1908,7 @@ def register_tools(app):
             if not hr_data:
                 return f"No heart rate data found for {date}"
 
-            return json.dumps(_label_day_series(hr_data), indent=2)
+            return json.dumps(_label_day_series(hr_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving heart rate data: {str(e)}"
 
@@ -2035,6 +2111,9 @@ def register_tools(app):
 
         Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
         day's own offset, from Garmin's GMT/local pair) for local time.
+        On a day the clocks change (daylight saving), utcOffsetHours is the
+        offset the day opened with; from clockChangeGmt on, add
+        utcOffsetHoursAfterChange instead.
 
         Garmin's start/end text is given its zone in place (*GMT ends in Z,
         *Local carries its offset).
@@ -2047,7 +2126,7 @@ def register_tools(app):
             if not stress_data:
                 return f"No stress data found for {date}"
 
-            return json.dumps(_label_day_series(stress_data), indent=2)
+            return json.dumps(_label_day_series(stress_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving stress data: {str(e)}"
 
@@ -2105,6 +2184,9 @@ def register_tools(app):
 
         Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
         day's own offset) for local time.
+        On a day the clocks change (daylight saving), utcOffsetHours is the
+        offset the day opened with; from clockChangeGmt on, add
+        utcOffsetHoursAfterChange instead.
 
         Garmin's start/end text is given its zone in place (*GMT ends in Z,
         *Local carries its offset).
@@ -2117,7 +2199,7 @@ def register_tools(app):
             if not respiration_data:
                 return f"No respiration data found for {date}"
 
-            return json.dumps(_label_day_series(respiration_data), indent=2)
+            return json.dumps(_label_day_series(respiration_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving respiration data: {str(e)}"
 
@@ -2195,6 +2277,12 @@ def register_tools(app):
                     spo2_data.get('latestSpO2TimestampLocal'),
                 )
                 zone = None if offset else profile_time_zone(get_client(ctx))
+                # On a day the clocks change, each hour by the profile zone.
+                day_zone, change = _day_zone(get_client(ctx), offset,
+                                             spo2_data.get('startTimestampGMT'),
+                                             spo2_data.get('endTimestampGMT'))
+                if change:
+                    offset, zone = None, day_zone
                 rows = []
                 for pair in hourly:
                     if not (isinstance(pair, (list, tuple)) and len(pair) >= 2):
@@ -2219,6 +2307,9 @@ def register_tools(app):
 
         Series timestamps are UTC epoch milliseconds; add utcOffsetHours (the
         day's own offset) for local time.
+        On a day the clocks change (daylight saving), utcOffsetHours is the
+        offset the day opened with; from clockChangeGmt on, add
+        utcOffsetHoursAfterChange instead.
 
         Garmin's start/end text is given its zone in place (*GMT ends in Z,
         *Local carries its offset).
@@ -2231,7 +2322,7 @@ def register_tools(app):
             if not stress_data:
                 return f"No all-day stress data found for {date}"
 
-            return json.dumps(_label_day_series(stress_data), indent=2)
+            return json.dumps(_label_day_series(stress_data, get_client(ctx)), indent=2)
         except Exception as e:
             return f"Error retrieving all-day stress data: {str(e)}"
 
