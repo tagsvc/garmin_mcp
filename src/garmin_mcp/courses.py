@@ -229,11 +229,11 @@ def _course_activity(data: Dict[str, Any]) -> Dict[str, Any]:
     """The course's activity type, from whichever shape the payload uses.
 
     FORK: the course LIST carries an ``activityType`` object with a typeKey
-    (verified live). The course DETAIL endpoint returned none on a live
-    course 2026-10-14, so get_course_details reported ``activity: null`` for a
-    course the list calls running. The save response carries a numeric
-    ``activityTypePk`` instead, so read that too and name it where the id is
-    one upload_course knows. Neither present -> both null, not guessed.
+    (verified live). The course DETAIL endpoint can carry none, and reading
+    only it reports ``activity: null`` for a course the list calls running.
+    The save response carries a numeric ``activityTypePk`` instead, so read
+    that too and name it where the id is one upload_course knows. Neither
+    present -> both null, not guessed.
     """
     activity_type = data.get("activityType")
     type_key = activity_type.get("typeKey") if isinstance(activity_type, dict) else None

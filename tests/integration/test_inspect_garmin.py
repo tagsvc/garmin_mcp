@@ -1,7 +1,7 @@
 """inspect_garmin: Garmin's raw replies, and what a tool's output leaves out.
 
-The body battery case is the one that prompted it: the curated summary kept
-the band ("HIGH") and dropped the level series. Values are synthetic.
+The body battery case is a curated summary that keeps the band ("HIGH") and
+drops the level series. Values are synthetic.
 """
 import asyncio
 import contextvars

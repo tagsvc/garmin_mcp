@@ -1,8 +1,8 @@
 """The remaining tools gain account-unit companions; raw payloads keep their
 shape and gain companions in their own camelCase style.
 
-Driven through the real MCP tool calls with a mocked Garmin client and the
-athlete's real values where the audit captured them.
+Driven through the real MCP tool calls with a mocked Garmin client and, where
+known, the athlete's real values.
 """
 import json
 
@@ -247,7 +247,7 @@ async def test_hydration_in_ounces_gets_fluid_ounces(app, mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_skin_temperature_keys_say_deviation(app, mock_garmin_client):
-    """Both values are deviations from the baseline, which the key did not
+    """Both values are deviations from the baseline, which the key does not
     say; Garmin sends each unit itself."""
     mock_garmin_client.connectapi.return_value = {
         "calendarDate": "2026-10-28",

@@ -1,10 +1,9 @@
 """Which of Garmin's fields each read-only tool leaves out of its output.
 
-FORK: the curated get_body_battery kept Garmin's word for the level ("HIGH")
-and dropped the number (PR #61); a reader concluded the number did not
-exist. Upstream's curation (f060072, "Improve all MCP tools with curated
-responses") rebuilt about 40 tools the same way, and a curated output cannot
-show what it omits. This script can.
+FORK: a curated output cannot show what it omits -- one that keeps Garmin's
+word for the body battery level ("HIGH") and drops the number reads as if the
+number does not exist -- and upstream curates about 40 tools that way. This
+script can.
 
 It logs in with your saved tokens (run ``garmin-mcp-auth`` first if needed),
 calls every read-only tool once, records each reply Garmin sent the tool,

@@ -1815,9 +1815,9 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
 def _label_fit_times(result: Dict[str, Any], offset: Any, zone: Optional[str]) -> bool:
     """Name the FIT output's UTC times as such, and add local ones.
 
-    FORK: FIT timestamps are UTC, and the output wrote them as bare
+    FORK: FIT timestamps are UTC, and upstream writes them as bare
     "2026-10-27 18:37:26" under start_time -- the key the activity lists use
-    for local time, so one run read four hours apart across tools. Session,
+    for local time, so one run reads four hours apart across tools. Session,
     lap and climb times get *_gmt and *_local (from the watch's own offset,
     else the profile zone); the per-sample streams get timestamp_gmt, with
     utc_offset_hours at the top for converting them. Returns True when the
@@ -2045,8 +2045,8 @@ def register_tools(app):
                 parsed["local_time_zone"] = zone
 
             # W/kg: latest weigh-in on or before the activity's LOCAL date.
-            # FORK: this sliced the UTC start, so a run after 8 PM in New York
-            # used the next day's weigh-in.
+            # FORK: not the UTC start's date, which for a run after 8 PM in New
+            # York picks the next day's weigh-in.
             session = parsed.get("session") or {}
             start_time_str = session.get("start_time_local") or session.get("start_time_gmt") or ""
             activity_date = start_time_str[:10] if start_time_str else None

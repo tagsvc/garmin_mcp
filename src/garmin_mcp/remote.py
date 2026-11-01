@@ -142,8 +142,8 @@ def register_remote_tools(app):
     (readOnlyHint/destructiveHint, which clients use to decide when to ask
     first), and ``structured_output=False``, without which FastMCP re-wraps every
     JSON string a tool returns as ``{"result": "<escaped json>"}`` and doubles
-    the payload. Before this, remote.py registered on the bare FastMCP app and
-    got neither.
+    the payload. Registered on the bare FastMCP app, remote tools would get
+    neither.
 
     Fails closed: if a name in REMOTE_EXCLUDED_TOOLS matches no registered tool
     (an upstream rename, say), startup raises rather than silently serving it.
@@ -281,7 +281,7 @@ def main():
         #    1.30.0 caps and expires them; stateless keeps none at all.
         #  - 1.30.0 expires a stateful session after 30 min idle, and claude.ai
         #    connectors then report the first call after an idle gap as failed
-        #    rather than replaying it (seen by upstream, eed4e8a).
+        #    rather than replaying it.
         # No tool uses session-bound features, and the caller is identified per
         # request from the OAuth bearer token, so nothing depends on sessions.
         # Pinned end to end by tests/integration/test_remote_end_to_end.py.
@@ -326,8 +326,7 @@ def main():
     # remote mode it is a proxy that resolves the CALLING USER's client on each
     # attribute access rather than a single shared client -- see
     # _ResolvingGarminProxy. Without this the global stays None here and any
-    # tool using it (all upstream tools do) fails at runtime in remote mode,
-    # which is why each upstream merge used to require a manual migration.
+    # tool using it (all upstream tools do) fails at runtime in remote mode.
     #
     # Keep this list in step with the register_tools() calls below;
     # test_remote_module_configuration.py fails if they diverge.

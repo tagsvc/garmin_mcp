@@ -1337,8 +1337,8 @@ async def test_get_morning_training_readiness_recovery_ignores_change_phrase(
 ):
     """FORK: recoveryTimeChangePhrase is not a reading; recoveryTime is.
 
-    Upstream asserted 0.0 here on the premise that REACHED_ZERO comes with a
-    stale minute value. A live post-run snapshot carried REACHED_ZERO with
+    Upstream asserts 0.0 here on the premise that REACHED_ZERO comes with a
+    stale minute value. A live post-run snapshot can carry REACHED_ZERO with
     72h (see test_recovery_live_snapshots.py), so the phrase may not zero the
     value. 106 minutes is 1.8 hours.
     """

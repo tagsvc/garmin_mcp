@@ -1,4 +1,4 @@
-"""Phase-1 security hardening regression tests.
+"""Security hardening regression tests.
 
 Covers: (1) reflected-XSS escaping on the login/MFA pages, (2) rate limiting on
 the auth endpoints, (3) token-at-rest hashing of access/refresh tokens.
@@ -38,7 +38,7 @@ class _FakeReq:
         return self._body
 
 
-# ─── Fix 1: reflected-XSS escaping ────────────────────────────────────────
+# ─── (1) reflected-XSS escaping ───────────────────────────────────────────
 
 XSS = '"><script>alert(1)</script>'
 
@@ -65,7 +65,7 @@ async def test_error_message_escaped(tmp_path):
     assert b"<img src=x" not in resp.body
 
 
-# ─── Fix 2: rate limiting ─────────────────────────────────────────────────
+# ─── (2) rate limiting ────────────────────────────────────────────────────
 
 def test_ratelimiter_blocks_after_max_and_isolates_keys():
     rl = _RateLimiter(max_attempts=3, window_seconds=300)
@@ -119,7 +119,7 @@ async def test_mfa_handler_rate_limited(tmp_path, monkeypatch):
     assert b"Too many attempts" in r.body
 
 
-# ─── Fix 3: token-at-rest hashing ─────────────────────────────────────────
+# ─── (3) token-at-rest hashing ────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_tokens_hashed_at_rest_and_roundtrip(tmp_path):
@@ -199,7 +199,7 @@ class _IPReq:
 def test_client_ip_uses_last_xff_hop_not_client_supplied_first():
     """The first XFF entry is client-supplied; the last is appended by our edge.
 
-    Keying the limiter on the first entry let an attacker mint a fresh bucket
+    Keying the limiter on the first entry would let an attacker mint a fresh bucket
     per request and bypass rate limiting entirely.
     """
     from garmin_mcp.oauth_provider import _client_ip
@@ -242,7 +242,7 @@ async def test_import_limiter_cannot_be_bypassed_by_spoofed_xff(tmp_path):
 # ─── Startup hardening of pre-existing token dirs (H1 residual) ───────────
 
 def test_startup_secures_preexisting_token_dirs(tmp_path):
-    """Sessions written before the hardening must be healed on boot.
+    """Token dirs already on disk with loose permissions are healed on boot.
 
     Covers the H1 residual: the per-dump secure_token_dir() calls only affect
     NEW writes, so files already on the volume would stay world-readable.
@@ -254,7 +254,7 @@ def test_startup_secures_preexisting_token_dirs(tmp_path):
     user_dir.mkdir(parents=True)
     token = user_dir / "garmin_tokens.json"
     token.write_text('{"di_token":"x"}')
-    os.chmod(user_dir, 0o755)   # simulate pre-fix state
+    os.chmod(user_dir, 0o755)   # simulate a world-readable token dir
     os.chmod(token, 0o644)
 
     SessionManager(str(store))   # startup sweep

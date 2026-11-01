@@ -843,7 +843,7 @@ class GarminOAuthProvider(
             )
 
         # Throttle repeated attempts per (account, client) pair. Keying on the
-        # email ALONE let anyone lock an allowlisted account out indefinitely by
+        # email ALONE would let anyone lock an allowlisted account out indefinitely by
         # sending one request every ~37s; including the client IP confines a
         # bad actor to their own bucket while still slowing credential-stuffing
         # and avoiding hammering Garmin's own rate-limited SSO.
@@ -859,8 +859,8 @@ class GarminOAuthProvider(
         # if no allowlist is configured, every login is rejected.
         if not self._is_email_allowed(email):
             # Deliberately the SAME message the failed-credentials path returns.
-            # A distinct "not authorized" reply confirmed allowlist membership to
-            # anyone who could reach /login, letting an attacker enumerate which
+            # A distinct "not authorized" reply would confirm allowlist membership
+            # to anyone who could reach /login, letting an attacker enumerate which
             # accounts exist by differencing the responses. The specific reason
             # is still recorded server-side for diagnosis.
             logger.warning(

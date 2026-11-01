@@ -1,6 +1,6 @@
 """End to end through the real remote server, in-process.
 
-The first test of an authenticated request through the whole remote stack
+A test of an authenticated request through the whole remote stack
 rather than pieces of it. See remote_e2e_driver.py for what is real and what
 is stubbed. Concurrent callers, two users, each calling one tool that resolves
 its client through get_client(ctx) and one through the module-level proxy.

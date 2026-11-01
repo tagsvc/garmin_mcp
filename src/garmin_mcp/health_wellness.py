@@ -67,17 +67,17 @@ def _hours_from_recovery_minutes(minutes: Any) -> Optional[float]:
     """Convert a snapshot's ``recoveryTime`` (minutes) to hours.
 
     FORK: ``recoveryTimeChangePhrase`` deliberately plays no part. Upstream
-    returned 0.0 whenever it was ``REACHED_ZERO``, on the premise that Garmin
-    then keeps a stale minute value. Observed 2026-10-27, it does not: a
-    snapshot taken straight after a run (inputContext AFTER_POST_EXERCISE_RESET)
-    carried recoveryTime 4320 -- the 72h Garmin's own app showed -- with
+    returns 0.0 whenever it is ``REACHED_ZERO``, on the premise that Garmin
+    then keeps a stale minute value. It does not: a snapshot taken straight
+    after a run (inputContext AFTER_POST_EXERCISE_RESET) can carry
+    recoveryTime 4320 -- the 72h Garmin's own app shows -- with
     recoveryTimeChangePhrase REACHED_ZERO and recoveryTimeFactorPercent 10
     (POOR). The phrase describes what changed at the event that produced the
     snapshot (the morning's last minute running out before the run), not the
     value now. When recovery really has drained, Garmin sends the low value
-    itself: that morning's wake snapshot carried recoveryTime 1 with phrase
-    NO_CHANGE_SLEEP. Garmin Connect's web client has no display text for the
-    phrase at all and shows hours from recoveryTime, as this does.
+    itself (a wake snapshot with recoveryTime 1 and phrase NO_CHANGE_SLEEP).
+    Garmin Connect's web client has no display text for the phrase at all and
+    shows hours from recoveryTime, as this does.
     """
     if isinstance(minutes, bool) or not isinstance(minutes, (int, float)):
         return None
@@ -106,15 +106,16 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         "remaining_hours": hours,
         "remaining_hours_at_snapshot": hours,
         "value_type": "snapshot",
-        # FORK: was "recovery_score". This is the Training Readiness score
-        # (0-100), not a recovery measure -- 20 on a day with 72h to go.
+        # FORK: not upstream's "recovery_score". This is the Training
+        # Readiness score (0-100), not a recovery measure -- 20 on a day with
+        # 72h to go.
         "readiness_score": score,
         "state": _recovery_state(hours),
         # What produced the snapshot. Observed: AFTER_WAKEUP_RESET,
         # AFTER_POST_EXERCISE_RESET, and UPDATE_REALTIME_VARIABLES -- a mid-day
-        # update that records the countdown (2026-10-25: 10.2h after a run,
-        # 5.8h four hours later). Naps seen so far showed in the feedback
-        # (e.g. IMPROVED_BY_NAPPING), not as a type of their own. Values hold
+        # update that records the countdown (10.2h after a run, 5.8h four
+        # hours later). Naps show in the feedback (e.g. IMPROVED_BY_NAPPING),
+        # not as a type of their own. Values hold
         # from as_of until the next snapshot; the watch counts down live.
         "input_context": latest.get("inputContext"),
         "source": source,
@@ -122,10 +123,10 @@ def _recovery_from_readiness(payload: Any, source: str) -> Optional[Dict[str, An
         "change_phrase": phrase,
         "level": latest.get("level") or latest.get("readinessLevel"),
     }
-    # FORK: was "as_of" and "timestamp", both Garmin's local timestamp with
-    # no zone (and the GMT one under the same name when the local was
-    # missing). Garmin's `timestamp` is GMT; `timestampLocal` beside it
-    # gives the offset.
+    # FORK: upstream's "as_of" and "timestamp" are both Garmin's local
+    # timestamp with no zone (and the GMT one under the same name when the
+    # local is missing). Garmin's `timestamp` is GMT; `timestampLocal` beside
+    # it gives the offset.
     put_times(curated, "as_of", latest.get("timestamp"), latest.get("timestampLocal"))
     return {key: value for key, value in curated.items() if value is not None}
 
@@ -146,7 +147,7 @@ def _curate_training_readiness(r: Dict[str, Any]) -> Dict[str, Any]:
         "score": r.get('score'),
         "feedback": r.get('feedbackShort'),
         # Garmin's full sentence key, beside the short one; validSleep says
-        # whether last night's sleep counted (field-coverage run, 2026-10-30).
+        # whether last night's sleep counted.
         "feedback_long": r.get('feedbackLong'),
         "valid_sleep": r.get('validSleep'),
 
@@ -285,10 +286,10 @@ def _collect_latest_recovery_time(
     Garmin records recovery in snapshots -- at waking, after an activity, and
     in occasional mid-day updates of the countdown -- and a snapshot holds
     until the next one, so "now" is the latest snapshot,
-    whichever day it falls on. Upstream defaulted to the SERVER's local date;
+    whichever day it falls on. Upstream defaults to the SERVER's local date;
     on a UTC server that is already tomorrow for an athlete in the Americas
     every evening, and has no snapshot overnight until the wake-up one exists,
-    so the tool answered "unavailable" while a 72h snapshot was current.
+    so the tool would answer "unavailable" while a 72h snapshot is current.
 
     Snapshots are filed under the athlete's local calendar date, which only
     moves forward, so the latest snapshot is on the latest date that has any.
@@ -412,10 +413,10 @@ def _clock_from_midnight(minutes: Any) -> Optional[str]:
     """A local time of day, "HH:MM", from Garmin's minutes after local
     midnight; negative is the evening before (-80 is 22:40).
 
-    Verified live 2026-10-30 against Garmin Connect's Sleep Coach: bedtime
-    0/20 read "12:00 AM-12:20 AM", the sleep window -80/420 "10:40 PM ~
-    7:00 AM", and a last-sleep midpoint of 264 sat at the middle of a night
-    slept 00:10-08:37.
+    Verified live against Garmin Connect's Sleep Coach: bedtime 0/20 reads
+    "12:00 AM-12:20 AM", the sleep window -80/420 "10:40 PM ~ 7:00 AM", and a
+    last-sleep midpoint of 264 sits at the middle of a night slept
+    00:10-08:37.
     """
     if not isinstance(minutes, (int, float)) or isinstance(minutes, bool):
         return None
@@ -509,7 +510,7 @@ def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
         # Sleep duration and timing
         summary['sleep_seconds'] = daily_sleep.get('sleepTimeSeconds')
         summary['nap_seconds'] = daily_sleep.get('napTimeSeconds')
-        # FORK: were sleep_start/sleep_end, bare GMT epoch milliseconds.
+        # FORK: upstream's sleep_start/sleep_end are bare GMT epoch milliseconds.
         # Garmin's *Local epochs beside them give the offset.
         for stem, key in (("sleep_start", "sleepStart"), ("sleep_end", "sleepEnd")):
             put_times(
@@ -538,9 +539,9 @@ def _extract_sleep_summary(sleep_data: Dict[str, Any]) -> Dict[str, Any]:
         # Average physiological metrics
         summary['avg_sleep_stress'] = daily_sleep.get('avgSleepStress')
 
-        # FORK: from the 2026-10-30 field-coverage run. The summary left these
-        # out, so a reader could not say how much sleep was needed, or how the
-        # night's heart rate and breathing went, though get_sleep_data had them.
+        # FORK: without these a reader cannot say how much sleep was needed, or
+        # how the night's heart rate and breathing went, though get_sleep_data
+        # has them.
         summary['avg_sleep_heart_rate_bpm'] = daily_sleep.get('avgHeartRate')
         summary['avg_respiration_brpm'] = daily_sleep.get('averageRespirationValue')
         summary['lowest_respiration_brpm'] = daily_sleep.get('lowestRespirationValue')
@@ -768,11 +769,11 @@ def _day_zone(
     """(the profile zone, the day's clock change) for a day payload.
 
     FORK: a day's offset comes from its opening GMT/local pair, which is wrong
-    for everything after a daylight saving change that day (New York,
-    2026-11-01: opened -04:00, closed -05:00). The zone is returned only when
-    it is where the watch was -- its offset at the day's opening matches the
-    day's own -- so a day recorded elsewhere keeps its own offset. The change
-    is None on an ordinary day.
+    for everything after a daylight saving change that day (a New York day
+    leaving daylight saving opens at -04:00 and closes at -05:00). The zone is
+    returned only when it is where the watch was -- its offset at the day's
+    opening matches the day's own -- so a day recorded elsewhere keeps its own
+    offset. The change is None on an ordinary day.
     """
     if client is None:
         return None, None
@@ -804,8 +805,8 @@ def _label_day_series(payload: Any, client: Any = None) -> Any:
         )
         zone, change = _day_zone(client, offset, payload.get("startTimestampGMT"))
         # FORK: endTimestampLocal is the day's end (next midnight) beside the
-        # GMT time of the last reading, not its pair, so the pair read it as
-        # "+02:15". It is the wall clock at the zone's offset there.
+        # GMT time of the last reading, not its pair, so the pair would read it
+        # as "+02:15". It is the wall clock at the zone's offset there.
         end = local_wall_clock(payload.get("endTimestampLocal"), offset=offset, zone=zone)
         if end:
             payload["endTimestampLocal"] = end
@@ -824,8 +825,8 @@ def _label_daily_summary(payload: Any, client: Any = None) -> Any:
     each GMT one, and the day's utcOffsetHours.
 
     Its GMT times -- the last sync, the latest respiration reading, the body
-    battery feedback events and the body battery event list -- came with no
-    local time, so a 3:17 AM GMT sleep read as 3:17 local. Each event uses its
+    battery feedback events and the body battery event list -- come with no
+    local time, so a 3:17 AM GMT sleep would read as 3:17 local. Each event uses its
     own timezoneOffset; the rest use the day's, from Garmin's
     wellnessStartTimeGmt/wellnessStartTimeLocal pair -- or, on a day the
     clocks change, the profile zone at each time.
@@ -936,8 +937,8 @@ def _battery_day_offset(day: dict) -> Optional[datetime.timedelta]:
 def _battery_day_levels(day: dict, client: Any) -> Dict[str, Any]:
     """A day's body battery numbers and Garmin's word for them, with times.
 
-    FORK: the curated summary used to keep only the feedback event's band
-    ("HIGH", as body_battery_level), so a reader could not give the number;
+    FORK: upstream's curated summary keeps only the feedback event's band
+    ("HIGH", as body_battery_level), so a reader cannot give the number;
     Garmin sends it as the bodyBatteryValuesArray series.
     """
     out: Dict[str, Any] = {}
@@ -1127,8 +1128,8 @@ def register_tools(app):
                 "body_battery_highest": stats.get('bodyBatteryHighestValue'),
                 "body_battery_lowest": stats.get('bodyBatteryLowestValue'),
                 "body_battery_current": stats.get('bodyBatteryMostRecentValue'),
-                # FORK: these and the stress levels below were left out
-                # (field-coverage run, 2026-10-30), though Garmin sends them.
+                # FORK: these and the stress levels below are left out of
+                # upstream's summary, though Garmin sends them.
                 "body_battery_at_wake": stats.get('bodyBatteryAtWakeTime'),
                 "body_battery_during_sleep": stats.get('bodyBatteryDuringSleep'),
                 "body_battery_band": (stats.get('bodyBatteryDynamicFeedbackEvent') or {}).get('bodyBatteryLevel'),
@@ -1787,8 +1788,8 @@ def register_tools(app):
                         "body_battery_impact": event.get('bodyBatteryImpact'),
                         "feedback": event.get('shortFeedback'),
                     }
-                    # FORK: was "start_time", Garmin's GMT value with the
-                    # "Gmt" dropped, so a 2:37 PM run read as 6:37 PM. Each
+                    # FORK: upstream's "start_time" is Garmin's GMT value with
+                    # the "Gmt" dropped, so a 2:37 PM run reads as 6:37 PM. Each
                     # event carries its own offset (timezoneOffset, ms).
                     offset = offset_from_ms(event.get('timezoneOffset'))
                     zone = None if offset else profile_time_zone(get_client(ctx))
@@ -2258,7 +2259,8 @@ def register_tools(app):
                 "avg_sleep_spo2_percent": spo2_data.get('avgSleepSpO2'),
             }
 
-            # FORK: was latest_reading_time, Garmin's local time with no zone.
+            # FORK: upstream's latest_reading_time is Garmin's local time with
+            # no zone.
             put_times(
                 summary, "latest_reading_time",
                 spo2_data.get('latestSpO2TimestampGMT'),

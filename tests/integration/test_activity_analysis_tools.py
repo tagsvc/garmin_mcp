@@ -568,8 +568,8 @@ def _evening_run_messages(start_utc, local_offset_hours=-4, with_activity=True):
 async def test_fit_times_are_labelled_gmt_with_the_watch_local_time(
     app_with_activity_analysis, mock_garmin_client
 ):
-    """FIT start times were bare UTC under the key the activity lists use for
-    local time, so the same run read 18:37 here and 14:37 there."""
+    """FIT start times are UTC; bare, under the key the activity lists use for
+    local time, the same run reads 18:37 here and 14:37 there."""
     data = await _call_fit_data(
         app_with_activity_analysis, mock_garmin_client, _evening_run_messages(_RUN_START_UTC)
     )
@@ -2318,7 +2318,7 @@ async def test_fit_metric_fields_get_account_unit_companions(
 
 def test_fit_message_utc_times_end_in_z_and_local_times_stay_local():
     """FIT date_time values are UTC; local_date_time values are the watch's
-    clock. The message dump wrote both as bare text."""
+    clock."""
     from types import SimpleNamespace
 
     from garmin_mcp.activity_analysis import _serialize_fit_field

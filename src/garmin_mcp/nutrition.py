@@ -395,9 +395,8 @@ def register_tools(app):
                 "fat": content.get("fat"),
                 "item_count": item_count,
             }
-            # FORK: the rest of the day's totals and its goals, left out until
-            # the field-coverage run (2026-10-30). Values as Garmin's food log
-            # reports them; omitted when Garmin has none.
+            # FORK: the rest of the day's totals and its goals. Values as
+            # Garmin's food log reports them; omitted when Garmin has none.
             for garmin_key, name in _MICRONUTRIENTS:
                 if content.get(garmin_key) is not None:
                     entry[name] = content[garmin_key]

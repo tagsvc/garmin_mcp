@@ -2,7 +2,7 @@
 workout uploads accept pace text.
 
 Driven through the real MCP tool calls with a mocked Garmin client. The
-metric fields stay exactly as before, so each test checks one of them too.
+metric fields stay unchanged, so each test checks one of them too.
 """
 import json
 from unittest.mock import Mock

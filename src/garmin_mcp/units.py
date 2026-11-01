@@ -13,8 +13,7 @@ pace; its elevation, weight and temperature are already in its units.
 ``statute_uk`` gets miles, feet, mph, min/mile pace and inches but keeps
 kilograms and Celsius, since this module does not guess between pounds and
 stone. Temperature differences (a range, a deviation) convert by x1.8 with
-no +32. An unknown unit system adds nothing, so the output is what it was
-before this module existed.
+no +32. An unknown unit system adds nothing.
 
 Swims keep meters: Garmin shows pool distances in the pool's own units and
 swim pace per 100, neither of which a per-mile or per-km companion matches.

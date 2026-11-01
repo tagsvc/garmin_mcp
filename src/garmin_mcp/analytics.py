@@ -290,8 +290,8 @@ def register_tools(app):
 
 def _daily_rows(client: Any, end_date: str | None, days: int) -> list[dict[str, Any]]:
     safe_days = min(max(1, days), MAX_DAYS)
-    # FORK: was the server's date -- UTC on Railway, so tomorrow from 8 PM in
-    # New York, a day with no data yet.
+    # FORK: the profile zone's today, not the server's date -- UTC on Railway,
+    # so tomorrow from 8 PM in New York, a day with no data yet.
     end = _parse_date(end_date) if end_date else local_today(client)
     start = end - dt.timedelta(days=safe_days - 1)
     activities_by_date = _activity_totals(client, start, end)

@@ -54,9 +54,9 @@ def register_tools(app):
                     "serial_number": device.get("serialNumber"),
                     # FORK: upstream reads softwareVersionString,
                     # deviceStatusName and primaryDevice, which a live device
-                    # list (2026-10-30) does not have; it sends
-                    # currentFirmwareVersion, deviceStatus and primary, so
-                    # firmware, status and the primary flag dropped out.
+                    # list does not have; it sends currentFirmwareVersion,
+                    # deviceStatus and primary, so firmware, status and the
+                    # primary flag drop out.
                     "software_version": device.get("softwareVersionString")
                     or device.get("currentFirmwareVersion"),
                     "status": device.get("deviceStatusName") or device.get("deviceStatus"),
@@ -65,12 +65,12 @@ def register_tools(app):
                 }
 
                 # Add optional metadata if present. A live device list
-                # (2026-10-30) has deviceTypeSimpleName, not deviceType.
+                # has deviceTypeSimpleName, not deviceType.
                 device_type = device.get("deviceType") or device.get("deviceTypeSimpleName")
                 if device_type:
                     device_info["device_type"] = device_type
                 # What it feeds, and whether it is a scale -- Garmin has no
-                # single "watch / scale / strap" field (live, 2026-10-30).
+                # single "watch / scale / strap" field.
                 if device.get("deviceCategories"):
                     device_info["categories"] = device.get("deviceCategories")
                 if device.get("weightScale") is not None:
@@ -111,8 +111,8 @@ def register_tools(app):
                 "user_profile_id": device.get("userProfileNumber"),
             }
 
-            # FORK: was "last_upload_time", formatted in the SERVER's clock
-            # zone with no label -- UTC on Railway, local on a desktop. The
+            # FORK: upstream's "last_upload_time" is formatted in the SERVER's
+            # clock zone with no label -- UTC on Railway, local on a desktop. The
             # epoch carries no offset, so local uses the profile's zone.
             upload_time_ms = device.get("lastUsedDeviceUploadTime")
             if upload_time_ms:
@@ -200,8 +200,7 @@ def register_tools(app):
                 if tracking_info:
                     curated["activity_tracking"] = tracking_info
 
-            # FORK: settings Garmin sends that the summary left out
-            # (field-coverage run, 2026-10-30).
+            # FORK: settings Garmin sends that upstream's summary leaves out.
             auto_detect = settings.get("autoActivityDetect") or {}
             if isinstance(auto_detect, dict) and auto_detect:
                 detect = {"enabled": auto_detect.get("autoActivityDetectEnabled")}
@@ -451,8 +450,8 @@ def register_tools(app):
 
             # FORK: grouped by model, not serialNumber. Garmin's serialNumber
             # is per pairing record, not the strap's: one HRM 600, paired a few
-            # times, came back as three records with three serials (2026-10-28;
-            # two were the same report, one an older pairing).
+            # times, comes back as three records with three serials (two the
+            # same report, one an older pairing).
             groups: Dict[tuple, List[Dict[str, Any]]] = {}
             for item in data:
                 if not isinstance(item, dict):
@@ -460,9 +459,9 @@ def register_tools(app):
                 key = (item.get("deviceName"), item.get("sensorType"), item.get("manufacturer"))
                 groups.setdefault(key, []).append(item)
 
-            # FORK: lastConnected is GMT with no zone: it matched two runs'
-            # GMT ends to the second (2026-11-01 17:30:31, 2026-09-24 18:02:38).
-            # It stays as sent -- pages read it -- with labelled times beside it.
+            # FORK: lastConnected is GMT with no zone: it matches activities'
+            # GMT end times to the second. It stays as sent -- pages read it --
+            # with labelled times beside it.
             zone = profile_time_zone(get_client(ctx))
 
             def label(target: Dict[str, Any], value: Any) -> None:

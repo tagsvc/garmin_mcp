@@ -1,10 +1,9 @@
 """Where an activity's distance came from, checked against its GPS track.
 
-FORK: a fenix 8 took speed and distance from a paired HRM 600 on every run
-from 2026-09-19 to 2026-10-27 (the strap's Pace and Distance set to Always,
-auto calibrate off). Easy runs came out 24-40% longer than their GPS tracks,
-and nothing in Garmin's summary showed it: the distance, pace and stride all
-looked plausible.
+FORK: a fenix 8 takes speed and distance from a paired HRM 600 when the
+strap's Pace and Distance is set to Always (auto calibrate off). Easy runs
+recorded that way measured 24-40% longer than their GPS tracks, and nothing in
+Garmin's summary shows it: the distance, pace and stride all look plausible.
 
 Two separate readings, both from the activity's original FIT file:
 
@@ -16,9 +15,8 @@ Two separate readings, both from the activity's original FIT file:
   and fields 0 and 1 named the same sensor in every run checked, apart from
   the first seconds.
 - The GPS track's own length, from the per-second positions, against the
-  distance recorded. Where GPS supplied distance the two agreed within 1%
-  (live runs, 2026-10-29 to 2026-11-01); where the strap did, its figure was
-  24-40% longer.
+  distance recorded. In the live runs checked, the two agreed within 1% where
+  GPS supplied distance; where the strap did, its figure was 24-40% longer.
 """
 
 import datetime

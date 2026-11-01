@@ -40,10 +40,10 @@ class SessionManager:
     def _secure_existing_sessions(self) -> None:
         """Apply owner-only permissions to token dirs already on disk.
 
-        The per-dump ``secure_token_dir()`` calls only cover tokens written from
-        now on, so sessions persisted before that hardening (or by an affected
-        garminconnect <=0.3.4, CVE-2026-54447) would stay world-readable on the
-        volume until the next re-import. Sweeping at startup heals them in place
+        The per-dump ``secure_token_dir()`` calls only cover the tokens they
+        write, so a session already on the volume (written without them, or by
+        an affected garminconnect <=0.3.4, CVE-2026-54447) would stay
+        world-readable until the next re-import. Sweeping at startup heals them in place
         with no manual chmod. Idempotent and cheap: a handful of directories,
         and re-running on already-secured dirs is a no-op.
         """
@@ -154,15 +154,15 @@ class SessionManager:
 
         The login flow obtains tokens via garth SSO (OAuth1/OAuth2), but
         garminconnect 0.3.2 — which makes the actual API calls when we restore
-        a session in :meth:`get_client` — no longer uses garth. It authenticates
+        a session in :meth:`get_client` — does not use garth. It authenticates
         with a DI bearer token persisted as a single ``garmin_tokens.json``
         (keys: ``di_token`` / ``di_refresh_token`` / ``di_client_id``).
 
         The garth OAuth2 access/refresh tokens ARE that DI bearer/refresh pair,
         so we bridge them into garminconnect's client and let it persist in its
-        own format. Dumping with garth's two-file format here is what previously
-        made every restore fail with "session expired" (garminconnect looked for
-        garmin_tokens.json, found oauth{1,2}_token.json, and fell back to
+        own format. Dumping with garth's two-file format here would make every
+        restore fail with "session expired" (garminconnect looks for
+        garmin_tokens.json, finds oauth{1,2}_token.json, and falls back to
         username/password it doesn't have).
 
         Args:

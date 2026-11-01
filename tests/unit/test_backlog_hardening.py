@@ -1,4 +1,4 @@
-"""Regression tests for the August 2026 review backlog (M3, L1, L3, L4).
+"""Regression tests for security review findings M3, L1, L3 and L4.
 
 Each test pins a behaviour that a future upstream merge could silently undo.
 """
@@ -135,7 +135,7 @@ def _provider(tmp_path, **kw):
 
 @pytest.mark.asyncio
 async def test_attacker_cannot_lock_out_an_allowlisted_account(tmp_path, monkeypatch):
-    """Keying the limiter on email alone let anyone lock the real user out."""
+    """Keying the limiter on email alone would let anyone lock the real user out."""
     import garth
 
     # Never touch Garmin from a test: an allowlisted email would otherwise reach
@@ -193,7 +193,7 @@ def test_safe_log_bounds_length():
     assert len(_safe_log("a" * 5000)) <= 200
 
 
-# ─── Round 2: log injection via headers, and upload filename ──────────────
+# ─── Log injection via headers, and upload filename ───────────────────────
 
 class _IPReq:
     """Minimal request stand-in for _client_ip()."""
