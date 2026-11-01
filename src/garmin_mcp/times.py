@@ -2,8 +2,7 @@
 
 FORK: Garmin mixes GMT, the watch's local time and epoch milliseconds, often
 under keys that do not say which; a 3:17 AM GMT bedtime read as local is
-four hours off, and an evening run lands on the next day. The rule, agreed
-2026-10-28:
+four hours off, and an evening run lands on the next day. The rule:
 
 - GMT stays, under a key ending ``_gmt``, as ISO 8601 ending in ``Z``.
 - Local time goes under a key ending ``_local``, as ISO 8601 with its UTC
@@ -154,10 +153,11 @@ def clock_change(zone: Optional[str], start_gmt: Any, end_gmt: Any = None) -> Op
     """When the zone's clocks changed between two GMT moments, or None.
 
     FORK: a day read at its opening offset puts everything after a daylight
-    saving change an hour off (New York left daylight saving at 2 AM on
-    2026-11-01: the day opened at -04:00 and closed at -05:00). Without
-    ``end_gmt`` the span is the 24 hours from ``start_gmt``. The moment is
-    found to the second; real changes fall on the minute.
+    saving change an hour off (New York leaves daylight saving at 2 AM on
+    the first Sunday of November: that day opens at -04:00 and closes at
+    -05:00). Without ``end_gmt`` the span is the 24 hours from
+    ``start_gmt``. The moment is found to the second; real changes fall on
+    the minute.
     """
     start = gmt(start_gmt)
     if start is None or not zone:

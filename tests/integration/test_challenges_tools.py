@@ -168,7 +168,7 @@ async def test_get_personal_record_tool(app_with_challenges, mock_garmin_client)
             # The local date, not the GMT one (2024-01-15)
             "date": "2024-01-14",
             "activity_id": 12345678901,
-            # Which activity set it, and when (field-coverage run, 2026-10-30)
+            # Which activity set it, and when
             "activity_name": "Evening Run",
             "activity_type": "running",
             "pr_start_time_gmt": "2024-01-15T07:45:00Z",
@@ -191,8 +191,8 @@ async def test_get_personal_record_tool(app_with_challenges, mock_garmin_client)
 async def test_personal_record_types_10_and_16_are_power_and_weeks(
     app_with_challenges, mock_garmin_client
 ):
-    """Live values, 2026-10-28. Type 10 was labelled "Fastest 100K Cycling"
-    and showed 177.19 as "2:57" -- 100 km in three minutes. The value is an
+    """Live values. Type 10 is not "Fastest 100K Cycling", which shows
+    177.19 as "2:57" -- 100 km in three minutes. The value is an
     average over 1,200 one-second samples: best 20-minute power, in watts.
     Type 16 is a weekly streak, counted in weeks."""
     mock_garmin_client.get_personal_record.return_value = [

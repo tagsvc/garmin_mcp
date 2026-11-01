@@ -101,7 +101,7 @@ def test_raw_gmt_times_need_a_local_time_or_an_offset():
 
 def test_raw_time_text_must_carry_its_zone():
     """Garmin writes "2026-10-28T09:59:00.0" for GMT and local alike; only
-    the key told them apart."""
+    the key tells them apart."""
     found = output_violations({
         "utcOffsetHours": -4.0,
         "latestSpo2ReadingTimeGmt": "2026-10-28T09:59:00.0",

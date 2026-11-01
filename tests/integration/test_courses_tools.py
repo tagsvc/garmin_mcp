@@ -95,8 +95,9 @@ async def test_get_courses_error_is_caught(app_with_courses, mock_garmin_client)
 async def test_get_course_details_reads_a_numeric_activity_type(app_with_courses, mock_garmin_client):
     """FORK: a detail payload with activityTypePk and no activityType object.
 
-    Live, get_course_details returned activity: null for a course the list
-    calls running. The save response uses activityTypePk, so read it.
+    A live detail payload can lack activityType, which reads as activity: null
+    for a course the list calls running. The save response uses activityTypePk,
+    so read it.
     """
     mock_garmin_client.client.connectapi.return_value = {
         "courseId": 522511675,

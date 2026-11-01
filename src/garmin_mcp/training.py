@@ -184,11 +184,11 @@ def _tracker_acute_load(
 _PROGRESS_CALORIES_FACTOR = 4.19
 
 # FORK: the other metrics are not in their documented units either. Verified
-# live 2026-10-28 against a run with known totals (7260.53 m, 2899.16 s,
-# 37 m gain): distance and elevationGain come back in centimeters (726052.98,
-# 3700.0), duration, movingDuration and elapsedDuration in milliseconds
-# (2899157.96). Reading the raw sum as meters put a month of running at
-# 6,510 km. metric -> (unit reported, factor from Garmin's raw value).
+# live against a run with known totals (7260.53 m, 2899.16 s, 37 m gain):
+# distance and elevationGain come back in centimeters (726052.98, 3700.0),
+# duration, movingDuration and elapsedDuration in milliseconds (2899157.96).
+# Reading the raw sum as meters puts a month of running at 6,510 km.
+# metric -> (unit reported, factor from Garmin's raw value).
 _PROGRESS_METRIC_UNITS = {
     "distance": ("meters", 0.01),
     "elevationGain": ("meters", 0.01),
@@ -910,9 +910,9 @@ def register_tools(app):
                 "status": summary.get("status"),
                 "feedback": summary.get("feedbackPhrase"),
             }
-            # FORK: were sleep_start/sleep_end, local time with no zone -- the
-            # names get_sleep_summary used for GMT epochs. The GMT/local pair
-            # gives the offset.
+            # FORK: upstream's sleep_start/sleep_end are local time with no
+            # zone -- the names its get_sleep_summary uses for GMT epochs. The
+            # GMT/local pair gives the offset.
             for stem, key in (("sleep_start", "sleepStart"), ("sleep_end", "sleepEnd")):
                 put_times(
                     curated, stem,
@@ -928,7 +928,7 @@ def register_tools(app):
                 curated["hrv_readings"] = []
                 for r in readings:
                     reading: Dict[str, Any] = {}
-                    # FORK: was "time", local with no zone.
+                    # FORK: upstream's "time" is local with no zone.
                     put_times(reading, "time", r.get("readingTimeGMT"), r.get("readingTimeLocal"))
                     reading["hrv_ms"] = r.get("hrvValue")
                     curated["hrv_readings"].append(reading)
@@ -1096,8 +1096,7 @@ def register_tools(app):
                 "sport": device_data.get("sport"),
                 "fitness_trend": device_data.get("fitnessTrend"),
                 # FORK: whether Garmin has paused the status (illness, rest,
-                # travel) and the day the current status began; both left out
-                # until the field-coverage run (2026-10-30).
+                # travel) and the day the current status began.
                 "training_paused": device_data.get("trainingPaused"),
                 "status_since_date": device_data.get("sinceDate"),
                 # VO2 Max
@@ -1179,7 +1178,7 @@ def register_tools(app):
 
             curated = {k: v for k, v in curated.items() if v is not None}
             # Garmin can answer with a non-empty dict that carries none of
-            # these fields, which used to come back as a bare "{}".
+            # these fields, which would otherwise come back as a bare "{}".
             if "functional_threshold_power_watts" not in curated:
                 return "No cycling FTP data found"
 
@@ -1618,7 +1617,7 @@ def register_tools(app):
                     if feedback:
                         entry["feedback"] = feedback
                     # The night's baseline band, which the status is read
-                    # against (field-coverage run, 2026-10-30).
+                    # against.
                     baseline = hrv_summary.get("baseline") or {}
                     for garmin_key, name in (("lowUpper", "baseline_low_upper_ms"),
                                              ("balancedLow", "baseline_balanced_low_ms"),

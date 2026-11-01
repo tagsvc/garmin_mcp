@@ -738,7 +738,7 @@ def _curate_scheduled_workout(scheduled: dict) -> dict:
         # Garmin carries the plan id in a different field per plan family:
         # atpPlanId (adaptive / Garmin Coach), itpPlanId, fbtAdaptivePlanId,
         # selfGuidedPlanId. Reading only two of them loses the linkage entirely
-        # on an ATP plan, where the other three are null. Verified 2026-09-19.
+        # on an ATP plan, where the other three are null. Verified live.
         "training_plan_id": (
             scheduled.get('trainingPlanId')
             or scheduled.get('atpPlanId')
@@ -778,9 +778,9 @@ def _curate_scheduled_workout(scheduled: dict) -> dict:
     #
     # `protected` here and `benchmark` from get_coach_plan_progress are DIFFERENT
     # FIELDS from different services -- this feed has no `benchmark` key and the
-    # ATP calendar has no `protected` key. They coincided on the one benchmark
-    # observed (2026-09-14), which is not enough to conclude they mean the same
-    # thing. Do not treat either as an alias for the other.
+    # ATP calendar has no `protected` key. They coincide on the one benchmark
+    # observed, which is not enough to conclude they mean the same thing. Do
+    # not treat either as an alias for the other.
     if scheduled.get('protected'):
         summary['protected'] = True
 
@@ -789,7 +789,7 @@ def _curate_scheduled_workout(scheduled: dict) -> dict:
     # the gap between them is what adherence over a long plan is made of.
     #
     # performed_at is DEVICE-LOCAL and carries no zone designator. Verified
-    # 2026-09-19: it is byte-identical to the activity's start_time_local, and
+    # live: it is byte-identical to the activity's start_time_local, and
     # four hours behind its start_time_gmt. Parsing it as UTC shifts an evening
     # session onto the next day.
     if is_completed:
@@ -1895,19 +1895,14 @@ def register_tools(app):
                 "long_run_day": data.get("longRunDay"),
                 "coach_key": coach_model.get("contentfulContentId"),
                 "coach_id": coach.get("coachId"),
-                # What the plan was calibrated from at registration
-                # (2026-09-13T20:09:50Z on this account).
+                # What the plan was calibrated from at registration.
                 #
                 # UNIT UNVERIFIED and formally unresolved. Garmin sends a bare
                 # number (617 here). Magnitude is settled, but only against
-                # data that EXISTED ON REGISTRATION DAY: a value captured on
-                # the 13th cannot have been computed from a session on the
-                # 14th or the 17th. Two earlier readings here leaned on
-                # post-registration sessions -- one on each side of the
-                # question -- and both are gone.
+                # data that EXISTED ON REGISTRATION DAY: a value captured at
+                # registration cannot have been computed from a later session.
                 #
-                # Measured across the four pre-registration run sessions
-                # (09-02, 09-07, 09-09, 09-11):
+                # Measured across the four run sessions before registration:
                 #
                 #   run segments     336.8-397.7 s/km per session
                 #                    308.6-424.5 s/km per interval
@@ -1939,9 +1934,6 @@ def register_tools(app):
                 # default favours per-mile too: 10:17/mi is a plausible
                 # beginner default and 16:33/mi is not a pace anyone would be
                 # defaulted to. Both surviving branches point the same way.
-                #
-                # The plan was quit in 2026-10, so no further evidence can come
-                # from this account; the question is closed as unresolved.
                 #
                 # It stays UNRESOLVED because no branch is directly observed,
                 # NOT because the readings are balanced -- they are not, and
@@ -2074,7 +2066,7 @@ def register_tools(app):
             client = get_client(ctx)
 
             def _ended_status(plan):
-                # Verified 2026-10-14 on a cancelled plan: the plan-detail payload
+                # Verified on a cancelled plan: the plan-detail payload
                 # carries a non-null `quit`, AND planCompleted=true, AND the plan
                 # is listed under /completed. So "completed" there means ended.
                 # Whether the list entries carry `quit` themselves is not
@@ -2091,7 +2083,7 @@ def register_tools(app):
                     )
                 except Exception:
                     # Don't fail the whole list over one plan, and don't guess:
-                    # "completed" here is exactly the mislabel being fixed.
+                    # "completed" here is exactly the mislabel this corrects.
                     return "ended"
                 if not isinstance(detail, dict) or "quit" not in detail:
                     return "ended"
@@ -2115,9 +2107,9 @@ def register_tools(app):
                     "goal_time_seconds": seconds,
                     "confidence": plan.get("confidence"),
                     "workouts_per_week": plan.get("workoutsPerWeek"),
-                    # The plan's schedule settings (field-coverage run,
-                    # 2026-10-30). prePlanWeeklyMileage and prePlanTrainingPace
-                    # stay out until their units are established.
+                    # The plan's schedule settings. prePlanWeeklyMileage and
+                    # prePlanTrainingPace stay out until their units are
+                    # established.
                     "workout_days": plan.get("workoutCalendarDays"),
                     "long_run_day": plan.get("longRunDay"),
                     "registration_date": plan.get("registrationDate"),

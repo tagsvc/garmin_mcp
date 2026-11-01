@@ -1,9 +1,8 @@
-"""Tools built from captured Garmin Connect traffic on 2026-09-19.
+"""Tools built from captured Garmin Connect traffic.
 
 Every fixture here is a real response body, taken from a HAR of Garmin
-Connect's own web client. That matters: three tools were deleted earlier the
-same day for being built on endpoints inferred from library method names, which
-returned an empty list and a 404 against a live plan.
+Connect's own web client. That matters: endpoints inferred from library method
+names return an empty list and a 404 against a live plan.
 """
 import json
 
@@ -157,10 +156,10 @@ async def test_completed_plans_are_labelled_and_skippable(mock_garmin_client):
     assert payload["count"] == 1 and payload["plans"][0]["status"] == "active"
 
 
-# Observed 2026-10-14 on plan 1789330190 after it was cancelled: the plan-detail
-# payload carried a non-null `quit` AND planCompleted=true, and the plan was
-# listed under /completed. Only quit's non-null-ness is relied on; the value's
-# own shape was not observed, hence the placeholder.
+# A cancelled plan's plan-detail payload carries a non-null `quit` AND
+# planCompleted=true, and the plan is listed under /completed. Only quit's
+# non-null-ness is relied on; the value's own shape is unobserved, hence the
+# placeholder.
 _QUIT_MARKER = "non-null"
 
 
@@ -200,7 +199,7 @@ async def test_quit_is_read_from_the_detail_when_the_list_entry_lacks_it(
 
 @pytest.mark.asyncio
 async def test_an_undeterminable_ended_plan_is_not_called_completed(mock_garmin_client):
-    """If quit cannot be read, say "ended" -- "completed" is the mislabel being fixed."""
+    """If quit cannot be read, say "ended" -- never the "completed" mislabel."""
     entry = [dict(_LIVE_ACTIVE[0], planCompleted=True)]
     mock_garmin_client.connectapi.side_effect = [[], entry, RuntimeError("503")]
     payload = json.loads(
@@ -212,7 +211,7 @@ async def test_an_undeterminable_ended_plan_is_not_called_completed(mock_garmin_
 
 @pytest.mark.asyncio
 async def test_no_plans_reports_plainly(mock_garmin_client):
-    """The deleted tool returned an empty list here, reading as a real answer."""
+    """No plans is said plainly, not as an empty list that reads as a real answer."""
     mock_garmin_client.connectapi.side_effect = [[], []]
     out = await _text(_app(workouts, mock_garmin_client), "get_coach_plans", {})
     assert "No Garmin Coach plans found" in out
@@ -256,7 +255,7 @@ async def test_duplicate_pairings_are_collapsed(mock_garmin_client):
     assert payload["count"] == 1, "the same serial must not appear twice"
 
 
-# 2026-10-28: one HRM 600, paired a few times, as three records with three
+# One HRM 600, paired a few times, as three records with three
 # serials -- two the same report, one an older pairing (serials redacted).
 _REPAIRED_SENSOR = [
     {"deviceName": "HRM 600", "batteryStatus": "NEW", "batteryLevel": 93,
@@ -335,8 +334,8 @@ async def test_no_sensors_reports_plainly(mock_garmin_client):
 
 # An adaptive plan reserves days before it generates workouts for them. The ATP
 # calendar returns those days; the GraphQL workout feed does not, so reading the
-# feed alone under-counts the week. Shape confirmed against plan 1789330190 over
-# 2026-09-13..2026-09-26: 7 calendar entries against 5 generated workouts.
+# feed alone under-counts the week. Shape confirmed against a live plan's
+# two-week calendar: 7 calendar entries against 5 generated workouts.
 _PLACEHOLDER_DAY = {
     "scheduledWorkoutDate": "2026-09-24", "workoutId": None,
     "scheduleWorkoutId": None, "activityId": None,

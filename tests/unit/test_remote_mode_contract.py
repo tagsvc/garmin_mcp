@@ -8,8 +8,8 @@ server, and both are enforced here rather than by review:
 2. Any tool taking a filesystem path must refuse it in remote mode, because a
    path there names the SERVER's disk, not the caller's.
 
-Rule 2 used to be enforced by accident: an unconfigured global made such tools
-crash. Rule 1 removes that crash, so rule 2 needs a real test.
+Without rule 1, an unconfigured global would make such tools crash, enforcing
+rule 2 by accident. Rule 1 removes that crash, so rule 2 needs a real test.
 """
 import inspect
 import re
@@ -55,8 +55,7 @@ def test_stdio_and_remote_register_the_same_modules():
 
     Upstream is stdio-only, so it wires new modules into __init__.py alone.
     Comparing remote.py against itself cannot catch that (both of its lists are
-    consistently missing the module); this compares the two servers. Found by
-    the 2026-09-02 sync, where calendar_events reached stdio only.
+    consistently missing the module); this compares the two servers.
     """
     from garmin_mcp import __init__ as _pkg  # noqa: F401
     import garmin_mcp
@@ -135,7 +134,7 @@ def test_resolution_fails_closed_without_a_token(tmp_path, restore_resolver):
 
 
 def test_get_client_no_longer_needs_ctx(tmp_path, restore_resolver):
-    """ctx was only a truthiness gate; dropping it is what makes the proxy work."""
+    """get_client() resolves without ctx, which is what makes the proxy work."""
     sentinel = object()
     cr.set_session_manager(None)
     cr.set_global_client(sentinel)
@@ -279,9 +278,9 @@ async def test_an_upstream_style_tool_using_the_bare_global_works_in_remote_mode
     """This is the whole reason the proxy exists.
 
     Upstream is stdio-only, so every tool it writes calls the module-level
-    `garmin_client` global directly. Before the proxy that global was None in
-    remote mode and each merge meant hand-migrating every new tool to
-    `get_client(ctx)`; a missed one crashed at runtime for real users.
+    `garmin_client` global directly. Without the proxy that global would be None
+    in remote mode and each merge would mean hand-migrating every new tool to
+    `get_client(ctx)`; a missed one would crash at runtime for real users.
 
     The module below is written exactly the way upstream writes them -- no ctx
     parameter, bare global -- and must work.
@@ -309,7 +308,7 @@ async def test_an_upstream_style_tool_using_the_bare_global_works_in_remote_mode
     current = {"client": alice}
     monkeypatch.setattr(cr, "get_client", lambda ctx=None: current["client"])
 
-    # Exactly what remote.py now does for every module.
+    # Exactly what remote.py does for every module.
     configure(_ResolvingGarminProxy())
     app = register_tools(FastMCP("upstream-sim"))
 
@@ -322,7 +321,7 @@ async def test_an_upstream_style_tool_using_the_bare_global_works_in_remote_mode
 async def test_download_course_gpx_refuses_output_path_in_remote_mode(
     monkeypatch, tmp_path, restore_resolver
 ):
-    """Caught by the path-guard tripwire when it arrived from upstream."""
+    """output_path would name the server's disk, so remote mode refuses it."""
     from unittest.mock import Mock
 
     from garmin_mcp import courses
@@ -438,7 +437,7 @@ def test_an_unmatched_remote_exclusion_fails_closed(monkeypatch):
 async def test_tool_bodies_on_worker_threads_still_see_their_own_callers_token():
     """Remote resolves the calling user from the MCP auth contextvar.
 
-    Upstream #449 made _ToolFilter run every tool body as
+    _ToolFilter runs every tool body as
     anyio.to_thread.run_sync(lambda: asyncio.run(...)), and remote registers
     through _ToolFilter. So the caller's context must cross two hops -- onto
     an anyio worker thread, then into a fresh event loop there -- for

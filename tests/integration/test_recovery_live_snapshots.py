@@ -4,12 +4,11 @@ The two snapshots below are Garmin's GET .../trainingreadiness/2026-10-27
 response, captured from Garmin Connect's web client, verbatim except that
 userProfilePK and deviceId are replaced (this repository is public).
 
-They are the case that broke the upstream rule. Garmin Connect showed
-"Recovery Time 72h, High Need" for the 15:01 snapshot while
-get_training_readiness and get_recovery_time_remaining reported 0.0 hours:
-the snapshot's recoveryTimeChangePhrase is REACHED_ZERO, and upstream turned
-that phrase into 0 regardless of recoveryTime (4320 minutes = 72.0h). The
-athlete confirmed the 08:03 wake-up value, ~0, was right.
+They are the case the upstream rule gets wrong. Garmin Connect shows
+"Recovery Time 72h, High Need" for the 15:01 snapshot, whose
+recoveryTimeChangePhrase is REACHED_ZERO, and upstream turns that phrase into
+0 regardless of recoveryTime (4320 minutes = 72.0h). The 08:03 wake-up value,
+~0, is right.
 """
 import json
 
@@ -116,10 +115,10 @@ class _DatedClient:
 
 
 def test_evening_in_the_americas_finds_the_afternoon_snapshot():
-    """The live failure: 00:20 UTC on 10-28 is 20:20 EDT on 10-27.
+    """00:20 UTC on 10-28 is 20:20 EDT on 10-27.
 
-    Upstream looked up the server's date (10-28), found nothing and answered
-    "unavailable" while the 72h post-run snapshot was current.
+    Upstream looks up the server's date (10-28), finds nothing and answers
+    "unavailable" while the 72h post-run snapshot is current.
     """
     client = _DatedClient({"2026-10-27": _LIVE_2026_10_27})
     now = _dt.datetime(2026, 10, 28, 0, 20, tzinfo=_UTC)
@@ -179,7 +178,7 @@ def test_nothing_within_a_day_says_so():
 async def test_the_tool_without_a_date_reports_the_latest_snapshot(app, mock_garmin_client):
     """Snapshots exist only for UTC yesterday -- the evening-in-New-York case.
 
-    Upstream's default looked up only the server's today and so answered
+    Upstream's default looks up only the server's today and so answers
     "unavailable" here.
     """
     yesterday = (_dt.datetime.now(_UTC).date() - _dt.timedelta(days=1)).isoformat()

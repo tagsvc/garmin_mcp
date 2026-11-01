@@ -1631,7 +1631,7 @@ async def test_get_progress_summary_converts_garmin_raw_units(
     app_with_training, mock_garmin_client, metric, raw, expected, unit
 ):
     """Distance and elevation come back in centimeters and durations in
-    milliseconds; read as meters, a month of running looked like 6,510 km."""
+    milliseconds; read as meters, a month of running looks like 6,510 km."""
     mock_garmin_client.get_progress_summary_between_dates.return_value = (
         _progress_payload(metric, raw)
     )
@@ -1721,7 +1721,7 @@ async def test_get_progress_summary_unknown_metric_is_passed_through_and_says_so
 @pytest.mark.asyncio
 async def test_get_cycling_ftp_without_an_ftp_says_so(app_with_training, mock_garmin_client):
     """Garmin can return a non-empty dict holding none of the FTP fields;
-    the tool used to answer with a bare "{}"."""
+    the tool says so rather than answering with a bare "{}"."""
     mock_garmin_client.get_cycling_ftp.return_value = {"userProfilePK": 1, "sport": None}
 
     result = await app_with_training.call_tool("get_cycling_ftp", {})

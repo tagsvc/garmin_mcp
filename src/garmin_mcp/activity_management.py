@@ -57,9 +57,9 @@ _ML_PER_FL_OZ = 29.5735
 
 
 def _list_activity_details(a: Dict[str, Any]) -> Dict[str, Any]:
-    """Per-activity fields from Garmin's activity list that the list tools
-    left out (field-coverage run, 2026-10-30): training effect, heart rate
-    zones, the fastest km, mile and 5K inside the activity, and more.
+    """Per-activity fields from Garmin's activity list that upstream's list
+    tools leave out: training effect, heart rate zones, the fastest km, mile
+    and 5K inside the activity, and more.
 
     Garmin's list keys; hrTimeInZone_N and fastestSplit_N are in seconds.
     """
@@ -427,9 +427,9 @@ def register_tools(app):
                     "elevation_loss_meters": a.get('elevationLoss'),
                 }
                 activity.update(_list_activity_details(a))
-                # FORK: was "start_time", local time with no zone -- the same
-                # key get_activity_fit_data used for UTC. Garmin's GMT/local
-                # pair gives the activity's own offset.
+                # FORK: upstream's "start_time" is local time with no zone --
+                # the same key its get_activity_fit_data uses for UTC. Garmin's
+                # GMT/local pair gives the activity's own offset.
                 put_times(activity, "start_time", a.get('startTimeGMT'), a.get('startTimeLocal'))
                 # Remove None values
                 activity = {k: v for k, v in activity.items() if v is not None}
@@ -491,9 +491,9 @@ def register_tools(app):
                     "vigorous_intensity_minutes": a.get('vigorousIntensityMinutes'),
                 }
                 activity.update(_list_activity_details(a))
-                # FORK: was "start_time", local time with no zone -- the same
-                # key get_activity_fit_data used for UTC. Garmin's GMT/local
-                # pair gives the activity's own offset.
+                # FORK: upstream's "start_time" is local time with no zone --
+                # the same key its get_activity_fit_data uses for UTC. Garmin's
+                # GMT/local pair gives the activity's own offset.
                 put_times(activity, "start_time", a.get('startTimeGMT'), a.get('startTimeLocal'))
                 # Remove None values
                 activity = {k: v for k, v in activity.items() if v is not None}
@@ -622,8 +622,8 @@ def register_tools(app):
                 "workout_feel": summary.get('directWorkoutFeel'),
                 "workout_rpe": summary.get('directWorkoutRpe'),
 
-                # FORK: left out until the field-coverage run (2026-10-30),
-                # though Garmin sends them in summaryDTO.
+                # FORK: left out of upstream's summary, though Garmin sends
+                # them in summaryDTO.
                 "training_effect_message": summary.get('aerobicTrainingEffectMessage'),
                 "anaerobic_training_effect_message": summary.get('anaerobicTrainingEffectMessage'),
                 "impact_load": summary.get('impactLoad'),
@@ -973,8 +973,8 @@ def register_tools(app):
                     "elevation_gain_meters": lap.get('elevationGain'),
                     "elevation_loss_meters": lap.get('elevationLoss'),
                     "workout_step_index": lap.get('wktStepIndex'),
-                    # FORK: lap-level fields Garmin sends that the laps left
-                    # out (field-coverage run, 2026-10-30).
+                    # FORK: lap-level fields Garmin sends that upstream's laps
+                    # leave out.
                     "max_cadence": lap.get('maxRunCadence'),
                     "max_power_watts": lap.get('maxPower'),
                     "min_power_watts": lap.get('minPower'),
@@ -1198,8 +1198,9 @@ def register_tools(app):
                 "station_id": station_dto.get('id'),
                 "station_name": station_dto.get('name'),
             }
-            # FORK: was "issue_time". Garmin's issueDate carries +00:00; the
-            # report has no local offset, so local uses the profile's zone.
+            # FORK: issue_time_gmt/_local, not upstream's bare "issue_time".
+            # Garmin's issueDate carries +00:00; the report has no local
+            # offset, so local uses the profile's zone.
             zone = profile_time_zone(get_client(ctx))
             if put_times(curated, "issue_time", weather.get('issueDate'), zone=zone):
                 curated["local_time_zone"] = zone
@@ -1467,9 +1468,9 @@ def register_tools(app):
                     "owner_display_name": a.get('ownerDisplayName'),
                 }
                 activity.update(_list_activity_details(a))
-                # FORK: was "start_time", local time with no zone -- the same
-                # key get_activity_fit_data used for UTC. Garmin's GMT/local
-                # pair gives the activity's own offset.
+                # FORK: upstream's "start_time" is local time with no zone --
+                # the same key its get_activity_fit_data uses for UTC. Garmin's
+                # GMT/local pair gives the activity's own offset.
                 put_times(activity, "start_time", a.get('startTimeGMT'), a.get('startTimeLocal'))
                 # Remove None values
                 activity = {k: v for k, v in activity.items() if v is not None}

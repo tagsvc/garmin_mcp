@@ -1,12 +1,12 @@
 """inspect_garmin: Garmin's raw replies, to check what a tool leaves out.
 
-FORK: a curated tool's output cannot show what it omits -- get_body_battery
-kept Garmin's band ("HIGH") and dropped the level for months. Checking meant
-the athlete running a script on their own computer or a PR adding a raw
-option. This tool does it from a chat: it runs one read-only tool with its
-Garmin replies recorded (payload_recording.py), and lists the fields the
-tool's output leaves out (field_coverage.py); or it fetches one Garmin
-Connect API path no tool calls yet.
+FORK: a curated tool's output cannot show what it omits -- a summary that
+keeps Garmin's band ("HIGH") and drops the level looks complete -- and
+scripts/field_coverage.py needs the athlete's own computer. This tool checks
+from a chat: it runs one read-only tool with its Garmin replies recorded
+(payload_recording.py), and lists the fields the tool's output leaves out
+(field_coverage.py); or it fetches one Garmin Connect API path no tool calls
+yet.
 
 Read-only by construction: it runs only tools annotated read-only, and the
 path mode sends GET requests to Garmin Connect API paths only. Replies are the

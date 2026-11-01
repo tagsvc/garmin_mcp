@@ -76,10 +76,10 @@ def get_client(ctx: Optional[Context] = None) -> Garmin:
     # Try remote mode: extract user_id from OAuth token.
     #
     # NOTE: ctx is deliberately NOT consulted here. The caller's identity comes
-    # from get_access_token(), a contextvar set per request -- ctx was only ever
-    # a truthiness gate, which made every tool carry a `ctx` parameter it did
-    # not actually use. Dropping the gate lets a tool resolve the right per-user
-    # client without threading ctx through, which is what makes the module-level
+    # from get_access_token(), a contextvar set per request -- gating on ctx
+    # would make every tool carry a `ctx` parameter it does not actually use.
+    # Without the gate a tool resolves the right per-user client without
+    # threading ctx through, which is what makes the module-level
     # _ResolvingGarminProxy below safe.
     if _session_manager is not None:
         try:
@@ -110,10 +110,9 @@ class _ResolvingGarminProxy:
 
     Modules hold a `garmin_client` global set by `configure()`. In stdio mode
     that is one real client. In remote mode there is no single client -- there
-    is one per authenticated user -- so historically remote.py left the global
-    as None and every tool had to be rewritten to call `get_client(ctx)`. That
-    made each upstream merge a manual migration, and a missed call site crashed
-    only at runtime.
+    is one per authenticated user. Left as None there, the global would need
+    every tool rewritten to call `get_client(ctx)`, making each upstream merge a
+    manual migration in which a missed call site crashes only at runtime.
 
     This proxy removes that split. It holds no client of its own: each attribute
     access resolves the caller's client through `get_client()`, which reads the

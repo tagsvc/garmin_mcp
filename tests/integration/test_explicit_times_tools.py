@@ -57,8 +57,8 @@ async def _call(app, tool, arguments=None):
 
 @pytest.mark.asyncio
 async def test_body_battery_event_times_are_gmt_and_the_events_own_local(app, mock_garmin_client):
-    """The event's GMT start was shown as a bare "start_time": 18:37 for a
-    run at 2:37 PM."""
+    """The event's GMT start is not a bare "start_time", which reads 18:37 for
+    a run at 2:37 PM."""
     mock_garmin_client.get_body_battery.return_value = [{
         "date": "2026-10-27",
         "bodyBatteryActivityEvent": [
@@ -126,8 +126,8 @@ SLEEP = {"dailySleepDTO": {
 
 @pytest.mark.asyncio
 async def test_sleep_summary_window_is_gmt_and_local(app, mock_garmin_client):
-    """sleep_start was a bare GMT epoch; the HRV tool used the same name for
-    local text."""
+    """sleep_start names its zone: bare, it is a GMT epoch here and local text
+    in the HRV tool."""
     mock_garmin_client.get_sleep_data.return_value = SLEEP
 
     data = await _call(app, "get_sleep_summary", {"date": "2026-10-28"})
@@ -141,7 +141,7 @@ async def test_sleep_summary_window_is_gmt_and_local(app, mock_garmin_client):
 @pytest.mark.asyncio
 async def test_sleep_data_payload_gets_iso_times_and_offset(app, mock_garmin_client):
     """Garmin's *Local epochs are the wall clock written as UTC: decoded as a
-    real epoch, 23:17 became 19:17."""
+    real epoch, 23:17 reads 19:17."""
     mock_garmin_client.get_sleep_data.return_value = json.loads(json.dumps(SLEEP))
 
     data = await _call(app, "get_sleep_data", {"date": "2026-10-28"})
@@ -270,7 +270,7 @@ async def test_step_buckets_get_local_times_from_the_profile_zone(app, mock_garm
 
 @pytest.mark.asyncio
 async def test_body_composition_weigh_ins_get_iso_times(app, mock_garmin_client):
-    """`date` is a local pseudo-epoch: decoded as a real one it read 04:20
+    """`date` is a local pseudo-epoch: decoded as a real one it reads 04:20
     for an 8:20 AM weigh-in."""
     mock_garmin_client.get_body_composition.return_value = {"dateWeightList": [
         {"calendarDate": "2026-10-27", "date": 1793089231000, "timestampGMT": 1793103631000,
@@ -307,8 +307,9 @@ async def test_weigh_in_times_are_iso_gmt_and_local(app, mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_add_weigh_in_now_uses_the_profile_zone_not_the_server_clock(app, mock_garmin_client):
-    """With no timestamps the "local" one was the server's clock -- UTC on
-    Railway -- so an evening weigh-in was recorded on the next day."""
+    """With no timestamps the "local" one is the profile zone's clock, not the
+    server's -- UTC on Railway, which records an evening weigh-in on the next
+    day."""
     _zone(mock_garmin_client, "Asia/Kolkata")  # +5:30, no daylight saving
     mock_garmin_client.add_weigh_in_with_timestamps.return_value = {}
 
@@ -331,7 +332,7 @@ LISTED_RUN = {
 
 @pytest.mark.asyncio
 async def test_activity_lists_name_the_start_times_zone(app, mock_garmin_client):
-    """Lists used start_time for local time and the FIT tool for UTC."""
+    """A bare start_time is local time in upstream's lists and UTC in its FIT tool."""
     mock_garmin_client.connectapi.return_value = [LISTED_RUN]
     mock_garmin_client.get_activities.return_value = [LISTED_RUN]
     mock_garmin_client.get_gear_activities.return_value = [LISTED_RUN]
@@ -408,8 +409,7 @@ async def test_weather_issue_time_is_gmt_and_profile_local(app, mock_garmin_clie
 
 @pytest.mark.asyncio
 async def test_device_upload_time_is_not_the_server_clock(app, mock_garmin_client):
-    """It was formatted in the server's own zone, UTC on Railway, with no
-    label."""
+    """Not formatted in the server's own zone (UTC on Railway) with no label."""
     _zone(mock_garmin_client)
     mock_garmin_client.get_device_last_used.return_value = {
         "userDeviceId": 1, "lastUsedDeviceUploadTime": 1793222087000,
@@ -424,7 +424,7 @@ async def test_device_upload_time_is_not_the_server_clock(app, mock_garmin_clien
 
 
 def test_analytics_default_end_date_is_the_athletes_today():
-    """It was the server's date: UTC on Railway, tomorrow from 8 PM in New
+    """Not the server's date: UTC on Railway, tomorrow from 8 PM in New
     York. A zone 14 hours ahead of UTC shows the difference at any hour."""
     client = Mock()
     client.get_userprofile_settings.return_value = {"timeZone": "Pacific/Kiritimati"}
@@ -526,8 +526,8 @@ DAILY = {
 @pytest.mark.parametrize("tool, method", [("get_user_summary", "get_user_summary"),
                                           ("get_stats_and_body", "get_stats_and_body")])
 async def test_daily_summary_gmt_times_get_local_times(app, mock_garmin_client, tool, method):
-    """The summary's body battery list printed sleep at 3:17 (GMT) with no
-    local time beside it: 11:17 PM the evening before."""
+    """The summary's body battery list gets a local time beside each GMT one:
+    sleep at 3:17 GMT is 11:17 PM the evening before."""
     getattr(mock_garmin_client, method).return_value = json.loads(json.dumps(DAILY))
 
     data = await _call(app, tool, {"date": "2026-10-27"})
@@ -571,8 +571,8 @@ async def test_body_battery_raw_returns_garmins_report_unchanged(app, mock_garmi
     assert data == report
 
 
-# The shape of Garmin's daily report, seen live with raw=True on 2026-10-30;
-# the values here are synthetic.
+# The shape of Garmin's daily report, seen live with raw=True; the values here
+# are synthetic.
 BATTERY_DESCRIPTORS = [
     {"bodyBatteryValueDescriptorIndex": 0, "bodyBatteryValueDescriptorKey": "timestamp"},
     {"bodyBatteryValueDescriptorIndex": 1, "bodyBatteryValueDescriptorKey": "bodyBatteryLevel"},
@@ -598,8 +598,8 @@ def _battery_day(**overrides):
 
 @pytest.mark.asyncio
 async def test_body_battery_gives_the_level_as_a_number_not_only_garmins_band(app, mock_garmin_client):
-    """The summary kept only the feedback band ("HIGH", as body_battery_level),
-    so a reader could not say the level; the number is in Garmin's series."""
+    """The feedback band alone ("HIGH", as body_battery_level) cannot say the
+    level; the number is in Garmin's series."""
     mock_garmin_client.get_body_battery.return_value = [_battery_day()]
 
     day = (await _call(app, "get_body_battery", {"start_date": "2026-10-30", "end_date": "2026-10-30"}))[0]
@@ -686,7 +686,7 @@ async def test_body_battery_day_with_no_series_adds_no_levels(app, mock_garmin_c
 
 # --- clock-change days ------------------------------------------------------------
 # New York leaves daylight saving at 2 AM on 2026-11-01: the day opens at -04:00
-# and, from 06:00 GMT, runs at -05:00. A day read at its opening offset put every
+# and, from 06:00 GMT, runs at -05:00. A day read at its opening offset puts every
 # time after the change an hour ahead of the wall clock.
 
 CHANGE_DAY = {
@@ -723,7 +723,7 @@ async def test_day_series_on_a_clock_change_day_name_both_offsets(app, mock_garm
 @pytest.mark.asyncio
 async def test_day_series_end_of_day_is_not_read_from_its_last_reading(app, mock_garmin_client):
     """An ordinary day: the end-of-day local time beside the last reading's GMT
-    implied "+02:15"; it is midnight at the day's own offset."""
+    implies "+02:15"; it is midnight at the day's own offset."""
     _zone(mock_garmin_client)
     mock_garmin_client.get_heart_rates.return_value = {
         "startTimestampGMT": "2026-10-30T04:00:00.0", "startTimestampLocal": "2026-10-30T00:00:00.0",
@@ -769,7 +769,7 @@ async def test_daily_summary_on_a_clock_change_day_places_each_time_by_the_zone(
 
     data = await _call(app, tool, {"date": "2026-11-01"})
 
-    # After the change: -05:00 (it read 17:48:03-04:00, an hour ahead of the clock).
+    # After the change: -05:00 (at the opening offset, 17:48:03-04:00, an hour ahead).
     assert data["lastSyncTimestampLocal"] == "2026-11-01T16:48:03-05:00"
     # Before it: still -04:00.
     assert data["bodyBatteryDynamicFeedbackEvent"]["eventTimestampLocal"] == "2026-11-01T01:30:00-04:00"

@@ -1,11 +1,9 @@
 """Tool counts in prose must match the tools actually registered.
 
 Counts in documentation rot silently: nothing fails when they are wrong, so the
-error is only found by someone recounting by hand. This fork drifted to 148 in
-the README while registering 164, and CLAUDE.md -- which loads at the start of
-every session -- carried a figure two syncs stale, so the very check it
-prescribes ("re-enumerate tool counts") would have been measured against a wrong
-target.
+error is only found by someone recounting by hand. A stale figure in CLAUDE.md
+-- which loads at the start of every session -- would also make the very check
+it prescribes ("re-enumerate tool counts") measure against a wrong target.
 
 These tests derive the counts from the registered tools and fail when a document
 disagrees, which turns a silent rot into a red check on the PR that caused it.
@@ -76,10 +74,9 @@ def test_readme_headline_totals_match(counts):
 
 
 def test_readme_section_counts_sum_to_the_real_total(counts):
-    """The section list is where the drift actually happened.
+    """README's per-section counts sum to the registered total.
 
-    It summed to 148 against 164 registered: Nutrition six under, Workouts six
-    under, Data Management absent entirely, Gear Management two over.
+    A section listed under, over or not at all fails here.
     """
     stdio, _ = counts
     sections = re.findall(r"^- ✅ ([^(]+?) \((\d+) tools?", _read("README.md"), re.M)

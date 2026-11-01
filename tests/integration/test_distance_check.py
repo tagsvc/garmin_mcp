@@ -1,8 +1,7 @@
 """get_activity's distance_check: where distance came from, against the GPS track.
 
-The case behind it: a watch took run distance from a paired heart-rate strap
-for weeks, and recorded easy runs 24-40% longer than their GPS tracks. The FIT
-files here are built byte for byte (tests/fit_builder.py) so fitparse reads
+The case behind it: a watch taking run distance from a paired heart-rate strap
+recorded easy runs 24-40% longer than their GPS tracks. The FIT files here are built byte for byte (tests/fit_builder.py) so fitparse reads
 them as it reads a watch's; every value is synthetic.
 """
 import io

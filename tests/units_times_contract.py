@@ -1,8 +1,7 @@
 """The account-units and explicit-times contract, checked on tool output.
 
-FORK: a CI guard behind the 2026-10-28 audit, which found metric fields with
-no companion in the account's units and times with no zone across dozens of
-tools. Two checks keep that from coming back:
+FORK: a CI guard for the contract that every metric field has a companion in
+the account's units and every time names its zone. Two checks enforce it:
 
 - ``output_violations`` walks a tool's JSON output for a statute_us account
   and reports each metric field missing a companion the converter would add
@@ -27,8 +26,8 @@ from garmin_mcp import units
 
 # Curated keys allowed to hold a time without naming its zone, and why.
 UNLABELLED_TIME_KEYS = {
-    # Zone not established from live data (audit, 2026-10-28); left as Garmin
-    # sends them rather than labelled with a guess.
+    # Zone not established from live data; left as Garmin sends them rather
+    # than labelled with a guess.
     "created_date": "workout-service createdDate: zone not established",
     "updated_date": "workout-service updatedDate: zone not established",
     "last_connected": "sensor lastConnected as Garmin sends it (GMT, verified 2026-11-01), kept because pages read it; last_connected_gmt/_local label it",

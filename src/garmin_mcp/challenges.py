@@ -75,11 +75,11 @@ ADHOC_ACTIVITY_TYPE_MAPPING = {
 # value_type: "time" (seconds), "distance" (meters), "count", "elevation" (meters),
 # "days", "weeks", "power" (watts)
 # This list is estimated based on real data, the type mapping might not be 100% accurate
-# FORK: two entries corrected against a live account, 2026-10-28. Type 10 was
-# "Fastest 100K Cycling" as a time, which showed a 2014 ride as 100 km in
-# "2:57"; its value, 177.1917, is 212630/1200 -- an average over 1,200
-# one-second samples -- so it is the best 20-minute average power, in watts.
-# Type 16 is a weekly streak, counted in weeks, not days.
+# FORK: two entries differ from upstream, checked against a live account.
+# Type 10 is not "Fastest 100K Cycling" as a time, which shows a ride as
+# 100 km in "2:57": its value, 177.1917, is 212630/1200 -- an average over
+# 1,200 one-second samples -- so it is the best 20-minute average power, in
+# watts. Type 16 is a weekly streak, counted in weeks, not days.
 PR_TYPE_MAPPING = {
     1: ("Fastest 1K", "time"),
     2: ("Fastest Mile", "time"),
@@ -476,7 +476,7 @@ def register_tools(app):
                     ),
                 }
 
-                # FORK: distances and elevation were km/m text only. The
+                # FORK: distances and elevation are km/m text only. The
                 # meters beside them get account-unit companions (not for
                 # pool swims, which Garmin shows in pool units).
                 if (
@@ -491,14 +491,13 @@ def register_tools(app):
                 if activity_id:
                     curated_record["activity_id"] = activity_id
                 # FORK: which activity set it, and when the record's segment
-                # began -- Garmin's GMT epoch beside its local pseudo-epoch
-                # (field-coverage run, 2026-10-30).
+                # began -- Garmin's GMT epoch beside its local pseudo-epoch.
                 curated_record["activity_name"] = record.get("activityName")
                 curated_record["activity_type"] = record.get("activityType")
                 # FORK: activity records carry no local time (prStartTimeLocal is
-                # null), so pr_start_time_local was missing and date fell back to
-                # the GMT day -- a day late for an evening activity. The profile's
-                # zone places them; day records keep Garmin's own pair.
+                # null), and without one date falls back to the GMT day -- a day
+                # late for an evening activity. The profile's zone places them;
+                # day records keep Garmin's own pair.
                 if record.get("prStartTimeLocal") is None and zone is None:
                     zone = profile_time_zone(get_client(ctx))
                 if put_times(curated_record, "pr_start_time",

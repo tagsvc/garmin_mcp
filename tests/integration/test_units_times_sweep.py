@@ -1,9 +1,9 @@
 """Every read-only tool, once, for a US account, against the contract.
 
-FORK: the 2026-10-28 audit found metric fields without account-unit
-companions and times without zones across dozens of tools. This sweep calls
+FORK: a metric field without its account-unit companion, or a time without
+its zone, can sit in a tool no other test calls. This sweep calls
 each read-only remote tool with a Garmin stand-in returning payloads shaped
-like the live ones (synthetic values, the audited keys), and the autouse
+like the live ones (synthetic values, the checked keys), and the autouse
 contract check in tests/conftest.py inspects every result. A tool that
 starts emitting a bare metric field or an unlabelled time fails here even if
 no other test calls it. The values are synthetic; no athlete data is stored.
@@ -340,7 +340,7 @@ ARGS = {
     "list_health_report_metrics": {}, "list_saved_health_reports": {},
 }
 
-# Tools whose sweep payload carries the audited unit and time fields: these
+# Tools whose sweep payload carries the checked unit and time fields: these
 # must come back as JSON, so the contract check cannot pass by default.
 MUST_RETURN_JSON = {
     "inspect_garmin",
@@ -423,9 +423,9 @@ def _keys(node):
 
 @pytest.mark.asyncio
 async def test_descriptions_name_the_time_fields_their_tools_add(app):
-    """PR #57 added *Local siblings and utcOffsetHours to the daily summary
-    without saying so in its description; a reader of the tool list could
-    not know to use them."""
+    """A tool whose output carries utcOffsetHours or a local zone field names
+    it in its description; otherwise a reader of the tool list cannot know to
+    use them."""
     descriptions = {t.name: t.description or "" for t in await app.list_tools()}
     missing = []
     for name in await _read_only_tools(app):

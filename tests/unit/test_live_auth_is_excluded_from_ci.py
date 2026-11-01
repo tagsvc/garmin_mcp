@@ -3,14 +3,10 @@
 This repository is **public**, so its build logs are public. A test that
 authenticates against Garmin prints whatever it prints straight into them.
 
-Two CodeQL alerts were dismissed on the strength of that exclusion, and a
-dismissal is sticky: if the marker were removed the test would start running,
+Two dismissed CodeQL alerts rest on that exclusion, and a dismissal is
+sticky: if the marker were removed the test would start running,
 data would reach public logs, and the alert would stay closed. Nothing would say
 so. This test is what makes the exclusion real rather than a note in a document.
-
-It also caught `test_mcp_debug.py`, which was unmarked and therefore *did* run in
-CI — performing a real login and printing the login email, while catching every
-exception so it passed regardless.
 """
 import pathlib
 import re
@@ -36,7 +32,7 @@ def _without_comments(text: str) -> str:
 # The one exemption: the installed library exercised with its transport mocked.
 # A no-argument Garmin() holds no credentials and cannot log in; when the very
 # next statement replaces connectapi with a Mock, nothing can reach Garmin.
-# Upstream uses this to test the library's own request shaping (2026-10 sync).
+# Upstream uses this to test the library's own request shaping.
 _MOCKED_TRANSPORT = re.compile(
     r"^(?P<ind>[ \t]*)(?P<var>\w+)\s*=\s*Garmin\(\)[ \t]*\n"
     r"(?P=ind)(?P=var)\.connectapi\s*=\s*(?:Mock|MagicMock)\(",

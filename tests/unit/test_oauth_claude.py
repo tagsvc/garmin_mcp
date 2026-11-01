@@ -1,7 +1,7 @@
 """
 Unit tests for the Claude.ai OAuth interoperability shims (oauth_claude).
 
-Covers the four discovery fixes:
+Covers the four discovery shims:
   1. /.well-known/oauth-protected-resource metadata document (RFC 9728)
   2. WWW-Authenticate `resource_metadata` on 401s, distinguishing the
      no-token (bare challenge) case from the invalid-token case

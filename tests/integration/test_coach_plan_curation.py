@@ -1,16 +1,15 @@
 """Garmin Coach plan curation, pinned to a real adaptive-plan payload.
 
-The fixture below is the shape Garmin actually returned for an enrolled ATP
-plan on 2026-09-19. Two things in it are load-bearing:
+The fixture below is the shape Garmin actually returns for an enrolled ATP
+plan. Two things in it are load-bearing:
 
   * ``planName`` is None. Garmin does not name adaptive plans.
-  * there is no ``trainingType`` key. Upstream read only that key, so it
-    resolved to None, was dropped by the "strip None" filter, and the entire
-    trainingPlanDetailsDTO -- the race goal included -- went with it. The tool
-    could return nothing but an id and a classification.
+  * there is no ``trainingType`` key. Upstream reads only that key, so it
+    resolves to None, is dropped by the "strip None" filter, and the entire
+    trainingPlanDetailsDTO -- the race goal included -- goes with it, leaving
+    nothing but an id and a classification.
 
-Also covers get_gear_activities, whose tests previously shared a file with the
-three training-plan tools removed in the same change.
+Also covers get_gear_activities.
 """
 import json
 
@@ -88,7 +87,7 @@ async def _plan(app, client):
 
 @pytest.mark.asyncio
 async def test_race_goal_survives_curation(mock_garmin_client):
-    """The goal is the point of an adaptive plan and was being thrown away."""
+    """The goal is the point of an adaptive plan."""
     plan = await _plan(_app(mock_garmin_client), mock_garmin_client)
     assert plan["race_name"] == "River Vale 5K"
     assert plan["race_day"] == "2026-11-26"
@@ -128,7 +127,7 @@ async def test_absent_details_do_not_crash_or_emit_nulls(mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_removed_training_plan_tools_are_gone(mock_garmin_client):
-    """They were built on trainingplan-service REST, which returns empty or 404.
+    """trainingplan-service REST returns empty or 404 for an adaptive plan.
 
     Re-adding them on that path would look like a feature and behave like a bug.
     """
@@ -140,7 +139,7 @@ async def test_removed_training_plan_tools_are_gone(mock_garmin_client):
     }
 
 
-# ─── get_gear_activities (rehomed from the deleted file) ──────────────────
+# ─── get_gear_activities ──────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_gear_activities_totals_distance(mock_garmin_client):
@@ -186,8 +185,8 @@ async def _workouts(app, client):
 async def test_plan_id_is_read_from_atp_plan_id(mock_garmin_client):
     """ATP plans carry the plan id in atpPlanId; trainingPlanId is null.
 
-    The curation read only trainingPlanId and fbtAdaptivePlanId, so on an
-    adaptive plan the per-workout linkage was lost entirely.
+    Reading only trainingPlanId and fbtAdaptivePlanId loses the per-workout
+    linkage on an adaptive plan entirely.
     """
     done, upcoming = await _workouts(_app(mock_garmin_client), mock_garmin_client)
     assert done["training_plan_id"] == 1789330190
@@ -224,7 +223,7 @@ async def test_owner_id_is_not_exposed(mock_garmin_client):
 # ─── get_coach_plan_details, pinned to the live atp-api payload ───────────
 
 # Verbatim from GET /atp-api/atp/athlete/plan?lang=en&athletePlanId=…
-# captured from Garmin Connect's own web client on 2026-09-19.
+# captured from Garmin Connect's own web client.
 _LIVE_ATP_DETAIL = {
     "athletePlanId": 1789330190,
     "userPk": 2688052,
@@ -274,8 +273,8 @@ async def test_calls_atp_api_not_trainingplan_service(mock_garmin_client):
     """trainingplan-service returns [] for an adaptive plan and 404s by id.
 
     Verified from an authenticated browser session: the adaptive plans live
-    behind atp-api. Pointing this at trainingplan-service would reintroduce the
-    exact bug three removed tools had.
+    behind atp-api. Pointing this at trainingplan-service would report an
+    enrolled plan as no plan.
     """
     _, client = await _detail(mock_garmin_client)
     url = client.connectapi.call_args[0][0]
@@ -326,7 +325,7 @@ async def test_account_identifier_is_not_exposed(mock_garmin_client):
 async def test_missing_plan_reports_rather_than_returning_an_empty_shell(
     mock_garmin_client,
 ):
-    """The failure that got three tools deleted: empty read as 'no plan'."""
+    """An empty reply says no plan was found, rather than an empty shell."""
     payload_text = None
     mock_garmin_client.connectapi.return_value = {}
     app = _app(mock_garmin_client)

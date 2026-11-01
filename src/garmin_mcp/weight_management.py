@@ -82,11 +82,10 @@ def register_tools(app):
                     "bone_mass_grams": w.get("boneMass"),
                     "muscle_mass_grams": w.get("muscleMass"),
                     "source_type": w.get("sourceType"),
-                    # Change from the previous weigh-in, in grams like weight
-                    # (field-coverage run, 2026-10-30).
+                    # Change from the previous weigh-in, in grams like weight.
                     "weight_change_grams": w.get("weightDelta"),
                 }
-                # FORK: timestamp_gmt was Garmin's bare epoch ms. Its "date"
+                # FORK: Garmin's timestampGMT is a bare epoch ms. Its "date"
                 # is a local pseudo-epoch (the wall clock written as UTC),
                 # which gives the weigh-in's own offset.
                 put_times(measurement, "timestamp", w.get("timestampGMT"), _local_epoch(w))
@@ -152,11 +151,10 @@ def register_tools(app):
                     "bone_mass_grams": w.get("boneMass"),
                     "muscle_mass_grams": w.get("muscleMass"),
                     "source_type": w.get("sourceType"),
-                    # Change from the previous weigh-in, in grams like weight
-                    # (field-coverage run, 2026-10-30).
+                    # Change from the previous weigh-in, in grams like weight.
                     "weight_change_grams": w.get("weightDelta"),
                 }
-                # FORK: timestamp_gmt was Garmin's bare epoch ms. Its "date"
+                # FORK: Garmin's timestampGMT is a bare epoch ms. Its "date"
                 # is a local pseudo-epoch (the wall clock written as UTC),
                 # which gives the weigh-in's own offset.
                 put_times(measurement, "timestamp", w.get("timestampGMT"), _local_epoch(w))
@@ -300,10 +298,10 @@ def register_tools(app):
             if unit_key == "lb":
                 unit_key = "lbs"
             if not date_timestamp and not gmt_timestamp:
-                # Generate timestamps if not provided. FORK: "local" was the
-                # server's clock -- UTC on Railway -- so an evening weigh-in in
-                # New York was recorded on the next day. Local now comes from
-                # the profile's time zone.
+                # Generate timestamps if not provided. FORK: "local" comes from
+                # the profile's time zone, not the server's clock -- UTC on
+                # Railway, which records an evening weigh-in in New York on the
+                # next day.
                 zone = profile_time_zone(get_client(ctx))
                 now = (
                     datetime.datetime.now(ZoneInfo(zone)) if zone

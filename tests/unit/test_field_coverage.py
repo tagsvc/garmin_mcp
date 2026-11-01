@@ -1,7 +1,7 @@
 """scripts/field_coverage.py: which of Garmin's fields a tool leaves out.
 
-The body battery cases are PR #61's: the curated summary kept the band
-("HIGH") and dropped the level series. Values are synthetic.
+The body battery cases are a curated summary that keeps the band ("HIGH")
+and drops the level series. Values are synthetic.
 """
 import asyncio
 import datetime
@@ -160,7 +160,7 @@ def test_an_id_argument_with_nothing_to_use_skips_its_tools():
         "get_coach_plan_details": "needs plan_id (none found; pass it as a flag)"}
 
 
-# --- false alarms the first live run (2026-10-30) showed ---------------------
+# --- false alarms on live replies ---------------------------------------------
 
 def test_maximum_and_max_are_the_same_word():
     assert _missing({"maximumMeters": 800000.0}, {"max_distance_km": 800.0}) == {}
@@ -221,8 +221,8 @@ def test_the_report_hides_noise_unless_asked():
 
 
 def test_a_tool_that_leaves_detail_out_unless_asked_is_run_with_it_asked_for():
-    """get_fitnessage_data shows its components only with details=True; the
-    first live run listed them as left out."""
+    """get_fitnessage_data shows its components only with details=True; run
+    without it, they would be listed as left out."""
     from tests.integration.test_units_times_sweep import _garmin_double
 
     garmin = _garmin_double()

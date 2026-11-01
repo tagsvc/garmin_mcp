@@ -203,8 +203,7 @@ def register_tools(app):
                 v2 = v2_by_uuid.get(_normalize_gear_uuid(uuid))
                 if v2 is None:
                     # The v2 list leaves retired gear out (its status filter is
-                    # ignored); the v2 record by UUID has it (verified live
-                    # 2026-10-30: ASICS / Gel-Cumulus 28, retired).
+                    # ignored); the v2 record by UUID has it.
                     v2 = _gear_v2_record(uuid)
 
                 if status == "active":
@@ -217,8 +216,8 @@ def register_tools(app):
                     "name": g.get("displayName"),
                     "full_name": g.get("customMakeModel"),
                     # FORK: the brand and model picked from Garmin's catalog
-                    # (verified live 2026-10-30: v2 "adidas" / "Adizero Adios
-                    # Pro 5", and the typed text for a model chosen as "Other").
+                    # (v2 "adidas" / "Adizero Adios Pro 5", and the typed text
+                    # for a model chosen as "Other").
                     # The legacy list's gearMakeName/gearModelName read
                     # "Other" / "Unknown Shoes" even for catalog gear.
                     "make": _catalog_name(v2.get("brand"), g.get("gearMakeName")),
@@ -390,7 +389,8 @@ def register_tools(app):
                     "activity_id": a.get("activityId"),
                     "name": a.get("activityName"),
                 }
-                # FORK: was "start_time", local time with no zone.
+                # FORK: Garmin's startTimeLocal has no zone; the GMT/local
+                # pair gives the activity's own offset.
                 put_times(item, "start_time", a.get("startTimeGMT"), a.get("startTimeLocal"))
                 item.update({
                     "distance_m": a.get("distance"),

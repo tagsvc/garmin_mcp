@@ -1,9 +1,9 @@
-"""Fields the curated tools left out, found by the 2026-10-30 field-coverage run.
+"""Fields Garmin sends that the curated tools keep.
 
-scripts/field_coverage.py compared each tool's output with the reply Garmin
-sent it. Each test here is one gap it found: a value Garmin sends that the
-tool's output lacked, so a reader would conclude it did not exist. Field
-names are Garmin's, from that run; the values are synthetic.
+scripts/field_coverage.py compares each tool's output with the reply Garmin
+sent it. Each test here pins one field it would otherwise list: a value Garmin
+sends that, left out of the output, a reader would conclude does not exist.
+Field names are Garmin's, from live replies; the values are synthetic.
 """
 import datetime
 import json
@@ -543,8 +543,8 @@ async def test_gear_gives_make_and_model(app, mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_gear_takes_brand_and_model_from_v2_not_the_legacy_placeholders(app, mock_garmin_client):
-    """Live, 2026-10-30: every shoe was picked from Garmin's catalog, yet the
-    legacy list read "Other" / "Unknown Shoes" for all six. The v2 list has
+    """For gear picked from Garmin's catalog, the legacy list reads "Other" /
+    "Unknown Shoes". The v2 list has
     the names for active gear; a retired shoe's are in its v2 record by UUID
     (the list ignores a status filter)."""
     mock_garmin_client.get_device_last_used.return_value = {"userProfileNumber": 1}
@@ -610,13 +610,13 @@ def test_catalog_name_skips_garmins_placeholders(names, expected):
     assert _catalog_name(*names) == expected
 
 
-# --- second live run (2026-10-30): devices and the small gaps -----------------
+# --- devices and the small gaps -----------------------------------------------
 
 @pytest.mark.asyncio
 async def test_devices_read_garmins_live_names_for_firmware_status_and_primary(app, mock_garmin_client):
     """Upstream reads softwareVersionString, deviceStatusName and
     primaryDevice; a live device list has currentFirmwareVersion,
-    deviceStatus and primary instead, so all three dropped out."""
+    deviceStatus and primary instead, so all three drop out."""
     mock_garmin_client.get_devices.return_value = [
         {"deviceId": 1, "productDisplayName": "fenix 8", "currentFirmwareVersion": "21.19",
          "deviceStatus": "ACTIVE", "primary": True},
@@ -717,7 +717,7 @@ async def test_activity_list_gives_power_zones_and_power(app, mock_garmin_client
 @pytest.mark.asyncio
 async def test_sleep_summary_gives_sleep_coach_bedtime_and_alignment_as_clock_times(app, mock_garmin_client):
     """Garmin's minutes after local midnight, negative for the evening
-    before; verified live against the Sleep Coach screen (2026-10-30)."""
+    before; verified live against the Sleep Coach screen."""
     night = json.loads(json.dumps(NIGHT))
     night["dailySleepDTO"]["sleepNeed"].update(recommendedBedtimeStartMins=-30, recommendedBedtimeEndMins=-10)
     night["dailySleepDTO"]["nextSleepNeed"].update(recommendedBedtimeStartMins=15, recommendedBedtimeEndMins=35)
@@ -750,9 +750,9 @@ def test_minutes_from_midnight_read_as_a_local_time_of_day(minutes, clock):
 
 @pytest.mark.asyncio
 async def test_devices_say_what_kind_each_is_and_which_tracks_activity(app, mock_garmin_client):
-    """Live, 2026-10-30: a watch, a scale and a strap were each primary --
-    primary for their kind. The kind and the activity tracker say which is which."""
-    # The live shape (2026-10-30): a type name, feature categories, a scale flag.
+    """A watch, a scale and a strap can each be primary -- primary for their
+    kind. The kind and the activity tracker say which is which."""
+    # The live shape: a type name, feature categories, a scale flag.
     mock_garmin_client.get_devices.return_value = [
         {"deviceId": 1, "productDisplayName": "fenix 8", "deviceTypeSimpleName": "Garmin fenix 8",
          "deviceCategories": ["FITNESS", "WELLNESS", "GOLF", "OUTDOOR"], "weightScale": False,
