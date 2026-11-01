@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import put_times
+from garmin_mcp.times import profile_time_zone, put_times
 from garmin_mcp.units import METERS_PER_MILE, account_unit_system, add_account_units, is_imperial
 
 # The garmin_client will be set by the main file
@@ -437,8 +437,10 @@ def register_tools(app):
         elevation_feet on a US account); value stays Garmin's km/m text.
 
         Each record names the activity that set it (activity_name,
-        activity_type) and when its segment began (pr_start_time_gmt, and
-        pr_start_time_local with that activity's own offset).
+        activity_type) and when its segment began (pr_start_time_gmt and
+        pr_start_time_local). Garmin gives activity records no local time, so
+        theirs is placed by the profile's time zone (local_time_zone says so),
+        and date is that local day.
         """
         try:
             records = get_client(ctx).get_personal_record()
@@ -447,6 +449,7 @@ def register_tools(app):
 
             # Curate the output
             curated_records = []
+            zone = None
             for record in records:
                 type_id = record.get("typeId")
                 pr_info = PR_TYPE_MAPPING.get(type_id)
@@ -492,8 +495,16 @@ def register_tools(app):
                 # (field-coverage run, 2026-10-30).
                 curated_record["activity_name"] = record.get("activityName")
                 curated_record["activity_type"] = record.get("activityType")
-                put_times(curated_record, "pr_start_time",
-                          record.get("prStartTimeGmt"), record.get("prStartTimeLocal"))
+                # FORK: activity records carry no local time (prStartTimeLocal is
+                # null), so pr_start_time_local was missing and date fell back to
+                # the GMT day -- a day late for an evening activity. The profile's
+                # zone places them; day records keep Garmin's own pair.
+                if record.get("prStartTimeLocal") is None and zone is None:
+                    zone = profile_time_zone(get_client(ctx))
+                if put_times(curated_record, "pr_start_time",
+                             record.get("prStartTimeGmt"), record.get("prStartTimeLocal"), zone=zone):
+                    curated_record["local_time_zone"] = zone
+                    curated_record["date"] = curated_record["pr_start_time_local"][:10]
                 curated_record = {k: v for k, v in curated_record.items() if v is not None}
 
                 curated_records.append(curated_record)

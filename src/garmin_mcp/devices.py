@@ -439,6 +439,10 @@ def register_tools(app):
         Two straps of the same model would therefore show as one sensor with
         an earlier pairing; Garmin's record gives no hardware serial to tell
         them apart.
+
+        last_connected is Garmin's GMT time as sent, with no zone;
+        last_connected_gmt and last_connected_local (in the profile's time
+        zone, named by local_time_zone) label it.
         """
         try:
             data = get_client(ctx).connectapi("/device-service/sensors")
@@ -455,6 +459,15 @@ def register_tools(app):
                     continue
                 key = (item.get("deviceName"), item.get("sensorType"), item.get("manufacturer"))
                 groups.setdefault(key, []).append(item)
+
+            # FORK: lastConnected is GMT with no zone: it matched two runs'
+            # GMT ends to the second (2026-11-01 17:30:31, 2026-09-24 18:02:38).
+            # It stays as sent -- pages read it -- with labelled times beside it.
+            zone = profile_time_zone(get_client(ctx))
+
+            def label(target: Dict[str, Any], value: Any) -> None:
+                if put_times(target, "last_connected", value, zone=zone):
+                    target["local_time_zone"] = zone
 
             sensors = []
             for records in groups.values():
@@ -473,6 +486,7 @@ def register_tools(app):
                         r.get("prioritySensor") for r in records
                     ),
                 }
+                label(sensor, item.get("lastConnected"))
                 earlier = []
                 for record in records[1:]:
                     if record.get("lastConnected") == item.get("lastConnected"):
@@ -481,6 +495,7 @@ def register_tools(app):
                         "last_connected": record.get("lastConnected"),
                         "battery_level": record.get("batteryLevel"),
                     }
+                    label(entry, record.get("lastConnected"))
                     entry = {k: v for k, v in entry.items() if v is not None}
                     if entry not in earlier:
                         earlier.append(entry)
