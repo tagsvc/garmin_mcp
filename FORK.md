@@ -51,6 +51,8 @@ coverage.
 | Health Snapshot & ECG (4 tools) | `health_snapshots.py` | Needs garminconnect 0.3.20. `get_health_snapshots` / `get_health_snapshot`: the watch's two-minute readings, curated (heart rate, respiration, stress, SpO2 as avg/min/max; HRV RMSSD and SDRR; HR zones; device), times from the record's own GMT/local pair, per-second samples on request as seconds from the start. `get_ecg_recordings` / `get_ecg`: from `ghs.garmin.com`, curated from the live reply (rhythm, average heart rate, HRV RMSSD, wrist, symptoms, app version, device, and for one recording its lead and sampling); time from the GMT `startTime` epoch with the recording's own `timeZoneOffsetInSeconds`; the 128 Hz waveform only with `include_waveform`. |
 | Power zones (1 tool) | `user_profile.py` (`get_power_zones`) | garminconnect 0.3.20's `get_power_zones()`: per sport, FTP and each zone from/to in watts and % of FTP; a floor of 0 above zone 1 is a zone the sport does not use. |
 | Fastest splits (1 tool) | `activity_management.py` (`get_fastest_splits`) | garminconnect 0.3.20's `get_fastest_splits()`: Garmin's best 1K, mile, 5K (and longer) efforts in a date range, ranked per distance, with pace in the account's units and the activity_id. Bests come from each activity's recorded distance, as the description says; no distance check runs. |
+| Tool profiles cover every tool | `tool_profiles.py` | Each fork tool, and each upstream tool upstream left in no profile, is in its area's `GARMIN_TOOL_PROFILE`. A `devices` profile is added. The auth tools are in every profile, so a profile never stops a local server signing in again. `inspect_garmin` alone is in `NO_PROFILE_TOOLS`. `test_tool_profiles.py` fails on a tool in no profile, and `test_documented_counts.py` on a stale README profile table. Profiles apply to stdio only. |
+| History check | `tests/unit/test_no_history_in_code.py` | Fails on a PR or issue number, a month and year, a date beside a verb of change, or a phrase about the code's past in any comment or docstring under `src/`, `scripts/` and `tests/`. Upstream's own lines that trip it are listed in `UPSTREAM_TEXT`, word for word; a listed line that has gone fails too. |
 | Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
@@ -563,6 +565,13 @@ taken whole.
   - a **new tool** fails `test_tool_annotations.py` until it is classified in
     `tool_annotations.py`. Fork tools go in the `_FORK_*` sets at the bottom,
     which union into upstream's, so upstream's own lists keep merging cleanly.
+  - a **new tool** fails `test_tool_profiles.py` until it is in a profile in
+    `tool_profiles.py`, or in `NO_PROFILE_TOOLS` with the reason. The README
+    profile table's sizes are checked too.
+  - an upstream comment that reads as history fails
+    `test_no_history_in_code.py`. Upstream's text is kept word for word, so
+    list the line in `UPSTREAM_TEXT` under its file rather than rewording it,
+    and drop any listed line the merge removed.
 - **Watch for helper-signature drift — it does not show up as a conflict.**
   Upstream has been dropping the `client` argument from module helpers (the
   proxy makes it unnecessary). Taking upstream's side of a hunk that changes a

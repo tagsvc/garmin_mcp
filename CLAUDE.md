@@ -21,7 +21,7 @@ required checks must pass before it can merge.
 - Setup: `uv sync`
 - Tests: `uv run pytest -m "not e2e"` (integration + unit; e2e needs real Garmin creds)
 - Entry points: `garmin-mcp` (stdio), `garmin-mcp-remote` (HTTP + OAuth2), `garmin-mcp-auth` (stdio auth CLI)
-- Comments and docstrings say why the code is as it is, in the present tense. History (what it used to do, when or how something was found, dates, PR numbers) goes in CHANGELOG.md and commit messages, never in code.
+- Comments and docstrings say why the code is as it is, in the present tense. History (what it used to do, when or how something was found, dates, PR numbers) goes in CHANGELOG.md and commit messages, never in code. `tests/unit/test_no_history_in_code.py` enforces it; upstream's own lines that trip it are listed, word for word, in its `UPSTREAM_TEXT`.
 
 ## After ANY upstream merge or significant change
 
@@ -41,6 +41,8 @@ required checks must pass before it can merge.
    (FORK.md, "What a version change has to keep working").
 4. A new read-only tool goes in `tests/integration/test_units_times_sweep.py`'s
    table; a units/times contract failure is fixed, not allowlisted without a reason.
+   Every new tool also goes in the profile for its area in `tool_profiles.py`
+   (or `NO_PROFILE_TOOLS`, with the reason); `test_tool_profiles.py` fails otherwise.
 5. If a tool module changed, ask the user to run
    `uv run python scripts/field_coverage.py` locally (it needs real Garmin
    tokens) and paste the report; review any field a tool newly leaves out.
