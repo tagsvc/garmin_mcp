@@ -11,9 +11,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Taxuspt/garmin_mcp"
+    "url": "https://github.com/tagsvc/garmin_mcp"
   },
-  "homepage": "https://github.com/Taxuspt/garmin_mcp",
+  "homepage": "https://github.com/tagsvc/garmin_mcp",
   "license": "MIT",
   "keywords": [
     "garmin",
@@ -33,7 +33,7 @@
         "--python",
         "3.12",
         "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
+        "git+https://github.com/tagsvc/garmin_mcp",
         "garmin-mcp"
       ],
       "env": {

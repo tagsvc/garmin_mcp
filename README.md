@@ -2,6 +2,14 @@
 
 This Model Context Protocol (MCP) server connects to Garmin Connect and exposes your fitness and health data to Claude and other MCP-compatible clients.
 
+**About this fork.** This is a fork of [Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp), run mainly as a remote server for claude.ai (hosted on Railway), with the local stdio server as a fallback. It adds, among other things:
+- Health Snapshot and ECG tools, power zones and fastest splits, on garminconnect 0.3.20;
+- explicit time zones on every time, and values in the account's own units beside Garmin's metric ones;
+- historical health analytics, Garmin Coach plan tools, and a check of where a run's distance came from;
+- the remote server's sign-in: an email allowlist and a secret-gated token import.
+
+[FORK.md](FORK.md) lists what the fork adds and the rules that must not break, [OPERATIONS.md](OPERATIONS.md) covers the deployment and repository settings, and [CHANGELOG.md](CHANGELOG.md) is the history.
+
 Garmin's API is accessed via the awesome [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library.
 
 ## Features
@@ -478,7 +486,7 @@ The easiest way to add this server to Claude Desktop is via the `.dxt` Desktop E
 
 ### Download and install
 
-1. Download the latest `garmin-mcp.dxt` from the upstream [Releases page](https://github.com/Taxuspt/garmin_mcp/releases) (this fork does not publish a `.dxt`).
+1. Download [`garmin-mcp.dxt`](https://github.com/tagsvc/garmin_mcp/raw/main/garmin-mcp.dxt) from this repository's root, or build it yourself (below). It runs this fork's server; upstream's `.dxt` runs upstream's.
 2. Drag the `.dxt` file into the Claude Desktop window, **or** double-click it, **or** go to **Settings → Extensions → Install Extension** and select the file.
 3. Claude Desktop will prompt you for optional configuration (token path, email, password).
 
