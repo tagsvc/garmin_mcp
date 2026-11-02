@@ -5,6 +5,41 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## README: remote-first, reference material moved to docs/ — 2026-11-02
+
+The README is now this fork's own document: the remote server on Railway first,
+the local stdio server as the fallback.
+
+- **Moved out of the README:**
+  - the high-level workout builders and the raw `upload_workout` end
+    conditions and target types → `docs/workouts.md`, which also documents
+    `create_run_workout` and `create_run_interval_workout`;
+  - "Intentionally Skipped Endpoints" → `docs/skipped-endpoints.md`;
+  - Garmin Connect China setup → `docs/garmin-cn.md`.
+- **`.gitignore`** un-ignores `docs/*.md`; upstream ignores `docs/`.
+- **Corrected against the code:**
+  - profile sizes: `health` 57, `activities` 42, `training` 39; `health` leaves
+    out `get_health_status` and `get_health_status_range`, and 26 tools are in
+    no profile;
+  - tool profiles and filters apply to `garmin-mcp` only; the remote server
+    ignores them;
+  - Data Management logs body composition, blood pressure and hydration; it has
+    no export helpers;
+  - the multi-account example installs this fork, not upstream;
+  - `SESSION_STORAGE_PATH` holds garminconnect's `garmin_tokens.json`, not
+    garth's files, and `GARMIN_IMPORT_SECRET` gates both import paths;
+  - running `garmin-mcp-remote` locally needs `DB_PATH` and
+    `SESSION_STORAGE_PATH` off `/data`; `docker-compose.remote.yml` needs
+    `GARMIN_ALLOWED_EMAILS` added;
+  - the `.dxt` rebuild is `uv run bash scripts/build_dxt.sh`;
+  - `GARMIN_IS_CN` for Docker goes in `docker-compose.yml`'s `environment:`,
+    not `.env` alone, and the remote server has no garmin.cn support.
+- **Newly documented:** `MCP_SCOPE`, `LOG_LEVEL`, `GARMIN_REPORTS_PATH` (whose
+  default is outside `/data` in the remote image) and `GARMIN_MCP_CALL_TIMEOUT`
+  for the remote server; the `/import-token` curl call and its replies.
+- **Placeholders** replace a personal local path, an example workout id and a
+  watch model.
+
 ## Fastest splits — 2026-11-02
 
 `get_fastest_splits`, on garminconnect 0.3.20's `get_fastest_splits()`, gives

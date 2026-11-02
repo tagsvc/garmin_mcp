@@ -549,6 +549,7 @@ taken whole.
 - `Dockerfile.remote` — ensure no `VOLUME` instruction was reintroduced, and it
   still installs from `uv.lock` (reproducible deploys), not a fresh resolve.
 - `config.py` — keep the `$PORT` fallback, the allowlist, and the import secret.
+- `README.md` — keep this fork's README and port over only upstream's new tool descriptions.
 - **New upstream tools no longer need migrating.** Upstream is stdio-only, so
   its tools call the module-global `garmin_client` directly. That global is now
   a `_ResolvingGarminProxy` in remote mode, so those tools work unchanged — the
