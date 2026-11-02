@@ -19,7 +19,7 @@ instead of returning Garmin's layout:
   - the device's name and firmware.
 - **Times:** `start_time_gmt`/`_local`, from Garmin's GMT `startTime` epoch and
   the recording's own `timeZoneOffsetInSeconds`.
-- **`get_ecg` adds the reading:** `sample_rate_hz` (128), `raw_sample_rate_hz`
+- **`get_ecg` adds the reading:** `lead` (`Lead I`), `sample_rate_hz` (128), `raw_sample_rate_hz`
   (512), `duration_seconds`, `sample_count`, and when Garmin received and
   analysed the recording (`uploaded_*`, `processed_*`).
 - **The waveform** (3,840 samples) comes back only with `include_waveform`.
