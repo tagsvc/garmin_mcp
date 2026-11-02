@@ -22,7 +22,7 @@ from mcp.server.fastmcp import FastMCP
 
 import garmin_mcp
 from garmin_mcp import (
-    auth_cli, auth_tools, data_management, health_snapshots, weight_management, workouts,
+    auth_cli, auth_tools, data_management, devices, health_snapshots, weight_management, workouts,
 )
 from garmin_mcp.client_resolver import set_global_client
 from tests.offline_garmin import TOKENS
@@ -381,6 +381,25 @@ async def test_ecg_requests_go_to_garmins_ecg_host_signed_in(snapshots, offline_
     assert call["host"] == "ghs.garmin.com"
     assert call["params"]["firstDay"] == "2026-10-01" and call["params"]["lastDay"] == "2026-11-01"
     assert call["headers"]["Authorization"] == f"Bearer {TOKENS['di_token']}"
+
+
+# ─── sensors: the library's request is the one the tool used to send ──────
+
+
+@pytest.mark.asyncio
+async def test_sensors_come_from_the_librarys_request(offline_garmin, tmp_path):
+    offline_garmin.routes["/device-service/sensors"] = [
+        {"deviceName": "HRM", "batteryLevel": 80, "lastConnected": "2026-11-01T17:30:31.0"}]
+    garmin = _signed_in(tmp_path)
+    devices.configure(garmin)
+    set_global_client(garmin)
+    try:
+        payload = json.loads(await _call(devices.register_tools(FastMCP("devices")), "get_sensors", {}))
+    finally:
+        set_global_client(None)
+
+    assert payload["sensors"][0]["battery_level"] == 80
+    assert [c for c in offline_garmin.calls if c["path"] == "/device-service/sensors"][0]["params"] is None
 
 
 # ─── every request path in the source ─────────────────────────────────────

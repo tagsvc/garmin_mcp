@@ -96,7 +96,7 @@ def _sensor_names(client: Any):
     def name(product: Any) -> Optional[str]:
         if "sensors" not in cache:
             try:
-                sensors = client.connectapi("/device-service/sensors")
+                sensors = client.get_sensors()
             except Exception:
                 sensors = []
             cache["sensors"] = [s for s in sensors if isinstance(s, dict)] if isinstance(sensors, list) else []

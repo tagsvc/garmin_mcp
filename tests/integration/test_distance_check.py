@@ -184,8 +184,7 @@ def _activity(type_key="running", distance=1199 * 2.0 * 1.3):
 def app(mock_garmin_client):
     mock_garmin_client.get_unit_system.return_value = "statute_us"
     mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
-    mock_garmin_client.connectapi.side_effect = (
-        lambda path, **_: SENSORS if path == "/device-service/sensors" else None)
+    mock_garmin_client.get_sensors.return_value = SENSORS
     activity_management.configure(mock_garmin_client)
     set_global_client(mock_garmin_client)
     app = FastMCP("distance check")

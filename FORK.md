@@ -42,7 +42,7 @@ coverage.
 | 429 fail-fast login client | `oauth_provider.py` (`_new_login_client`) | Excludes 429 from garth's retry `status_forcelist` so a rate-limited login isn't amplified. |
 | Coach plan curation fix | `workouts.py` (`_get_garmin_coach_workouts`) | Surfaces the `trainingPlanDetailsDTO` fields that exist — race goal, workouts per week, registration date. Upstream reads only `trainingType`, which adaptive plans do not have. |
 | Garmin Coach tools (3) | `workouts.py` | `get_coach_plans` (active + completed), `get_coach_plan_details`, `get_coach_plan_progress` (per-workout grades). All on `atp-api`, found by capturing Garmin Connect's own traffic. |
-| Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` — battery level and last-connected, which `get_devices` omits. |
+| Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` (garminconnect's `get_sensors()`) — battery level and last-connected, which `get_devices` omits. |
 | Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
 | Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. On a day the profile zone's clocks change, day-level payloads place each time by that zone and add `utcOffsetHoursAfterChange` and `clockChangeGmt` (`times.clock_change`). |
@@ -88,6 +88,12 @@ coverage.
       `Garmin.login` re-raises instead of wrapping, so `login_to_garmin` answers
       `mfa_required`;
     - saved token files load and sign requests, and dumped ones are owner-only.
+  - **Library methods or direct calls.** Upstream's direct `connectapi` calls stay
+    as upstream wrote them, even where garminconnect now has a method for the
+    same request: changing them only adds merge conflicts. The fork's own direct
+    calls move to a library method when it sends the identical request (path,
+    query, headers), checked by a real-client test. The fork keeps its own call
+    where the library is weaker, and says why.
 - **Allowlist is fail-closed.** An empty/unset `GARMIN_ALLOWED_EMAILS` rejects every login.
 - **Token import is fail-closed and secret-gated.** `GARMIN_IMPORT_SECRET` (constant-time
   compare) is required on both the login-page import and `POST /import-token`; unset disables import.

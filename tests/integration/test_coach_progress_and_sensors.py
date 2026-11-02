@@ -240,7 +240,7 @@ _LIVE_SENSORS = [
 @pytest.mark.asyncio
 async def test_sensor_battery_is_surfaced(mock_garmin_client):
     """get_devices returns names and serials but no battery state."""
-    mock_garmin_client.connectapi.return_value = _LIVE_SENSORS
+    mock_garmin_client.get_sensors.return_value = _LIVE_SENSORS
     payload = json.loads(
         await _text(_app(devices, mock_garmin_client), "get_sensors", {})
     )
@@ -253,7 +253,7 @@ async def test_sensor_battery_is_surfaced(mock_garmin_client):
 @pytest.mark.asyncio
 async def test_duplicate_pairings_are_collapsed(mock_garmin_client):
     """Garmin lists the same strap once per paired device."""
-    mock_garmin_client.connectapi.return_value = _LIVE_SENSORS
+    mock_garmin_client.get_sensors.return_value = _LIVE_SENSORS
     payload = json.loads(
         await _text(_app(devices, mock_garmin_client), "get_sensors", {})
     )
@@ -281,7 +281,7 @@ _REPAIRED_SENSOR = [
 @pytest.mark.asyncio
 async def test_one_strap_paired_again_is_one_sensor(mock_garmin_client):
     """Garmin's serialNumber is per pairing record, not the strap's."""
-    mock_garmin_client.connectapi.return_value = _REPAIRED_SENSOR
+    mock_garmin_client.get_sensors.return_value = _REPAIRED_SENSOR
     payload = json.loads(
         await _text(_app(devices, mock_garmin_client), "get_sensors", {})
     )
@@ -302,7 +302,7 @@ async def test_sensor_last_connected_is_labelled_gmt_and_local(mock_garmin_clien
     """lastConnected is GMT with no zone: it stays as sent, with labelled times
     beside it, the local one in the profile's time zone."""
     mock_garmin_client.get_userprofile_settings.return_value = {"timeZone": "America/New_York"}
-    mock_garmin_client.connectapi.return_value = _REPAIRED_SENSOR
+    mock_garmin_client.get_sensors.return_value = _REPAIRED_SENSOR
     payload = json.loads(
         await _text(_app(devices, mock_garmin_client), "get_sensors", {})
     )
@@ -316,7 +316,7 @@ async def test_sensor_last_connected_is_labelled_gmt_and_local(mock_garmin_clien
 
 @pytest.mark.asyncio
 async def test_different_sensors_stay_separate(mock_garmin_client):
-    mock_garmin_client.connectapi.return_value = [
+    mock_garmin_client.get_sensors.return_value = [
         _REPAIRED_SENSOR[1],
         {"deviceName": "Index S2", "sensorType": "SCALE", "manufacturer": "GARMIN",
          "serialNumber": 9, "batteryLevel": 50, "lastConnected": "2026-10-27T12:20:31.0"},
@@ -330,7 +330,7 @@ async def test_different_sensors_stay_separate(mock_garmin_client):
 
 @pytest.mark.asyncio
 async def test_no_sensors_reports_plainly(mock_garmin_client):
-    mock_garmin_client.connectapi.return_value = []
+    mock_garmin_client.get_sensors.return_value = []
     out = await _text(_app(devices, mock_garmin_client), "get_sensors", {})
     assert "No paired sensors found" in out
 

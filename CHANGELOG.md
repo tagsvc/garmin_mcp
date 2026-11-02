@@ -5,6 +5,20 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Library calls in place of the fork's own — 2026-11-02
+
+- **`get_sensors` and the distance check** read paired sensors through
+  garminconnect's `get_sensors()`, which sends the same request
+  (`/device-service/sensors`) the tools sent themselves. A real-client test
+  pins it.
+- **Left as they are:**
+  - **Upstream's direct calls** (activity event types, the gear v2 list,
+    workout rescheduling, courses, heart rate zones) and **upstream's goals
+    workaround**. Changing upstream code only adds merge conflicts. FORK.md now
+    states the rule.
+  - The goals workaround also sends the same request as 0.3.20's `get_goals`
+    but paginates more carefully: it stops on a short page or a repeated one.
+
 ## Gear: time on it, days used, activities by type — 2026-11-02
 
 `get_gear` adds, from Garmin's v2 gear records:

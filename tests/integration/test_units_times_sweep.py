@@ -80,8 +80,6 @@ def _connectapi(url, params=None, headers=None, **_):
         return [day] if len(dates) == 2 else day
     if "usersummary-service/stats/daily" in url:
         return {"values": [{"calendarDate": D, "values": {"totalCalories": 2500, "totalSteps": 9000}}]}
-    if "device-service/sensors" in url:
-        return [{"deviceName": "HRM", "serialNumber": 1, "batteryLevel": 80}]
     if url.startswith("/course-service/course/"):
         return {"courseId": 7, "courseName": "Loop", "distanceInMeters": 5000.0,
                 "elevationGainInMeters": 30.0, "coursePoints": [{"name": "Water", "distance": 1609.0}]}
@@ -255,6 +253,7 @@ def _garmin_double():
     client.get_blood_pressure.return_value = {"measurementSummaries": []}
     client.get_lifestyle_logging_data.return_value = {"calendarDate": D, "dailyLogsReport": []}
     client.get_full_name.return_value = "Runner"
+    client.get_sensors.return_value = [{"deviceName": "HRM", "serialNumber": 1, "batteryLevel": 80}]
     snapshot = {"activityUuid": {"uuid": "00000000-0000-4000-8000-000000000003"},
                 "calendarDate": D, "activityName": "Health Snapshot",
                 "startTimestampGMT": GMT, "startTimestampLocal": LOCAL,
