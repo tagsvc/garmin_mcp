@@ -5,6 +5,19 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Gear: time on it, days used, activities by type — 2026-11-02
+
+`get_gear` adds, from Garmin's v2 gear records:
+
+- `duration_used_seconds` and `days_used`: the time on each shoe and the days
+  it was worn;
+- `limit_by`: whether the replacement limit is a distance or a duration, with
+  `max_duration_seconds` when a duration limit is set;
+- `stats.activities_by_type`, such as `{"running": 10, "walking": 4}`. Only each
+  shoe's own v2 record has these counts; the v2 list leaves them out, even for
+  active gear. So with `include_stats` (the default), the tool makes one more
+  request per shoe.
+
 ## Health Snapshot and ECG tools — 2026-11-02
 
 Four tools, in a new `health_snapshots` module, on garminconnect 0.3.20's

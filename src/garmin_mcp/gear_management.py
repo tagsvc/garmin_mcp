@@ -130,6 +130,11 @@ def register_tools(app):
         and default activity associations. The notes field is null when unavailable.
         defaults maps each activity type (Garmin typeKey, e.g. "running") to the
         names of its default gear.
+        duration_used_seconds and days_used give the time on the gear and the
+        days it was used; limit_by says whether its replacement limit is a
+        distance or a duration (max_duration_seconds, when one is set).
+        stats.activities_by_type counts its activities per type
+        ({"running": 10, "walking": 4}).
         A gear item's stats_error reports a failed usage-statistics request;
         a null total_distance_km means Garmin did not provide a distance.
         A statute (US or UK) account also gets total_distance_miles and
@@ -230,6 +235,19 @@ def register_tools(app):
                         _normalize_gear_uuid(uuid), v2.get("notes", g.get("notes"))
                     ),
                 }
+                # FORK: time on the gear and the days it was used, which only
+                # the v2 record carries.
+                for key, v2_key in (("duration_used_seconds", "durationUsedSeconds"),
+                                    ("days_used", "daysUsed")):
+                    if v2.get(v2_key) is not None:
+                        gear_item[key] = v2[v2_key]
+                # The limit Garmin warns at is a distance or a duration.
+                limit_by = v2.get("usageType")
+                if isinstance(limit_by, str) and limit_by:
+                    gear_item["limit_by"] = limit_by.lower()
+                max_seconds = v2.get("maxUsageDurationSeconds")
+                if isinstance(max_seconds, (int, float)) and max_seconds > 0:
+                    gear_item["max_duration_seconds"] = max_seconds
 
                 # Add max distance in km if set
                 max_meters = g.get("maximumMeters")
@@ -261,6 +279,19 @@ def register_tools(app):
                                 gear_item["stats"]["total_distance_miles"] = round(
                                     distance / METERS_PER_MILE, 1
                                 ) if distance is not None else None
+                    # FORK: activities by type ("running": 10, "walking": 4).
+                    # Only the gear's own v2 record has them; the v2 list
+                    # leaves them out even for active gear.
+                    counts = v2.get("countsByActivityType")
+                    if counts is None:
+                        counts = _gear_v2_record(uuid).get("countsByActivityType")
+                    by_type = {
+                        c["activityTypeKey"]: c.get("count")
+                        for c in counts or []
+                        if isinstance(c, dict) and c.get("activityTypeKey")
+                    }
+                    if by_type:
+                        gear_item.setdefault("stats", {})["activities_by_type"] = by_type
 
                 curated_gear.append(gear_item)
 
