@@ -22,7 +22,7 @@ from mcp.server.fastmcp import FastMCP
 
 import garmin_mcp
 from garmin_mcp import (
-    auth_cli, auth_tools, data_management, devices, health_snapshots, user_profile, weight_management,
+    activity_management, auth_cli, auth_tools, data_management, devices, health_snapshots, user_profile, weight_management,
     workouts,
 )
 from garmin_mcp.client_resolver import set_global_client
@@ -420,6 +420,29 @@ async def test_power_zones_come_from_the_librarys_request(offline_garmin, tmp_pa
 
     assert payload["power_zones"][0]["ftp_watts"] == 300.0
     assert offline_garmin.to("/biometric-service/powerZones/sports/all")
+
+
+# ─── fastest splits: the library's request ────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_fastest_splits_come_from_the_librarys_request(offline_garmin, tmp_path):
+    offline_garmin.routes["/activitylist-service/activities/fastest-splits"] = [
+        {"distance": 1000, "activityId": 1, "activityDate": "2026-10-10", "time": 330.0}]
+    garmin = _signed_in(tmp_path)
+    activity_management.configure(garmin)
+    set_global_client(garmin)
+    try:
+        payload = json.loads(await _call(activity_management.register_tools(FastMCP("splits")),
+                                         "get_fastest_splits",
+                                         {"start_date": "2026-10-01", "end_date": "2026-10-31"}))
+    finally:
+        set_global_client(None)
+
+    assert payload["bests"][0]["efforts"][0]["duration"] == "5:30"
+    call = offline_garmin.to("/activitylist-service/activities/fastest-splits")[0]
+    assert call["params"] == {"numberOfBests": 3, "startDate": "2026-10-01", "endDate": "2026-10-31",
+                              "activityType": "running"}
 
 
 # ─── every request path in the source ─────────────────────────────────────

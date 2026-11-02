@@ -104,6 +104,7 @@ HEALTH_TOOLS = CORE_TOOLS | frozenset(
 
 ACTIVITIES_TOOLS = CORE_TOOLS | frozenset(
     {
+        "get_fastest_splits",
         # activity_management
         "count_activities",
         "create_manual_activity",
