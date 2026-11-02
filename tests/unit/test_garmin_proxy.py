@@ -138,10 +138,10 @@ class TestResolveCallTimeout:
 
 # FORK: the "raised" column. Upstream runs garminconnect 0.3.2, whose
 # connectapi passes every HTTP failure through as GarminConnectConnectionError.
-# This fork pins 0.3.5 (CVE-2026-54447), whose connectapi already narrows a 401
-# to GarminConnectAuthenticationError and a 429 to
-# GarminConnectTooManyRequestsError -- sibling classes, not subclasses. The
-# proxy's hints are the same either way, which is what this test is about.
+# This fork's pin narrows a 401 to GarminConnectAuthenticationError and a 429
+# to GarminConnectTooManyRequestsError -- sibling classes, not subclasses -- and
+# a 404 to GarminConnectNotFoundError, a GarminConnectConnectionError subclass.
+# The proxy's hints are the same either way, which is what this test is about.
 @pytest.mark.parametrize("status, hint, raised", [
     (401, "Re-run 'garmin-mcp-auth'", GarminConnectAuthenticationError),
     (429, "Wait a few minutes", GarminConnectTooManyRequestsError),

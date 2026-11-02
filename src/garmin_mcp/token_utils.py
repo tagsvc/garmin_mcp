@@ -331,6 +331,27 @@ def _looks_like_rejection(message: str) -> bool:
     return any(marker in lowered for marker in ("401", "403", "unauthorized", "forbidden"))
 
 
+def _root_owned_link(path: Path) -> bool:
+    return os.name == "posix" and os.lstat(path).st_uid == 0
+
+
+def symlink_in_token_path(token_path: str) -> str | None:
+    """The part of a token path garminconnect refuses as a symlink, or None.
+
+    garminconnect refuses a token path with a symlink anywhere in it, so a
+    planted link cannot redirect where tokens are read and written. A link
+    root owns (a system layout such as /home -> var/home) is allowed on POSIX.
+    """
+    path = Path(resolve_token_path(token_path))
+    for candidate in (path, *path.parents):
+        try:
+            if candidate.is_symlink() and not _root_owned_link(candidate):
+                return str(candidate)
+        except OSError:
+            return str(candidate)
+    return None
+
+
 def describe_token_failure(token_path: str, error: BaseException) -> str:
     """Explain why a login from saved tokens failed, with the resolved path.
 
@@ -349,6 +370,15 @@ def describe_token_failure(token_path: str, error: BaseException) -> str:
         return (
             f"Garmin rate-limited the login (429) while loading tokens from {where}. "
             "Wait a few minutes and retry."
+        )
+    link = symlink_in_token_path(info["path"])
+    if link:
+        # garminconnect drops the tokens without saying why, so the failure
+        # would otherwise read as missing or rejected tokens.
+        return (
+            f"The token path {where} goes through a symlink ({link}), and "
+            "garminconnect refuses symlinked token paths. Point GARMINTOKENS at "
+            f"the real directory: {os.path.realpath(info['path'])}"
         )
     if not info["exists"]:
         return (

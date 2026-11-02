@@ -2,7 +2,7 @@
 #
 # This is a deliberate exception, not a reversal of the decision recorded in
 # OPERATIONS.md. That decision concerns the *pip* ecosystem, where this fork
-# holds intentional pins -- garminconnect==0.3.5 (CVE-2026-54447 floor),
+# holds intentional pins -- garminconnect==0.3.20 (exact; CVE-2026-54447 floor 0.3.5),
 # mcp>=1.28.1,<2 (2.x renames mcp.server.fastmcp), and exact requests /
 # python-dotenv -- so version updates there would raise the same PRs forever.
 # Security updates still cover pip; they fire only on real advisories.

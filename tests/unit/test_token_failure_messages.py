@@ -65,6 +65,54 @@ def test_rejected_tokens_are_not_reported_as_missing(non_interactive, monkeypatc
     assert "--force-reauth" in err
 
 
+@pytest.fixture
+def user_owned_links(monkeypatch):
+    """Links as a normal user makes them (the suite may run as root)."""
+    from garmin_mcp import token_utils
+
+    monkeypatch.setattr(token_utils, "_root_owned_link", lambda _path: False)
+
+
+def test_a_symlinked_token_path_is_named_with_the_real_directory(non_interactive, user_owned_links, monkeypatch, tmp_path, capsys):
+    """garminconnect refuses it silently; the message must not blame the tokens."""
+    real = tmp_path / "synced" / "tokens"
+    _write_tokens(real)
+    link = tmp_path / "tokens-link"
+    link.symlink_to(real, target_is_directory=True)
+
+    result = _init_api_with_failure(
+        monkeypatch, link, GarminConnectAuthenticationError("Username and password are required")
+    )
+
+    err = capsys.readouterr().err
+    assert result is None
+    assert f"goes through a symlink ({link})" in err
+    assert f"the real directory: {real}" in err
+    assert "rejected them" not in err
+
+
+def test_a_symlink_higher_up_the_token_path_is_found(user_owned_links, tmp_path):
+    from garmin_mcp.token_utils import symlink_in_token_path
+
+    real = tmp_path / "real"
+    (real / "tokens").mkdir(parents=True)
+    (tmp_path / "linked").symlink_to(real, target_is_directory=True)
+
+    assert symlink_in_token_path(str(tmp_path / "linked" / "tokens")) == str(tmp_path / "linked")
+    assert symlink_in_token_path(str(real / "tokens")) is None
+
+
+def test_a_root_owned_link_is_allowed_as_garminconnect_allows_it(monkeypatch, tmp_path):
+    from garmin_mcp import token_utils
+
+    real = tmp_path / "real"
+    (real / "tokens").mkdir(parents=True)
+    (tmp_path / "linked").symlink_to(real, target_is_directory=True)
+    monkeypatch.setattr(token_utils, "_root_owned_link", lambda _path: True)
+
+    assert token_utils.symlink_in_token_path(str(tmp_path / "linked" / "tokens")) is None
+
+
 def test_corrupt_token_file_is_named(non_interactive, monkeypatch, tmp_path, capsys):
     token_dir = tmp_path / "tokens"
     token_dir.mkdir()

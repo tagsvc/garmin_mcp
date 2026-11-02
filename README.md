@@ -25,7 +25,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~175 tools** covering ~90% of the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.5):
+This MCP server implements **~175 tools** built on the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.20), plus Garmin Connect endpoints the library does not cover:
 
 - ✅ Activity Management (23 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only). `get_activity` says where a run's distance came from (GPS, the watch, or a paired strap or foot pod) and flags a distance that disagrees with the GPS track
 - ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining

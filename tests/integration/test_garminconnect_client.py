@@ -10,16 +10,18 @@ import ast
 import base64
 import json
 import os
+import datetime
 import stat
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from garminconnect import Garmin, GarminConnectTooManyRequestsError
 from mcp.server.fastmcp import FastMCP
 
 import garmin_mcp
-from garmin_mcp import auth_cli, auth_tools, workouts
+from garmin_mcp import auth_cli, auth_tools, data_management, weight_management, workouts
 from garmin_mcp.client_resolver import set_global_client
 from tests.offline_garmin import TOKENS
 
@@ -266,6 +268,69 @@ async def test_coach_plans_reads_quit_from_the_plan_detail(coach, offline_garmin
 
     assert payload["plans"][0]["status"] == "quit"
     _no_query_in_paths(offline_garmin)
+
+
+# ─── timed writes: the profile's zone, not the server's clock ─────────────
+
+NEW_YORK = ZoneInfo("America/New_York")
+
+
+@pytest.fixture
+def server_on_utc(monkeypatch):
+    """The machine's clock in UTC, as on Railway."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.fixture
+def writer(offline_garmin, server_on_utc, tmp_path):
+    offline_garmin.routes.update({
+        "/userprofile-service/userprofile/personal-information/test-runner": {"timeZone": "America/New_York"},
+        "/weight-service/user-weight": {"ok": True},
+        "/bloodpressure-service/bloodpressure": {"ok": True},
+    })
+    garmin = _signed_in(tmp_path)
+    set_global_client(garmin)
+    app = FastMCP("writes")
+    for module in (weight_management, data_management):
+        module.configure(garmin)
+        module.register_tools(app)
+    yield app
+    set_global_client(None)
+
+
+def _sent(api, path):
+    return next(call["json"] for call in api.calls if call["path"] == path and call["method"] == "POST")
+
+
+def _ts(text):
+    return datetime.datetime.strptime(text, "%Y-%m-%dT%H:%M:%S.%f")
+
+
+@pytest.mark.asyncio
+async def test_a_weigh_in_with_only_a_local_time_gets_gmt_from_the_profile_zone(writer, offline_garmin):
+    """7:30 PM in New York is 00:30 GMT the next day, whatever the server's clock."""
+    await _call(writer, "add_weigh_in_with_timestamps",
+                {"weight": 80.0, "unit_key": "kg", "date_timestamp": "2026-11-02T19:30:00"})
+
+    sent = _sent(offline_garmin, "/weight-service/user-weight")
+    assert sent["dateTimestamp"] == "2026-11-02T19:30:00.000"
+    assert sent["gmtTimestamp"] == "2026-11-03T00:30:00.000"
+
+
+@pytest.mark.asyncio
+async def test_blood_pressure_with_no_time_is_logged_at_the_profile_zones_now(writer, offline_garmin):
+    before = datetime.datetime.now(NEW_YORK).replace(tzinfo=None)
+    await _call(writer, "set_blood_pressure", {"systolic": 120, "diastolic": 80, "pulse": 60})
+    after = datetime.datetime.now(NEW_YORK).replace(tzinfo=None)
+
+    sent = _sent(offline_garmin, "/bloodpressure-service/bloodpressure")
+    local, gmt = _ts(sent["measurementTimestampLocal"]), _ts(sent["measurementTimestampGMT"])
+    assert before - datetime.timedelta(seconds=1) <= local <= after
+    assert gmt - local == -NEW_YORK.utcoffset(local)
 
 
 # ─── every request path in the source ─────────────────────────────────────
