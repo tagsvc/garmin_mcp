@@ -259,7 +259,8 @@ rejected after a config change.
 
 ### Backups
 
-The `/data` volume is the only stateful thing in the deployment. Policy:
+The `/data` volume is the only stateful thing in the deployment: the SQLite
+database, the Garmin session store and the saved analytics reports. Policy:
 
 - A **daily scheduled backup**, plus
 - A **locked** manual snapshot as a permanent known-good baseline. Locking

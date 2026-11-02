@@ -115,6 +115,24 @@ def test_report_store_is_scoped_per_user_in_remote_mode(
     assert a.suffix == ".json" and b.suffix == ".json"
 
 
+def test_remote_report_store_defaults_to_the_session_volume(monkeypatch, tmp_path, restore_resolver):
+    """Saved reports live beside the Garmin sessions, which survive a redeploy."""
+    monkeypatch.delenv("GARMIN_REPORTS_PATH", raising=False)
+    monkeypatch.setenv("SESSION_STORAGE_PATH", str(tmp_path / "data" / "garmin_sessions"))
+    import garmin_mcp.analytics as an
+    monkeypatch.setattr(an, "get_user_id", lambda ctx=None: "user-aaa")
+
+    assert _report_store_path(object()) == tmp_path / "data" / "garmin_mcp_reports.user-aaa.json"
+
+
+def test_stdio_report_store_stays_in_the_home_directory(monkeypatch, tmp_path, restore_resolver):
+    monkeypatch.delenv("GARMIN_REPORTS_PATH", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cr.set_session_manager(None)
+
+    assert _report_store_path(None) == tmp_path / ".garmin_mcp_reports.json"
+
+
 # ─── L3: limiter lockout + allowlist membership oracle ────────────────────
 
 class _Req:

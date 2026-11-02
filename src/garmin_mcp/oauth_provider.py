@@ -351,11 +351,21 @@ class GarminOAuthProvider(
     # ─── User helpers ─────────────────────────────────────────────────
 
     def _get_or_create_user(self, garmin_email: str) -> str:
-        """Upsert a user by Garmin email. Returns user_id."""
+        """Upsert a user by Garmin email, ignoring case. Returns user_id.
+
+        The allowlist ignores case, so the user must too: otherwise the same
+        account signed in as "Me@x.com" and imported as "me@x.com" becomes two
+        users, and an import lands on the one the claude.ai connection does not
+        use. A row stored in another case is still found; where case variants
+        already exist, the oldest is the account's user.
+        """
+        email = (garmin_email or "").strip()
         conn = self._get_conn()
         try:
             row = conn.execute(
-                "SELECT id FROM users WHERE garmin_email = ?", (garmin_email,)
+                "SELECT id FROM users WHERE lower(garmin_email) = ? "
+                "ORDER BY created_at, rowid LIMIT 1",
+                (email.lower(),),
             ).fetchone()
             if row:
                 return row["id"]
@@ -363,7 +373,7 @@ class GarminOAuthProvider(
             user_id = secrets.token_hex(16)
             conn.execute(
                 "INSERT INTO users (id, garmin_email) VALUES (?, ?)",
-                (user_id, garmin_email),
+                (user_id, email.lower()),
             )
             conn.commit()
             return user_id

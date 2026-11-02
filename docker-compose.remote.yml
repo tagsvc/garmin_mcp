@@ -13,6 +13,10 @@ services:
       - GARMIN_MCP_PATH=/mcp
       - DB_PATH=/data/garmin_mcp.db
       - SESSION_STORAGE_PATH=/data/garmin_sessions
+      # Fail-closed: with no allowlist every login is rejected, and with no
+      # import secret token import is off. Set both in the shell or a .env file.
+      - GARMIN_ALLOWED_EMAILS=${GARMIN_ALLOWED_EMAILS:-}
+      - GARMIN_IMPORT_SECRET=${GARMIN_IMPORT_SECRET:-}
     volumes:
       - garmin-data:/data
     restart: unless-stopped

@@ -1,248 +1,640 @@
-# Garmin MCP Server
+# Garmin Connect MCP server
 
-This Model Context Protocol (MCP) server connects to Garmin Connect and exposes your fitness and health data to Claude and other MCP-compatible clients.
+An MCP server that gives Claude your Garmin Connect data: activities, health and
+sleep, training metrics, workouts, gear and nutrition. It runs mainly as a
+**remote server for claude.ai, hosted on Railway**, and as a **local stdio
+server** (Claude Desktop, Claude Code and other clients) when the remote one
+cannot be used.
 
-**About this fork.** This is a fork of [Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp), run mainly as a remote server for claude.ai (hosted on Railway), with the local stdio server as a fallback. It adds, among other things:
-- Health Snapshot and ECG tools, power zones and fastest splits, on garminconnect 0.3.20;
-- explicit time zones on every time, and values in the account's own units beside Garmin's metric ones;
-- historical health analytics, Garmin Coach plan tools, and a check of where a run's distance came from;
-- the remote server's sign-in: an email allowlist and a secret-gated token import.
+**About this fork.** This is a fork of
+[Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp). It adds, among
+other things:
 
-[FORK.md](FORK.md) lists what the fork adds and the rules that must not break, [OPERATIONS.md](OPERATIONS.md) covers the deployment and repository settings, and [CHANGELOG.md](CHANGELOG.md) is the history.
+- Health Snapshot and ECG tools, power zones and fastest splits, on
+  garminconnect 0.3.20;
+- explicit time zones on every time, and values in the account's own units
+  beside Garmin's metric ones;
+- historical health analytics, Garmin Coach plan tools, a check of where a
+  run's distance came from, and `inspect_garmin` diagnostics;
+- the remote server's sign-in: an email allowlist and a secret-gated token
+  import.
 
-Garmin's API is accessed via the awesome [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library.
+[FORK.md](FORK.md) lists what the fork adds and the rules that must not break,
+[OPERATIONS.md](OPERATIONS.md) covers the deployment and repository settings,
+[CHANGELOG.md](CHANGELOG.md) is the history, and [SECURITY.md](SECURITY.md)
+says how to report a vulnerability. Garmin's API is reached through
+[python-garminconnect](https://github.com/cyberjunky/python-garminconnect).
 
-## Features
+**Contents:** [What it can do](#what-it-can-do) ·
+[Remote Mode](#remote-mode) · [Local fallback (stdio)](#local-fallback-stdio) ·
+[Conventions](#conventions) · [Tool notes](#tool-notes) ·
+[Tool profiles and filtering](#tool-profiles-and-filtering) ·
+[Development](#development) · [Credits](#credits)
 
-- List recent activities with pagination support
-- Get detailed activity information
-- Edit activities: name, type, description/notes, event type, perceived effort (RPE), feel, and strength exercise sets
-- Access health metrics (steps, heart rate, sleep, stress, respiration)
-- View body composition data
-- Track training status and readiness
-- Access cycling FTP and lactate threshold metrics
-- Manage gear and equipment, including free-text notes returned by `get_gear`
-- Access workouts and training plans
-- Inspect detailed workout step structures, including repeat groups and swim pace targets
-- Weekly health aggregates (steps, stress, intensity minutes)
-- Advanced cycling analytics: power zones, FIT file analysis, DI2 electronic shift intelligence
-- Training load trend (CTL/ATL/TSB), HRV trend, VO2 max trend, respiration rate trend
-- Power Duration Curve, climb detection with VAM, cardiac drift (aerobic decoupling), W/kg calculations
-- Historical health analytics: personal rolling baselines, wellness anomaly detection, lagged metric correlations, weekly reviews, and custom multi-metric reports
-- Values in the account's own units (miles, min/mile pace, feet, pounds for a US account) beside Garmin's metric ones, and workout pace targets written as `10:30/mi`
+## What it can do
 
-### Tool Coverage
+This MCP server implements **~181 tools** on python-garminconnect 0.3.20, plus
+Garmin Connect endpoints the library does not cover. The remote server offers
+all of them except the three stdio-only tools (see [Security](#security)).
+Items marked *fork* exist only in this fork.
 
-This MCP server implements **~181 tools** built on the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.20), plus Garmin Connect endpoints the library does not cover:
+**Activities**
 
-- ✅ Activity Management (24 tools) - includes your fastest 1K/mile/5K over a date range, write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only). `get_activity` says where a run's distance came from (GPS, the watch, or a paired strap or foot pod) and flags a distance that disagrees with the GPS track
-- ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining
-- ✅ Health Snapshot & ECG (4 tools) - two-minute Health Snapshots (heart rate, respiration, stress, SpO2, HRV) with their per-second samples, and ECG recordings from the watch's ECG app
-- ✅ Training & Performance (18 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
-- ✅ Workouts (18 tools) - Garmin Coach plan listing, detail (race goal, confidence, training week) and per-workout grades; moving a scheduled workout to another date
-- ✅ Devices (8 tools) - includes paired-sensor battery levels and sending a workout to a device
-- ✅ Gear Management (4 tools) - includes per-gear activity lists for mileage auditing
-- ✅ Weight Tracking (5 tools)
-- ✅ Challenges & Badges (9 tools)
-- ✅ Nutrition (15 tools) - food logs, meals, custom foods, food logging, and multi-day intake summaries
-- ✅ Data Management (3 tools) - bulk export helpers
-- ✅ Women's Health (3 tools)
+- ✅ Activity Management (24 tools) - list, search and count activities; details, splits, laps, time in HR and power zones, weather; manual activities; edit name, type, description, event type, perceived effort, feel and strength exercise sets; your fastest 1K, mile and 5K in a date range (`get_fastest_splits`, *fork*); a confirm-gated `delete_activity` (stdio only). `get_activity` says where a run's, walk's or hike's distance came from (GPS, the watch, or a paired strap or foot pod) and flags a distance that disagrees with the GPS track by more than 5% (*fork*)
+- ✅ Activity Analysis (3 tools) - the original FIT file: cycling analysis (power, Di2/eTap shifting, climbs with VAM, cardiac drift, W/kg), every FIT message with pagination, and a season-best power duration curve
+- ✅ Activity File Downloads (2 tools) - an activity as FIT, GPX, TCX or CSV
+- ✅ Courses (5 tools) - list, details, upload a GPX (base64, or a local path over stdio), download as GPX, delete
+- ✅ Gear Management (4 tools) - gear with its Garmin Connect notes; add or remove gear on an activity; `get_gear_activities` lists a shoe's or bike's activities for mileage audits (*fork*)
+
+**Health**
+
+- ✅ Health & Wellness (35 tools) - daily stats, steps, floors, heart rate, resting HR, sleep, stress, body battery, respiration, SpO2, hydration, blood pressure, body composition, training readiness, recovery time, health status; weekly aggregates, multi-day calorie and step totals, and a composition-derived TDEE estimate
+- ✅ Health Snapshot & ECG (4 tools, *fork*) - two-minute Health Snapshots (heart rate, respiration, stress, SpO2, HRV) with their per-second samples, and ECG recordings from the watch's ECG app
+- ✅ Historical Analytics (8 tools, *fork*) - rolling baselines, wellness anomalies, lagged correlations, a weekly review, and custom or saved multi-metric health reports
+- ✅ Weight Tracking (5 tools) - weigh-ins: read, add (optionally with timestamps), delete
+- ✅ Data Management (3 tools) - log body composition, blood pressure and hydration
+- ✅ Women's Health (3 tools) - menstrual calendar and day data, pregnancy summary
+- ✅ Nutrition (15 tools) - food logs, meals, custom foods, food search and logging, daily nutrition settings, multi-day intake summaries
+
+**Training and workouts**
+
+- ✅ Training & Performance (18 tools) - training status, load and load balance, CTL/ATL/TSB, HRV, VO2 max and respiration trends, training effect, FTP, lactate threshold, endurance and hill scores, fitness age, heat and altitude acclimation, running tolerance, progress summaries
+- ✅ Challenges & Badges (9 tools) - badges, challenges, goals, personal records, race predictions
+- ✅ User Profile (7 tools) - name, profile, settings, unit system, per-sport heart rate zones (read and write), and power zones (`get_power_zones`, *fork*)
+- ✅ Workouts (18 tools) - the workout library: upload, download, schedule, unschedule, move to another date, delete. Garmin Coach: plan workouts, and (*fork*) plans with their status, plan detail (race goal, confidence, training week) and per-workout grades
+- ✅ High-Level Workout Builders (6 tools) - runs, run intervals, walk/run, Z2 walks and strength sessions without writing JSON, and scheduling a week ([docs/workouts.md](docs/workouts.md))
 - ✅ Calendar (1 tool) - races and events from the Garmin calendar
-- ✅ User Profile (7 tools) - includes per-sport heart rate zone reads and writes, and power zones
-- ✅ High-Level Workout Builders (6 tools) - create and schedule workouts without writing JSON, including repeat-based interval runs
-- ✅ Courses (5 tools) - list / get details / upload GPX as course (base64 or local path) / download GPX / delete course
-- ✅ Activity Analysis (3 tools) - FIT file parsing, paginated FIT messages, Power Duration Curve; requires power meter and/or Di2
-- ✅ Historical Analytics (8 tools) - rolling baselines, wellness anomalies, lagged correlations, weekly review, and saved/custom multi-metric health reports
-- ✅ Interactive Auth (2 tools, stdio mode) - `check_garmin_auth` / `login_to_garmin` to authenticate without restarting the client
-- ✅ Activity File Downloads (2 tools) - download activity files in FIT, GPX, TCX, or CSV format
-- ✅ Diagnostics (1 tool) - `inspect_garmin`: Garmin's raw reply for a read-only tool or an API path, and the fields a tool's output leaves out
 
-> **Note:** Activity Analysis tools require a compatible power meter (e.g., Garmin Rally, Favero Assioma, PowerTap P1) and/or Shimano Di2 / SRAM eTap electronic shifting. The `fitparse` dependency is installed automatically.
+**Devices, sign-in and diagnostics**
 
-### Units
+- ✅ Devices (8 tools) - devices, settings, alarms, solar data, last used and primary training device; paired-sensor battery levels (`get_sensors`, *fork*); sending a workout to a device
+- ✅ Interactive Auth (2 tools, stdio only, *fork*) - `check_garmin_auth` / `login_to_garmin` to sign in to Garmin without restarting the client
+- ✅ Diagnostics (1 tool, *fork*) - `inspect_garmin`: Garmin's raw reply for a read-only tool or a GET of one API path, and the fields a tool's output leaves out
 
-Garmin's API returns meters, meters per second, meters of elevation and grams or
-kilograms whatever the account's unit setting. Every metric field is kept as it
-is, and the activity, split, weigh-in, gear, running-tolerance, lactate-threshold,
-course and workout-detail tools add the same value in the account's units right
-after it:
+The cycling analyses need power and/or electronic-shifting data in the FIT file
+(e.g. a Garmin Rally, Favero Assioma or PowerTap P1 power meter, Shimano Di2 or
+SRAM eTap). `get_activity_fit_messages` reads any activity's FIT file. Some
+Garmin methods are deliberately left out; see
+[docs/skipped-endpoints.md](docs/skipped-endpoints.md).
 
-| account (`get_unit_system`) | added beside the metric field |
+Things to ask once it is connected: "What was my sleep like last night, and how
+is my HRV trending?", "Show my CTL, ATL and TSB for the last six weeks", "How is
+my Garmin Coach plan going this week?"
+
+## Remote Mode
+
+The remote server (`garmin-mcp-remote`) serves the tools over Streamable HTTP
+with OAuth2, so claude.ai, and the Claude apps that share its connectors, can
+use them from anywhere. Each allowlisted Garmin account gets its own session.
+
+### How it fits together
+
+```
+claude.ai ──HTTPS──▶ https://<your-domain>/mcp            (Railway, Dockerfile.remote)
+   │  401 → OAuth discovery (/.well-known/oauth-protected-resource)
+   │  /authorize → /login: Garmin email + password, or an imported token
+   │            → /login/mfa when the account has 2FA
+   ▼
+per-user Garmin session  /data/garmin_sessions/<user id>/garmin_tokens.json
+OAuth clients, users and hashed tokens  /data/garmin_mcp.db (SQLite)
+   │
+   ▼
+each tool call: bearer token → that user's Garmin session → Garmin Connect
+```
+
+- The sign-in page is the server's own. It passes the Garmin credentials to
+  Garmin once and keeps only the resulting session tokens.
+- claude.ai connects with a pre-registered client (`client_id`
+  `https://claude.ai`); other MCP clients register dynamically.
+- The server is stateless: every request is identified by its OAuth bearer
+  token, so there is no MCP session to expire between calls.
+- The `/data` volume holds the database and the Garmin sessions. Lose it and
+  every user signs in again.
+
+### Deploying on Railway
+
+The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway
+builds the HTTP server straight from git. The bare `Dockerfile` runs the stdio
+server and cannot serve traffic.
+
+1. Create a Railway service from this repo (branch `main`); `railway.json`
+   selects the Dockerfile automatically.
+2. **Settings → Networking → Generate Domain.** The server binds to Railway's
+   injected `PORT` itself; leave `GARMIN_MCP_PORT` unset.
+3. Add a **volume mounted at `/data`**. It keeps the SQLite database and the
+   Garmin sessions across redeploys; without it, every redeploy signs everyone
+   out.
+4. Set at least `GARMIN_MCP_SERVER_URL` (`https://<your-domain>`) and
+   `GARMIN_ALLOWED_EMAILS`. Set `GARMIN_IMPORT_SECRET` too if you will import
+   tokens (you probably will; see [Token import / refresh](#token-import--refresh)).
+5. In claude.ai, add a custom connector with the URL
+   `https://<your-domain>/mcp` and sign in (below).
+6. Back up the volume. [OPERATIONS.md](OPERATIONS.md) has the backup policy,
+   the full Railway configuration and the repository settings; this README does
+   not repeat them.
+
+### Configuration
+
+Read by `src/garmin_mcp/config.py` and `remote.py`:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GARMIN_MCP_SERVER_URL` | *(required)* | Public base URL. OAuth metadata and redirects use it; the server will not start without it. |
+| `GARMIN_ALLOWED_EMAILS` | *(none: every login rejected)* | Comma-separated Garmin Connect emails allowed to sign in, matched case-insensitively. **Fail-closed.** |
+| `GARMIN_IMPORT_SECRET` | *(none: import disabled)* | Shared secret for both token-import paths. **Fail-closed:** unset, `/import-token` answers 404 and the login-page import is refused. |
+| `DB_PATH` | `/data/garmin_mcp.db` | SQLite: OAuth clients, users, hashed tokens. |
+| `SESSION_STORAGE_PATH` | `/data/garmin_sessions` | One directory per user, holding garminconnect's `garmin_tokens.json`. |
+| `GARMIN_MCP_HOST` | `0.0.0.0` | Listen address. |
+| `GARMIN_MCP_PORT` | `$PORT`, else `8000` | An explicit value wins over the platform's `PORT`. |
+| `GARMIN_MCP_PATH` | `/mcp` | MCP endpoint path. |
+| `MCP_SCOPE` | `garmin` | OAuth scope the server requires. |
+| `GARMIN_MCP_CALL_TIMEOUT` | `90` | Seconds before a stalled Garmin request is abandoned with a retry-able error; `0` disables the bound. |
+| `GARMIN_REPORTS_PATH` | `garmin_mcp_reports.json` beside the sessions directory (`/data`) | Saved analytics reports, one file per user beside this path, so they survive redeploys with the sessions. |
+| `LOG_LEVEL` | `INFO` | `DEBUG` shows why garminconnect could not load or refresh a session. |
+
+### Signing in
+
+When you add the connector, claude.ai opens the server's sign-in page:
+
+1. Enter your Garmin Connect email and password. The email must be on
+   `GARMIN_ALLOWED_EMAILS`.
+2. If the account has two-factor authentication, a second page asks for the
+   code Garmin sent. It stays valid for 5 minutes; a wrong code can be retried.
+3. The page redirects back to claude.ai, and the tools are ready. The whole
+   sign-in must finish within 15 minutes of opening the page.
+
+claude.ai's access token lasts an hour and is renewed with a refresh token,
+which expires after 30 days unused; then you sign in again. Your Garmin session
+on the server is separate and lasts until Garmin rejects it.
+
+An email off the allowlist and a wrong password both show "Invalid email or
+password."; the server log says which. If Garmin rate-limits the sign-in, use
+token import.
+
+### Token import / refresh
+
+Garmin rate-limits (HTTP 429) its sign-in from datacenter IPs such as
+Railway's, so the server often cannot complete a Garmin login even with the
+right password and code; the same login works from a home connection. The
+workaround is to sign in on a trusted machine and import the resulting token.
+The server stores it without contacting Garmin.
+
+Both import paths require `GARMIN_IMPORT_SECRET` in addition to the allowlist:
+writing a session is a state-changing action, and an email is not a secret.
+
+1. On a trusted machine on a residential connection, run `garmin-mcp-auth`
+   (see [Authenticate once](#authenticate-once-garmin-mcp-auth)). It writes
+   `~/.garminconnect/garmin_tokens.json` and a base64 copy,
+   `~/.garminconnect_base64`. Either form can be imported.
+2. Import it, either way:
+   - **Login page:** on the sign-in page, expand "Advanced: import an existing
+     Garmin token instead", paste the token, enter your allowlisted email and
+     the import secret, and leave the password blank.
+   - **Endpoint:** `POST /import-token` with header `X-Import-Secret` and a JSON
+     body `{"email": "...", "token": "..."}`:
+
+     ```bash
+     curl -X POST "https://<your-domain>/import-token" \
+       -H "X-Import-Secret: $GARMIN_IMPORT_SECRET" \
+       -H "Content-Type: application/json" \
+       -d "{\"email\": \"user@example.com\", \"token\": \"$(cat ~/.garminconnect_base64)\"}"
+     ```
+
+     It answers `{"status": "ok", ...}`, or 401 (wrong secret), 403 (email
+     not allowlisted), 400 (malformed token) or 429 (too many attempts).
+
+The email's case does not matter: the server keys each user on the email
+ignoring case, as the allowlist does.
+
+**Refreshing.** When the Garmin session on the server stops working, tool calls
+answer "Garmin session expired or not available. Please re-authenticate."
+Import a fresh token the same way. It replaces that user's stored session, and
+the claude.ai connection keeps working without reconnecting. If the volume is
+lost, the OAuth tokens go with it: reconnect the connector and import on the
+sign-in page (OPERATIONS.md covers backups and recovery).
+
+### Security
+
+**Access control**
+
+- **Email allowlist, fail-closed:** with `GARMIN_ALLOWED_EMAILS` unset or empty,
+  every login is rejected. It is checked before the server contacts Garmin.
+- **Token import is secret-gated, fail-closed,** on both paths, with a
+  constant-time comparison. Imported tokens are checked for structure only,
+  never against Garmin, so the endpoint cannot be used to test whether a token
+  works and makes the server send no Garmin login traffic.
+- **One generic sign-in error** for "not allowlisted" and "wrong password", so
+  allowlist membership cannot be inferred from the response.
+- **OAuth 2.0 with PKCE;** authorization codes are single-use and refresh tokens
+  rotate on every use.
+
+**Data at rest**
+
+- Garmin passwords are **never stored**, only the session tokens Garmin issues.
+  Per-user token directories are **owner-only** (`0700` / `0600`), applied after
+  every write and swept again at startup.
+- OAuth tokens are stored as **SHA-256 hashes**, so a copy of the database
+  yields no usable bearer token. Pending 2FA state lives in memory, for 5
+  minutes.
+- Per-user state (Garmin sessions, saved analytics reports) is scoped by user
+  id; one user cannot read or overwrite another's.
+
+**What the tools can do**
+
+- **Three tools are stdio-only.** `check_garmin_auth` and `login_to_garmin`,
+  because on a network server `login_to_garmin` would store tokens for any
+  Garmin account, around the allowlist. `delete_activity`, because it is
+  irreversible and an activity is the training history Garmin Coach grades and
+  every load and analytics figure is computed from; `delete_workout` and
+  `delete_course` stay, since a workout or course can be recreated. The server
+  refuses to start if an excluded name stops matching a registered tool.
+- **Remote tools never read or write the server's filesystem** (see
+  [Files and paths](#files-and-paths)).
+- **Every tool carries effect annotations** (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`, `openWorldHint`), so a client can tell a delete from a read
+  and ask before running one.
+
+**Hardening**
+
+- **Rate limits:** sign-in 8 attempts per 5 minutes per email and client IP;
+  2FA 8 per 5 minutes per pending sign-in; token import 10 per 5 minutes per
+  IP. The client IP is the last `X-Forwarded-For` hop, which the client cannot
+  choose.
+- **Security headers** on every response: HSTS, `nosniff`,
+  `X-Frame-Options: DENY`, a strict CSP (`default-src 'none'`),
+  `Referrer-Policy: no-referrer`. Values reflected on the sign-in pages are
+  HTML-escaped, and untrusted values are escaped before they are logged.
+- **Stateless transport** (no `Mcp-Session-Id`, nothing kept per session) and a
+  **non-root process**: the container takes ownership of `/data`, then drops to
+  an unprivileged user (`scripts/docker-entrypoint.sh`).
+
+### Running the remote server elsewhere
+
+With Docker Compose, `docker-compose.remote.yml` builds `Dockerfile.remote` and
+keeps `/data` in a named volume. It passes `GARMIN_ALLOWED_EMAILS` and
+`GARMIN_IMPORT_SECRET` through from the shell or a `.env` file; without the
+allowlist every login is rejected.
+
+```bash
+export GARMIN_MCP_SERVER_URL=https://garmin-mcp.example.com
+export GARMIN_ALLOWED_EMAILS=user@example.com
+docker compose -f docker-compose.remote.yml up -d
+```
+
+Locally, for development (the default `/data` paths usually do not exist on a
+workstation):
+
+```bash
+GARMIN_MCP_SERVER_URL=http://localhost:8000 \
+GARMIN_ALLOWED_EMAILS=user@example.com \
+DB_PATH=./data/garmin_mcp.db SESSION_STORAGE_PATH=./data/garmin_sessions \
+uv run garmin-mcp-remote
+
+npx @modelcontextprotocol/inspector http://localhost:8000/mcp
+```
+
+## Local fallback (stdio)
+
+The stdio server (`garmin-mcp`) runs on your own machine as one Garmin account,
+with tokens you create once with `garmin-mcp-auth`. Use it when:
+
+- the Railway service is down or being redeployed;
+- Garmin refuses sign-ins from Railway's datacenter IP and you need data now;
+- you are developing or testing the server;
+- you need what the remote server does not offer: `delete_activity`, saving
+  files to your own disk, or a Garmin Connect China account
+  ([docs/garmin-cn.md](docs/garmin-cn.md)).
+
+It needs Python 3.12+ and [uv](https://docs.astral.sh/uv/) (`uvx` comes with it).
+
+### Authenticate once: garmin-mcp-auth
+
+The server never prompts for credentials, because stdin carries the MCP
+protocol. Sign in once in a terminal instead:
+
+```bash
+uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
+```
+
+It asks for your email, password and, if the account has 2FA, the code, then
+saves tokens to `~/.garminconnect/garmin_tokens.json` (owner-only) and a base64
+copy to `~/.garminconnect_base64` for other garminconnect-based tools (and for
+[token import](#token-import--refresh)); the server reads only the first.
+Tokens last roughly six months.
+
+| Option | Effect |
 |---|---|
-| `statute_us` | `distance_miles`, `avg_speed_mph`, `avg_pace_per_mile` (m:ss), `elevation_gain_feet`, `weight_lb`, `avg_stride_length_in`, `avg_temp_f` |
-| `statute_uk` | miles, mph, pace per mile, feet and inches; weight stays in kg and temperature in °C |
-| `metric` | `distance_km`, `avg_speed_kmh`, `avg_pace_per_km`; elevation, weight and temperature are already metric |
+| `--verify` | Check the saved tokens without signing in again. |
+| `--diagnose` | Show where tokens are looked up, what is on disk, and whether they work. |
+| `--force-reauth` | Sign in again even if valid tokens exist (e.g. after they expire). |
+| `--token-path DIR` | Use another token directory; without it, `$GARMINTOKENS`, else `~/.garminconnect`. |
+| `--is-cn` | Garmin Connect China ([docs/garmin-cn.md](docs/garmin-cn.md)). |
 
-Garmin's raw payloads get camelCase companions (`distanceMiles`,
-`averagePacePerMile`, `elevationGainFeet`, `averageTemperatureFahrenheit`,
-`strideLengthInches`, `weightLb` beside Garmin's bare grams). A temperature
-difference such as a range converts by x1.8 without +32. Skin temperature is a
-deviation from your baseline and is named so
-(`skin_temperature_deviation_celsius` / `_fahrenheit`, both from Garmin).
-Hydration follows the hydration unit in your Garmin profile, which is its own
-setting: a US account logging water in milliliters gets no fluid ounces.
-Decimal hours get h:mm text (`sleep_hm: 6:22` beside `sleep_hours: 6.37`). Swims keep meters, because Garmin
-shows pool units and pace per 100. Activity weather is the one endpoint Garmin
-localises itself; `get_activity_weather` labels its units.
+Credentials can come from the environment instead of prompts:
+`GARMIN_EMAIL` / `GARMIN_PASSWORD`, or `GARMIN_EMAIL_FILE` /
+`GARMIN_PASSWORD_FILE` naming files that hold them (one of each pair, never
+both).
 
-The unit system is the measurement setting in your Garmin Connect profile
-(`measurementSystem`, what `get_unit_system` returns), read when the server logs
-in to Garmin. After you change it in Garmin Connect, the remote server picks it
-up within the hour, when it next restores your session, or on a redeploy; a
-stdio server picks it up on restart. The metric fields never change with it.
+From a clone, `uv run garmin-mcp-auth` does the same. To put the three commands
+on your `PATH` from a local checkout:
+`uv tool install --python 3.12 --force /path/to/garmin_mcp`.
 
-### Times
+### Claude Desktop: the `.dxt` extension
 
-Every time a curated tool returns names its zone: `*_gmt` is GMT, written as
-ISO 8601 ending in `Z`, and `*_local` is the same moment in local time with
-its UTC offset, e.g. `start_time_gmt: 2026-10-27T18:37:26Z` and
-`start_time_local: 2026-10-27T14:37:26-04:00`.
+1. Download [`garmin-mcp.dxt`](https://github.com/tagsvc/garmin_mcp/raw/main/garmin-mcp.dxt)
+   from this repository's root. It runs this fork's server through `uvx`;
+   upstream's `.dxt` runs upstream's.
+2. Drag it into Claude Desktop, double-click it, or use **Settings → Extensions
+   → Install Extension**.
+3. Its settings (token directory, email, password) are optional. Leave email
+   and password blank once you have run `garmin-mcp-auth`.
 
-Local time comes from the record's own offset whenever Garmin sends one,
-which is where the watch was; a run while travelling shows that place's time,
-as in the Garmin app. When a record carries no offset (laps, weather reports,
-device sync times, 15-minute step buckets) local time uses the time zone in
-your Garmin Connect profile, and the tool names it in `local_time_zone`.
-Tools that return Garmin's own payload keep its keys and give its time text
-its zone in place (`latestSpo2ReadingTimeGmt: 2026-10-28T09:59:00Z`,
-`latestSpo2ReadingTimeLocal: 2026-10-28T05:59:00-04:00`), add local siblings
-where Garmin sends a GMT time alone (`eventStartTimeLocal`, `sleepStartLocal`),
-and add `utcOffsetHours`, the day's offset for reading their
-`[UTC epoch ms, value]` series. Date defaults
-("today") use the profile's time zone, not the server's clock.
+To rebuild it from a clone: `uv run bash scripts/build_dxt.sh` (writes
+`garmin-mcp.dxt` in the repo root; `uv run` provides the project's Python,
+which the build imports).
 
-### Gear Notes
+### Claude Desktop: JSON config
 
-Each item in the `gear` array returned by `get_gear` includes a `notes` field
-containing the free-text Notes value shown in Garmin Connect. Gear without a
-Notes value returns `null`; all existing gear fields remain unchanged.
-
-### Activity File Downloads
-
-Two tools let you download a raw activity file to disk:
-
-- **`download_activity_file(activity_id, format="fit", output_dir=None)`** — downloads the activity and saves it to the configured directory. `format` accepts `fit` (default), `gpx`, `tcx`, or `csv`.
-- **`set_fit_download_dir(path)`** — sets and persists the default download directory (written to the config file).
-
-**Where files are saved (precedence):**
-
-1. `output_dir` argument — one-off override, not persisted.
-2. `GARMIN_FIT_DOWNLOAD_DIR` environment variable.
-3. Persisted config set via `set_fit_download_dir`.
-
-**Remote mode:** writing to a path is disabled. On a hosted server a path names
-the *server's* filesystem, not yours, so `download_activity_file` returns the
-file inline as base64 (omit `output_dir`), and `set_fit_download_dir` is
-refused. The same applies to `download_course_gpx`, which returns the GPX inline.
-
-**First-run behavior (stdio only):** if no directory is configured, `download_activity_file` returns `status: "needs_setup"`. The assistant will ask where you want to save files (suggesting the current directory as default), call `set_fit_download_dir` to persist your choice, and then retry the download automatically.
-
-### Strength Exercise Sets
-
-`set_activity_exercise_sets(activity_id, sets)` writes structured sets onto a recorded
-strength activity, the same per-set grid the Garmin Connect "Edit sets" screen saves, so
-they appear in Garmin's exercise history and volume charts. It **replaces every existing
-set**, including watch-detected ones; read them first with `get_activity_exercise_sets`
-if you want to keep any.
-
-Each set takes a `category` and optional `exercise_name` using Garmin's keys from
-[`Exercises.json`](https://connect.garmin.com/web-data/exercises/Exercises.json), plus
-optional `reps`, `weight_kg` or `weight_lb` (omit for bodyweight), `duration_seconds` and
-`rest_seconds`. Garmin rejects unknown keys and leaves the activity unchanged.
-
-If the watch recorded the right sets but misidentified the exercises, pass
-`keep_timing: true`: the recorded start times, durations and rest periods are kept and only
-the exercise, reps and weight are replaced, in order. The number of sets must match the
-activity's recorded active sets.
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS)
+or `%APPDATA%\Claude\claude_desktop_config.json` (Windows), with no
+credentials in it:
 
 ```json
 {
-  "activity_id": 12345678901,
-  "sets": [
-    {"category": "DEADLIFT", "exercise_name": "BARBELL_DEADLIFT", "reps": 5, "weight_kg": 150, "rest_seconds": 180},
-    {"category": "PULL_UP", "reps": 8}
-  ]
+  "mcpServers": {
+    "garmin": {
+      "command": "uvx",
+      "args": ["--python", "3.12", "--from", "git+https://github.com/tagsvc/garmin_mcp", "garmin-mcp"]
+    }
+  }
 }
 ```
 
-### Intentionally Skipped Endpoints
+From a local clone, use `"command": "uv"` with
+`"args": ["--directory", "/full/path/to/garmin_mcp", "run", "garmin-mcp"]`.
+Restart Claude Desktop after saving.
 
-Some endpoints are not implemented due to performance or complexity considerations:
+Without saved tokens, the server can sign in with `GARMIN_EMAIL` and
+`GARMIN_PASSWORD` in the config's `env`, but only for an account without 2FA;
+`garmin-mcp-auth` keeps credentials out of the config. The stdio-only tools
+`check_garmin_auth` and `login_to_garmin` can also sign in from the chat,
+without a restart: call `login_to_garmin` with email and password, then again
+with `otp_code` if it answers `mfa_required`. On macOS, when the email or
+password is neither passed nor in the environment, it asks in a local dialog
+rather than through the chat (`GARMIN_DISABLE_LOCAL_PROMPTS=1` turns that off).
 
-**High Data Volume:**
-- `get_activity_details()` - Returns Garmin's downsampled chart feed (50KB-500KB, capped at ~2000 points). Use `get_activity()` for summaries, or `get_activity_fit_data()` for the real FIT file at full per-second resolution — strictly higher fidelity than this endpoint.
+### Other clients
 
-**Specialized Workout Formats:**
-- `upload_running_workout()`, `upload_cycling_workout()`, `upload_swimming_workout()` - Sport-specific workout uploads. Use `upload_workout()` for general workouts.
+- **Claude Code, Codex and other stdio clients** run the same command:
+  `uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp`.
+  For Codex that is `command = "uvx"` and the same `args` under
+  `[mcp_servers.garmin]` in `~/.codex/config.toml`.
+- **opencode** picks up the repo's `opencode.json` when launched from a clone,
+  and runs `uv run garmin-mcp` against the working tree.
+- **MCP Inspector:** `npx @modelcontextprotocol/inspector uv run garmin-mcp`
+  from a clone.
 
-**Maintenance & Destructive Operations:**
-- `delete_blood_pressure()` - Destructive operations require careful consideration.
-- `delete_activity()` is implemented with a confirmation gate: call once to
-  preview, then again with `confirm=true` to delete. Deletions are logged to
-  stderr. There is no undo.
-- Internal/Auth methods: `login()`, `resume_login()`, `connectapi()`, `download()` - Handled automatically by the library.
+### Docker
 
-If you need any of these endpoints, please [open an issue](https://github.com/tagsvc/garmin_mcp/issues).
+`docker-compose.yml` runs the stdio server with tokens in a named volume. Put
+`GARMIN_EMAIL` and `GARMIN_PASSWORD` in a `.env` file, then:
 
-## Deployment Modes
+```bash
+docker compose run --rm --entrypoint garmin-mcp-auth garmin-mcp   # once, if the account has 2FA
+docker compose up -d
+```
 
-This server runs in one of two modes:
+The compose file also shows, commented out, file-based secrets
+(`GARMIN_EMAIL_FILE` / `GARMIN_PASSWORD_FILE` with Docker secrets) and the HTTP
+transport. For Claude Desktop the `uvx` setup is simpler, since stdio servers
+expect to be started as a local process.
 
-- **stdio (local, single-user)** — runs on your machine for Claude Desktop / CLI clients. You authenticate once with `garmin-mcp-auth`. See [Setup](#setup).
-- **Remote (multi-user, HTTP + OAuth2)** — a hosted server that clients like **claude.ai / Claude iOS** connect to over HTTPS, with per-user Garmin sessions, an email allowlist, and 2FA. See [Remote Mode](#remote-mode-multi-user-http--oauth2).
+### Multiple Garmin accounts
 
-### Quickstart: deploy remote on Railway
+One server process serves one account. For several, run one server per account,
+each with its own token directory set by `GARMINTOKENS` (default
+`~/.garminconnect`):
 
-The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploys the HTTP server straight from git.
+```bash
+garmin-mcp-auth --token-path ~/.garminconnect-alice
+garmin-mcp-auth --token-path ~/.garminconnect-bob
+```
 
-1. Create a Railway service from this repo (branch `main`); `railway.json` selects the Dockerfile automatically.
-2. **Settings → Networking → Generate Domain** (the server binds to Railway's injected `PORT`).
-3. Add a **volume mounted at `/data`** (persists the SQLite DB + Garmin session tokens across redeploys).
-4. Set the required env vars — at minimum `GARMIN_MCP_SERVER_URL` (your generated domain) and `GARMIN_ALLOWED_EMAILS`; set `GARMIN_IMPORT_SECRET` to enable token import. Full table in [Configuration](#configuration-environment-variables).
-5. Point your client at `https://<your-domain>/mcp`.
+```json
+"garmin-alice": {
+  "command": "uvx",
+  "args": ["--python", "3.12", "--from", "git+https://github.com/tagsvc/garmin_mcp", "garmin-mcp"],
+  "env": { "GARMINTOKENS": "${HOME}/.garminconnect-alice" }
+}
+```
 
-> Garmin rate-limits its OAuth token-mint endpoint from datacenter IPs, so the first browser login may be 429'd. See [Token import / refresh](#token-import--refresh-datacenter-ip-429-workaround) for the residential-IP workaround.
+and the same for `garmin-bob`, under `mcpServers`.
 
-## Tool Filtering
+- Each server logs the token directory it uses at startup. If that directory
+  has no working tokens, tool calls fail: the server never falls back to the
+  default store and another account's session.
+- `${HOME}` is expanded even when a client passes it through unresolved, and
+  `~` works on Windows (via `USERPROFILE`).
+- Write tools write to whichever account the server is bound to; pair
+  `GARMINTOKENS` with `GARMIN_ENABLED_TOOLS` to keep a secondary account
+  read-only.
 
-This server registers ~181 tools by default, which can be a lot of context for
-an LLM to carry in every session. You can expose only the tools you need with
-three optional environment variables:
+### Serving the local server over HTTP
 
-| Env var | Effect |
+`garmin-mcp` can serve one account over HTTP instead of stdio, e.g. in a
+container. This is not the multi-user remote server.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `GARMIN_MCP_TRANSPORT` | `stdio` | `stdio`, `streamable-http` or `sse`. Clients connect to `/mcp`. |
+| `GARMIN_MCP_HOST` | `127.0.0.1` | Bind beyond loopback only with `GARMIN_MCP_HTTP_TOKEN` set or behind an authenticating proxy; otherwise the server warns that the account is exposed. |
+| `GARMIN_MCP_PORT` | `8000` | |
+| `GARMIN_MCP_HTTP_TOKEN` | *(none)* | When set, every request except the probes needs `Authorization: Bearer <token>` (constant-time compare); anything else gets 401. |
+| `GARMIN_MCP_STATELESS_HTTP` | `false` | `true` serves `streamable-http` without sessions, so the first call after 30 idle minutes does not fail with "Session not found". No tool depends on session state. |
+| `GARMIN_MCP_CALL_TIMEOUT` | `90` | As for the remote server. |
+
+```bash
+export GARMIN_MCP_HTTP_TOKEN="$(openssl rand -hex 32)"
+GARMIN_MCP_TRANSPORT=streamable-http GARMIN_MCP_HOST=0.0.0.0 garmin-mcp
+```
+
+Probes: `GET /healthz` returns `ok` once the server is up; `GET /readyz`
+returns 200 `{"status": "ready"}` after the Garmin login succeeds, else 503
+with `pending` or `failed`.
+
+### Local troubleshooting
+
+- **"MFA required; run 'garmin-mcp-auth' before starting the server."** Run
+  `garmin-mcp-auth`, then restart the client.
+- **Tokens expired or rejected:** `garmin-mcp-auth --force-reauth`.
+- **`garmin-mcp-auth` worked but the server still cannot log in.** The server
+  loads only `garmin_tokens.json` from `$GARMINTOKENS` (default
+  `~/.garminconnect`), and its startup error says what it found there. The
+  usual cause is the client starting the server with a different `GARMINTOKENS`
+  or `HOME` than your shell (common with Claude Desktop on Windows). Compare with
+  `garmin-mcp-auth --diagnose`.
+- **"Failed to spawn process: No such file or directory":** Claude Desktop
+  cannot find `uvx` on its `PATH`. Put the full path from `which uvx` in
+  `"command"`.
+- **Windows Smart App Control** can block `uv.exe` / `uvx.exe` or an unsigned
+  `garmin-mcp.exe` (CodeIntegrity event 3077 in Event Viewer; Defender history
+  may show nothing). Reinstall uv with `winget install --id=astral-sh.uv -e` or
+  `scoop install main/uv`, use the full path to `uvx.exe`, ask for a policy
+  exception, or use Docker; turning Smart App Control off is a last resort.
+- **Claude Desktop logs:** `~/Library/Logs/Claude/mcp-server-garmin.log`
+  (macOS), `%APPDATA%\Claude\logs\mcp-server-garmin.log` (Windows).
+
+## Conventions
+
+### Units
+
+Garmin's API returns meters, meters per second and grams or kilograms whatever
+the account's unit setting. Every metric field stays as Garmin sent it, and the
+same value in the account's units is added right after it:
+
+| Account (`get_unit_system`) | Added beside the metric field |
 |---|---|
-| `GARMIN_TOOL_PROFILE` | A built-in subset by area: `minimal`, `health`, `activities`, `workouts`, `training`, `nutrition`, or `all` (the default). Combine several with commas, e.g. `health,training`. |
-| `GARMIN_ENABLED_TOOLS` | Comma-separated **allowlist** — if set, *only* these tools are registered. With a profile, these are **added** to it instead. |
-| `GARMIN_DISABLED_TOOLS` | Comma-separated **denylist** — listed tools are skipped. Ignored if an allowlist is set, unless a profile is also set; then it removes tools from the profile. |
+| `statute_us` | miles, mph, min/mile pace (m:ss), feet, pounds, inches, °F: `distance_miles`, `avg_speed_mph`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb`, `avg_stride_length_in`, `avg_temp_f` |
+| `statute_uk` | miles, mph, pace per mile, feet and inches; weight stays in kg and temperature in °C |
+| `metric` | `distance_km`, `avg_speed_kmh`, `avg_pace_per_km`; elevation, weight and temperature are already metric |
 
-Tool names are case-insensitive. With none of them set, all tools register
-(unchanged default behaviour). Names that match no tool are ignored with a
-warning on stderr, which makes typos easy to spot. An unknown profile name
-stops the server at startup with the list of known profiles.
+- Garmin's own payloads get camelCase companions (`distanceMiles`,
+  `averagePacePerMile`, `elevationGainFeet`, `averageTemperatureFahrenheit`,
+  `strideLengthInches`, `weightLb` beside Garmin's bare grams).
+- A temperature difference (a range, a deviation) converts by ×1.8 without +32;
+  skin temperature is a deviation from your baseline and is named so
+  (`skin_temperature_deviation_celsius` / `_fahrenheit`).
+- Decimal hours also come as h:mm text (`sleep_hm: 6:22` beside
+  `sleep_hours: 6.37`). Swims keep meters, because Garmin shows pool units and
+  pace per 100.
+- Hydration follows the hydration unit in your Garmin profile, a separate
+  setting: a US account logging water in milliliters gets no fluid ounces.
+  Activity weather is the one endpoint Garmin localises itself;
+  `get_activity_weather` labels its units.
+- Workout pace targets accept text such as `10:30/mi` or `5:00/km`
+  ([docs/workouts.md](docs/workouts.md)).
 
-### Profiles
+The unit system is the measurement setting in your Garmin Connect profile
+(`measurementSystem`), read when the server signs in to Garmin. After you change
+it, the remote server picks it up within the hour (when it next restores your
+session) or on a redeploy; a stdio server on restart.
+
+### Times
+
+Every time a curated tool returns names its zone: `*_gmt` is GMT, as ISO 8601
+ending in `Z`, and `*_local` is the same moment in local time with its UTC
+offset (`start_time_gmt: 2026-10-27T18:37:26Z`,
+`start_time_local: 2026-10-27T14:37:26-04:00`).
+
+Local time comes from the record's own offset whenever Garmin sends one, which
+is where the watch was: a run while travelling shows that place's time, as in
+the Garmin app. Records without an offset (laps, weather reports, device sync
+times, 15-minute step buckets) use the time zone in your Garmin Connect profile,
+and the tool names it in `local_time_zone`.
+
+Tools that return Garmin's own payload keep its keys, give its time text its
+zone in place (`latestSpo2ReadingTimeGmt: 2026-10-28T09:59:00Z`,
+`latestSpo2ReadingTimeLocal: 2026-10-28T05:59:00-04:00`), add local siblings
+where Garmin sends a GMT time alone (`eventStartTimeLocal`, `sleepStartLocal`),
+and add `utcOffsetHours` for reading their `[UTC epoch ms, value]` series. On a
+day the clocks change, day-level payloads add `utcOffsetHoursAfterChange` and
+`clockChangeGmt`.
+
+Date defaults ("today") use the profile's time zone, not the server's clock,
+which is UTC on Railway.
+
+## Tool notes
+
+### Files and paths
+
+`download_activity_file(activity_id, format="fit", output_dir=None)` saves an
+activity as `fit` (default), `gpx`, `tcx` or `csv`, named `{activity_id}.{ext}`.
+Over stdio the directory is the first of: the `output_dir` argument (one call
+only); `GARMIN_FIT_DOWNLOAD_DIR`; the directory saved by
+`set_fit_download_dir(path)` in `~/.garminconnect_fit_config.json` (or the file
+named by `GARMIN_FIT_CONFIG`). With none set, it returns
+`status: "needs_setup"`; the assistant asks where to save, calls
+`set_fit_download_dir`, and retries.
+
+On the remote server a path would name the server's disk, so
+`download_activity_file` and `download_course_gpx` return the file inline (as
+base64 and GPX text), `set_fit_download_dir` is refused, and `upload_course`
+takes the GPX as `gpx_base64`, not `gpx_path`.
+
+### Strength exercise sets
+
+`set_activity_exercise_sets(activity_id, sets)` writes sets onto a recorded
+strength activity, the grid Garmin Connect's "Edit sets" screen saves, so they
+appear in Garmin's exercise history and volume charts. It **replaces every
+existing set**, including watch-detected ones; read them first with
+`get_activity_exercise_sets` to keep any.
+
+Each set takes a `category` and optional `exercise_name` from Garmin's
+[`Exercises.json`](https://connect.garmin.com/web-data/exercises/Exercises.json),
+plus optional `reps`, `weight_kg` or `weight_lb` (omit for bodyweight),
+`duration_seconds` and `rest_seconds`; Garmin rejects unknown keys and leaves
+the activity unchanged. If the watch recorded the right sets but the wrong
+exercises, pass `keep_timing: true`: start times, durations and rests are kept
+and only exercise, reps and weight are replaced, in order, so the number of sets
+must match the activity's recorded active sets.
+
+```json
+{"activity_id": 12345678901, "sets": [
+  {"category": "DEADLIFT", "exercise_name": "BARBELL_DEADLIFT", "reps": 5, "weight_kg": 150, "rest_seconds": 180},
+  {"category": "PULL_UP", "reps": 8}
+]}
+```
+
+### Other tool behaviour
+
+- **`get_gear`** returns each item's free-text Notes from Garmin Connect as
+  `notes` (`null` when empty).
+- **`get_training_effect`** falls back to the activity list search when Garmin's
+  activity-details endpoint answers 403 for a visible activity. For an activity
+  older than that search window, find it with `get_activities` or
+  `get_activities_by_date` and use the training-effect fields in the list.
+- **`get_goals`** reads the goal service the way Garmin Connect's Goals page
+  does (a 1-based `start` and `Sec-Fetch-Site: same-origin`), which is what
+  returns goals made in Connect's current Goals UI; garminconnect's own
+  `get_goals()` is the fallback.
+
+## Tool profiles and filtering
+
+By default `garmin-mcp` registers ~181 tools, a lot of context for a model to
+carry in every session. Three optional variables narrow that. They apply to
+`garmin-mcp` (stdio and its HTTP transports) only; the remote server always
+serves its full set.
+
+| Variable | Effect |
+|---|---|
+| `GARMIN_TOOL_PROFILE` | A built-in subset: `minimal`, `health`, `activities`, `workouts`, `training`, `nutrition`, or `all` (the default). Combine with commas, e.g. `health,training`. |
+| `GARMIN_ENABLED_TOOLS` | Comma-separated allowlist: only these tools register. With a profile, they are **added** to it. |
+| `GARMIN_DISABLED_TOOLS` | Comma-separated denylist. Ignored when an allowlist is set, unless a profile is also set; then it removes tools from the result. |
+
+Names are case-insensitive. A name that matches no tool is ignored with a
+warning on stderr; an unknown profile name stops the server at startup with the
+list of known profiles.
 
 | Profile | Tools | What it covers |
 |---|---:|---|
 | `minimal` | 20 | Recent activities with splits, daily stats, sleep, HRV, stress, body battery, training readiness and status |
-| `health` | 53 | Every health_wellness tool plus weight, body composition, blood pressure, hydration, women's health, fitness age, HRV and respiration trends |
-| `activities` | 41 | Activity list, detail, splits and edits; FIT analysis and power curve; gear; courses |
-| `workouts` | 26 | Workout library, upload, schedule and delete; the high-level builders; the calendar |
-| `training` | 38 | Training status, load, effect, VO2max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, personal records, race predictions, goals, badges |
+| `health` | 57 | The health_wellness tools except `get_health_status` / `get_health_status_range`; Health Snapshot and ECG; weight, body composition, blood pressure, hydration; women's health; fitness age, HRV and respiration trends |
+| `activities` | 42 | Activity list, detail, splits and edits; FIT analysis, power curve and file downloads; gear on activities; courses |
+| `workouts` | 26 | Workout library, upload, schedule and delete; Garmin Coach plan workouts; the high-level builders; the calendar |
+| `training` | 39 | Training status, load, effect, VO2 max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, power zones, personal records, race predictions, goals, badges |
 | `nutrition` | 23 | Food log, custom foods, daily nutrition settings, hydration, energy balance |
 
-Every profile also includes the identity and unit tools (`get_full_name`, `get_heart_rate_zones`, `get_unit_system`, `get_user_profile`, `get_userprofile_settings`), so the
-client can label the numbers it gets back.
+Every profile also includes `get_full_name`, `get_heart_rate_zones`,
+`get_unit_system`, `get_user_profile` and `get_userprofile_settings`, so the
+client can label the numbers it gets back. Some tools are in no profile: the
+Garmin Coach plan tools, `reschedule_workout`, the device and sensor tools,
+`get_gear_activities`, the historical analytics, `get_health_status`,
+`set_heart_rate_zones`, `inspect_garmin` and the interactive auth tools. Add
+them with `GARMIN_ENABLED_TOOLS`.
 
-Example — a coaching session that needs training metrics and the workout tools:
-
-```json
-"env": {
-  "GARMIN_TOOL_PROFILE": "training,workouts"
-}
-```
-
-Example — the health profile plus recent activities, without the write tools:
+For example, the health profile plus recent activities, without the health
+write tools (in the client config's `env`; `"GARMIN_TOOL_PROFILE":
+"training,workouts"` alone would suit a coaching session):
 
 ```json
 "env": {
@@ -252,1238 +644,47 @@ Example — the health profile plus recent activities, without the write tools:
 }
 ```
 
-Example — hand-pick tools without a profile:
-
-```json
-"env": {
-  "GARMIN_ENABLED_TOOLS": "get_sleep_data,get_stress_summary,get_activities"
-}
-```
-
-## High-level workout tools
-
-These builder tools let an LLM create and schedule workouts without writing raw Garmin JSON.
-
-### `create_walk_run_workout`
-
-Creates a walk/run interval workout with optional heart-rate zone target.
-
-```json
-{
-  "name": "W3 Mié 2:2",
-  "run_seconds": 120,
-  "walk_seconds": 120,
-  "repeats": 9,
-  "warmup_min": 10,
-  "cooldown_min": 8,
-  "hr_zone": "Z3"
-}
-```
-
-Returns: `{"status": "success", "workout_id": 1234567890, ...}`
-
-### `create_z2_walk_workout`
-
-Creates a steady Z2 walking workout.
-
-```json
-{
-  "name": "Z2 Walk 45m",
-  "duration_min": 45,
-  "hr_min": 110,
-  "hr_max": 130
-}
-```
-
-Returns: `{"status": "success", "workout_id": 1234567890, ...}`
-
-### `create_strength_workout`
-
-Creates a strength workout from a list of exercises. Each becomes a reps-based step, with the
-name kept in the step description. The name is also sent as `exerciseName`, but Garmin only
-retains that when it matches one of its own exercise keys (e.g. `FARMERS_CARRY`) — any other
-value is accepted and then stored empty.
-
-`category` is optional and passed straight through. Omit it and the key is left out of the
-payload entirely, which Garmin accepts. Supply it and it must be one of Garmin's exercise
-categories — anything else, including `OTHER` and `UNASSIGNED`, is rejected with
-`400 - Invalid category`. The full list is published at
-[`Exercises.json`](https://connect.garmin.com/web-data/exercises/Exercises.json).
-
-```json
-{
-  "name": "Full Body A",
-  "exercises": [
-    {"name": "Sentadillas", "sets": 3, "reps": 12, "rest_seconds": 90},
-    {"name": "Flexiones",   "sets": 3, "reps": 15, "rest_seconds": 60},
-    {"name": "Peso muerto", "sets": 3, "reps": 10, "rest_seconds": 90},
-    {"name": "Farmers Carry 40m", "sets": 3, "reps": 1, "rest_seconds": 90, "category": "CARRY"}
-  ]
-}
-```
-
-Returns: `{"status": "success", "workout_id": 1234567890, ...}`
-
-### `schedule_week`
-
-Schedules multiple workouts in one call.
-
-```json
-{
-  "week": [
-    {"date": "2026-05-12", "workout_id": 1234567890},
-    {"date": "2026-05-14", "workout_id": 1234567891}
-  ]
-}
-```
-
-Returns: `{"status": "complete", "scheduled": [...]}`
-
-### Full flow example
-
-```text
-create_walk_run_workout(name="W3 Mié 2:2", run_seconds=120, walk_seconds=120,
-                        repeats=9, warmup_min=10, cooldown_min=8)
-  → workout_id = 1560092011
-
-schedule_workout(workout_id=1560092011, date="2026-05-06")
-  → OK
-```
-
-After syncing your watch, the workout appears on the Forerunner 965 calendar.
-
-### Raw `upload_workout` end conditions
-
-When building custom workout JSON for `upload_workout` or `upload_workouts`, the
-`endCondition.conditionTypeId` and `endCondition.conditionTypeKey` must match
-Garmin's canonical mapping. Garmin treats the numeric `conditionTypeId` as the
-source of truth; if the key and ID conflict, Garmin stores the condition that
-matches the ID.
-
-For example, this is invalid for a heart-rate end condition because ID `4` is
-`calories`, not `heart.rate`:
-
-```json
-{
-  "endCondition": {
-    "conditionTypeId": 4,
-    "conditionTypeKey": "heart.rate"
-  },
-  "endConditionValue": 145
-}
-```
-
-Use ID `6` for heart rate:
-
-```json
-{
-  "endCondition": {
-    "conditionTypeId": 6,
-    "conditionTypeKey": "heart.rate"
-  },
-  "endConditionValue": 145
-}
-```
-
-For a zone-based heart-rate end condition, use `endConditionZone` (1-5) on the
-same `endCondition` object and omit `endConditionValue`. If both are sent,
-Garmin keeps the zone and drops the value (verified against the production API
-on 2026-09-01):
-
-```json
-{
-  "endCondition": {
-    "conditionTypeId": 6,
-    "conditionTypeKey": "heart.rate",
-    "endConditionZone": 2
-  }
-}
-```
-
-
-Common end-condition IDs:
-
-| ID | Key |
-|---:|---|
-| 1 | `lap.button` |
-| 2 | `time` |
-| 3 | `distance` |
-| 4 | `calories` |
-| 5 | `power` |
-| 6 | `heart.rate` |
-| 7 | `iterations` |
-| 8 | `fixed.rest` |
-| 9 | `fixed.repetition` |
-| 10 | `reps` |
-| 11 | `training.peaks.tss` |
-
-### Raw `upload_workout` target types
-
-When building raw Garmin workout JSON, `targetType.workoutTargetTypeId` and
-`targetType.workoutTargetTypeKey` must use Garmin's canonical mapping. Garmin
-treats the numeric ID as authoritative: a mismatched payload such as
-`{"workoutTargetTypeId": 6, "workoutTargetTypeKey": "heart.rate"}` is stored as
-`pace.zone`, because ID `6` means `pace.zone`.
-
-For a custom heart-rate range, use target type ID `4` with `heart.rate.zone` and
-put the bpm range in `targetValueOne` / `targetValueTwo`. These value fields
-belong on the workout step, alongside `targetType`; do not nest them inside the
-`targetType` object:
-
-```json
-{
-  "targetType": {
-    "workoutTargetTypeId": 4,
-    "workoutTargetTypeKey": "heart.rate.zone"
-  },
-  "targetValueOne": 143,
-  "targetValueTwo": 157
-}
-```
-
-The same shape applies to a custom running pace range. Pace bounds use meters
-per second:
-
-```json
-{
-  "targetType": {
-    "workoutTargetTypeId": 6,
-    "workoutTargetTypeKey": "pace.zone"
-  },
-  "targetValueOne": 1.9607843,
-  "targetValueTwo": 2.0833333
-}
-```
-
-That example represents `8:00–8:30 min/km`. The lower numeric bound is listed
-first for consistency with the heart-rate example; Garmin normalizes either
-bound order. A pace bound may instead be pace text with its unit —
-`"targetValueOne": "8:30/km"`, `"10:30/mi"`, `"10:30 min/mi"`, `"5:00 per km"` —
-which the upload tools convert to meters per second before sending. A bare
-`"10:30"` is rejected, since it could be per mile or per km. Garmin silently discards values nested inside `targetType`, leaving
-a pace target with no active range. The upload tools repair that unambiguous
-nesting mistake, but reject the request if nested and step-level values conflict.
-
-For a named Garmin HR zone, use the same target type with `zoneNumber` instead:
-
-```json
-{
-  "targetType": {
-    "workoutTargetTypeId": 4,
-    "workoutTargetTypeKey": "heart.rate.zone"
-  },
-  "zoneNumber": 3
-}
-```
-
-Use either `zoneNumber` or `targetValueOne` / `targetValueTwo` on a target, not
-both. Garmin treats the named zone as authoritative and silently discards a
-coexisting custom range, so the upload tools reject that ambiguous shape.
-
-## One-click Install (Claude Desktop)
-
-The easiest way to add this server to Claude Desktop is via the `.dxt` Desktop Extension file — no JSON editing required.
-
-### Download and install
-
-1. Download [`garmin-mcp.dxt`](https://github.com/tagsvc/garmin_mcp/raw/main/garmin-mcp.dxt) from this repository's root, or build it yourself (below). It runs this fork's server; upstream's `.dxt` runs upstream's.
-2. Drag the `.dxt` file into the Claude Desktop window, **or** double-click it, **or** go to **Settings → Extensions → Install Extension** and select the file.
-3. Claude Desktop will prompt you for optional configuration (token path, email, password).
-
-### First-time authentication
-
-The extension installs and runs the server automatically, but you must authenticate with Garmin once before data can be fetched:
+## Development
 
 ```bash
-uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
+uv sync                                  # install, including dev dependencies
+uv run pytest -m "not e2e"               # unit + integration tests, mocked Garmin
+uv run pytest tests/e2e -m e2e           # end-to-end, needs real Garmin tokens
 ```
 
-This saves OAuth tokens to `~/.garminconnect`. After that the server works without any credentials in the config.
-
-> **Note:** Tokens are valid for approximately 6 months. Re-run `garmin-mcp-auth` when they expire.
-
-### Build the `.dxt` yourself
-
-```bash
-bash scripts/build_dxt.sh   # produces garmin-mcp.dxt in the repo root
-```
-
----
-
-## Setup
-
-### Quick Start for MCP Clients
-
-The easiest way to use this MCP server with Claude Desktop, [Codex](https://openai.com/codex/), or another MCP client is to authenticate once before adding the server to your configuration.
-
-#### Prerequisites
-
-- Python 3.12+
-- Garmin Connect account
-- MFA may be required if enabled on your account
-
-#### Step 1: Pre-authenticate (One-time)
-
-Before adding the server to your MCP client, authenticate once in your terminal:
-
-```bash
-
-# Install and run authentication tool
-uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
-
-# You'll be prompted for:
-# - Email (or set GARMIN_EMAIL env var)
-# - Password (or set GARMIN_PASSWORD env var)
-# - MFA code (if enabled on your account)
-
-# OAuth tokens will be saved to ~/.garminconnect
-```
-
-You can verify your credentials at any time with
-```bash
-uv run garmin-mcp-auth --verify
-```
-
-**Note:** You can also set credentials via environment variables:
-```bash
-GARMIN_EMAIL=your@email.com GARMIN_PASSWORD=secret garmin-mcp-auth
-```
-
-If you don't have MFA enabled you can also skip `garmin-mcp-auth` and pass `GARMIN_EMAIL` and `GARMIN_PASSWORD` as env variables directly to your MCP client, if supported. For better security, prefer the pre-authentication flow above and keep credentials out of MCP client configuration.
-
-#### Step 2: Configure Claude Desktop
-
-Add to your Claude Desktop MCP settings **WITHOUT** credentials:
-
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "garmin": {
-      "command": "uvx",
-      "args": [
-        "--python",
-        "3.12",
-        "--from",
-        "git+https://github.com/tagsvc/garmin_mcp",
-        "garmin-mcp"
-      ]
-    }
-  }
-}
-```
-
-**Important:** No `GARMIN_EMAIL` or `GARMIN_PASSWORD` needed in config! The server uses your saved tokens.
-
-#### Step 3: Restart your MCP client
-
-Your Garmin data is now available to your MCP client.
-
-For Codex and other clients, see the examples below.
-
----
-
-### Using more than one Garmin account
-
-A single server process is bound to one Garmin account. To use several accounts
-at once, run **one server instance per account**, each with its own token
-directory, selected with the `GARMINTOKENS` environment variable.
-
-`GARMINTOKENS` defaults to `~/.garminconnect`. Point it somewhere else and the
-server reads and writes tokens there instead, leaving the default store
-untouched.
-
-#### Step 1: Authenticate each account into its own directory
-
-```bash
-garmin-mcp-auth --token-path ~/.garminconnect-alice
-garmin-mcp-auth --token-path ~/.garminconnect-bob
-```
-
-`--token-path` also accepts `$GARMINTOKENS`, so `GARMINTOKENS=~/.garminconnect-alice garmin-mcp-auth`
-is equivalent.
-
-#### Step 2: Declare one server per account
-
-```json
-{
-  "mcpServers": {
-    "garmin-alice": {
-      "command": "uvx",
-      "args": ["--python", "3.12", "--from", "git+https://github.com/Taxuspt/garmin_mcp", "garmin-mcp"],
-      "env": {
-        "GARMINTOKENS": "${HOME}/.garminconnect-alice"
-      }
-    },
-    "garmin-bob": {
-      "command": "uvx",
-      "args": ["--python", "3.12", "--from", "git+https://github.com/Taxuspt/garmin_mcp", "garmin-mcp"],
-      "env": {
-        "GARMINTOKENS": "${HOME}/.garminconnect-bob"
-      }
-    }
-  }
-}
-```
-
-Each server logs the directory it authenticates from on startup, so you can
-confirm the wiring:
-
-```
-Trying to login to Garmin Connect using token data from directory '/home/you/.garminconnect-alice'...
-```
-
-#### Notes
-
-- **No silent fallback.** If `GARMINTOKENS` points at a directory with no valid
-  tokens and login fails, the server logs the failure and tool calls fail;
-  HTTP `/readyz` remains unavailable (503). The server does not switch to the
-  default token store, so a misconfigured second server cannot silently reuse
-  the first account's session.
-- **`${HOME}` is expanded** even when an MCP client passes it through
-  unresolved, and `~` works on Windows via `USERPROFILE`.
-- **Restrict write tools on secondary accounts.** Tools such as
-  `upload_workout` and `schedule_workout` write to whichever account the server
-  is bound to. Pair `GARMINTOKENS` with `GARMIN_ENABLED_TOOLS` (see
-  [Tool Filtering](#tool-filtering)) to make an account read-only:
-
-  ```json
-  "env": {
-    "GARMINTOKENS": "${HOME}/.garminconnect-bob",
-    "GARMIN_ENABLED_TOOLS": "get_activities,get_activities_by_date,get_activity,get_activity_splits"
-  }
-  ```
-- **Token directories hold long-lived credentials.** They are created with
-  owner-only permissions; keep them out of shared or synced folders.
-
----
-
-### Development Setup
-
-1. Install the required packages on a new environment:
-
-```bash
-uv sync
-```
-
-## Running the Server
-
-### Configuration
-
-Your Garmin Connect credentials are read from environment variables:
-
-- `GARMIN_EMAIL`: Your Garmin Connect email address
-- `GARMIN_EMAIL_FILE`: Path to a file containing your Garmin Connect email address
-- `GARMIN_PASSWORD`: Your Garmin Connect password
-- `GARMIN_PASSWORD_FILE`: Path to a file containing your Garmin Connect password
-- `GARMIN_IS_CN`: Set to `true` to use Garmin Connect China (garmin.cn) instead of the international version (default: `false`)
-- `GARMIN_FIT_DOWNLOAD_DIR`: Default directory for downloaded activity files. When set, skips the first-run setup prompt in `download_activity_file`.
-- `GARMIN_FIT_CONFIG`: Path to the persisted download-directory config file (default: `~/.garminconnect_fit_config.json`).
-
-File-based secrets are useful in certain environments, such as inside a Docker container. Note that you cannot set both `GARMIN_EMAIL` and `GARMIN_EMAIL_FILE`, similarly you cannot set both `GARMIN_PASSWORD` and `GARMIN_PASSWORD_FILE`.
-
-### Transport
-
-By default the server communicates over **stdio**, which is what Claude Desktop, the MCP Inspector, and most local clients expect. To serve over **HTTP** instead (e.g. when running in a container or Kubernetes), set the transport via environment variables:
-
-- `GARMIN_MCP_TRANSPORT`: `stdio` (default), `streamable-http`, or `sse`
-- `GARMIN_MCP_HOST`: bind address for HTTP transports (default `127.0.0.1`; set to `0.0.0.0` only together with `GARMIN_MCP_HTTP_TOKEN` or behind an authenticating reverse proxy)
-- `GARMIN_MCP_PORT`: bind port for HTTP transports (default `8000`)
-- `GARMIN_MCP_HTTP_TOKEN`: shared secret for the HTTP transports. When set, every request to `/mcp`, `/sse` and `/messages/` must carry `Authorization: Bearer <token>`; anything else gets `401`. `/healthz` and `/readyz` stay open for probes. See [Protecting the HTTP endpoint](#protecting-the-http-endpoint).
-- `GARMIN_MCP_STATELESS_HTTP`: set to `true` to run `streamable-http` without sessions (default `false`). The MCP SDK drops a stateful session after 30 minutes idle, so the first call after an idle gap gets `404 Session not found`; some clients (including claude.ai custom connectors) report that as a failed tool call rather than re-initializing and retrying. Stateless mode has no sessions to expire. No tool in this server depends on session state, so nothing is lost. Recommended for long-lived remote deployments. This applies to the single-user HTTP mode above only: the multi-user remote server (`garmin-mcp-remote`) is always stateless and ignores it.
-- `GARMIN_MCP_CALL_TIMEOUT`: per-request timeout in seconds for calls to Garmin (default `90`). Garmin's API occasionally stalls a single request indefinitely; without this bound the call hangs until the MCP client's own timeout fires and reports the whole server as unresponsive. On timeout the tool returns a clear, retry-able error instead. Set to `0` to disable the bound.
-
-```bash
-GARMIN_MCP_TRANSPORT=streamable-http garmin-mcp
-```
-
-When an HTTP transport is selected:
-
-- MCP clients connect to the **`/mcp`** path (e.g. `http://localhost:8000/mcp`).
-- **`GET /healthz`** returns `ok` as soon as the server is up — use it as a **liveness** probe.
-- **`GET /readyz`** reports whether Garmin login has finished — use it as a **readiness** probe. It returns `200 {"status": "ready"}` once login succeeded, and `503` with `{"status": "pending"}` while login is still running or `{"status": "failed"}` if it failed (re-run `garmin-mcp-auth` and restart).
-
-#### Protecting the HTTP endpoint
-
-The HTTP transports expose full read/write access to the Garmin account, so
-the server binds to loopback by default. For anything reachable from other
-machines, set a shared secret and have the client send it as a bearer token:
-
-```bash
-export GARMIN_MCP_HTTP_TOKEN="$(openssl rand -hex 32)"
-GARMIN_MCP_TRANSPORT=streamable-http GARMIN_MCP_HOST=0.0.0.0 garmin-mcp
-```
-
-```bash
-# rejected: 401 {"error": "unauthorized", ...}
-curl -i http://localhost:8000/mcp
-# accepted (the MCP handshake then proceeds as usual)
-curl -i -H "Authorization: Bearer $GARMIN_MCP_HTTP_TOKEN" http://localhost:8000/mcp
-```
-
-Most MCP clients accept custom headers for remote servers (Claude Desktop and
-claude.ai connectors, the MCP Inspector, and the SDK clients all do); put the
-same `Authorization: Bearer …` header there. The comparison is constant-time.
-`/healthz` and `/readyz` never require the token, since they only report that
-the process is up and whether the Garmin login finished.
-
-Without the token the server still starts, but if `GARMIN_MCP_HOST` is not a
-loopback address it prints a warning on stderr that the account is exposed. A
-reverse proxy with its own authentication (nginx, Traefik, Authelia, etc.)
-remains a fine alternative; the token is the small, built-in option for the
-common self-hosted case.
-
-### Garmin Connect China (garmin.cn)
-
-If you use Garmin Connect China (garmin.cn) instead of the international version, set the `GARMIN_IS_CN` environment variable to `true`:
-
-```bash
-# Pre-authenticate with Garmin Connect China
-GARMIN_IS_CN=true garmin-mcp-auth
-
-# Or use the CLI flag
-garmin-mcp-auth --is-cn
-```
-
-For Claude Desktop, add `GARMIN_IS_CN` to the `env` section:
-
-```json
-{
-  "mcpServers": {
-    "garmin": {
-      "command": "uvx",
-      "args": [
-        "--python",
-        "3.12",
-        "--from",
-        "git+https://github.com/tagsvc/garmin_mcp",
-        "garmin-mcp"
-      ],
-      "env": {
-        "GARMIN_IS_CN": "true"
-      }
-    }
-  }
-}
-```
-
-For Docker, add `GARMIN_IS_CN=true` to your `.env` file or uncomment it in `docker-compose.yml`.
-
-### Testing the server locally with MCP Inspector
-
-The Inspector runs directly through npx without requiring installation. Run from the project root:
-
-```bash
-npx @modelcontextprotocol/inspector uv run garmin-mcp
-```
-
-You'll be able to inspect and test the tools.
-
-### With Claude Desktop
-
-1. Create a configuration in Claude Desktop:
-
-Edit your Claude Desktop configuration file:
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-You have two options to run the MCP locally with Claude.
-
-#### Directly from github without cloning the repo:
-
-1. Add this server configuration:
-
-```json
-{
-  "mcpServers": {
-    "garmin": {
-      "command": "uvx",
-      "args": [
-        "--python",
-        "3.12",
-        "--from",
-        "git+https://github.com/tagsvc/garmin_mcp",
-        "garmin-mcp"
-      ],
-      "env": {
-        "GARMIN_EMAIL": "YOUR_GARMIN_EMAIL",
-        "GARMIN_PASSWORD": "YOUR_GARMIN_PASSWORD"
-      }
-    }
-  }
-}
-```
-
-You might have to add the full path to `uvx` you can check the full path with `which uvx`
-
-2. Restart Claude Desktop
-
-#### Directly from your local copy of the repository:
-
-1. Add this server configuration:
-
-```
-{
-  "mcpServers": {
-    "garmin-local": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "<full path to your local repository>/garmin_mcp",
-        "run",
-        "garmin-mcp"
-      ]
-    }
-  }
-}
-```
-
-2. Restart Claude Desktop
-
-### With Codex
-
-Codex uses TOML for MCP server configuration. Add one of the following entries to `~/.codex/config.toml` after authenticating with `garmin-mcp-auth`.
-
-You can also ask your MCP-capable client to set this up for you. For example:
-
-```text
-Install the Garmin MCP server from https://github.com/tagsvc/garmin_mcp, authenticate with garmin-mcp-auth, and add it to my MCP configuration without storing my Garmin email or password.
-```
-
-#### Directly from GitHub without cloning the repo
-
-```toml
-[mcp_servers.garmin]
-command = "uvx"
-args = [
-  "--python",
-  "3.12",
-  "--from",
-  "git+https://github.com/tagsvc/garmin_mcp",
-  "garmin-mcp"
-]
-```
-
-#### Directly from your local copy of the repository
-
-```toml
-[mcp_servers.garmin-local]
-command = "uv"
-args = [
-  "--directory",
-  "/full/path/to/garmin_mcp",
-  "run",
-  "garmin-mcp"
-]
-```
-
-Restart your MCP client after saving the file.
-
-### With opencode
-
-[opencode](https://opencode.ai) auto-loads a project-level `opencode.json` when launched from a repository root, so contributors who clone this repo get the Garmin MCP wired up against the local source with no extra config.
-
-#### From a clone of this repository (recommended for development)
-
-This repo ships an [`opencode.json`](./opencode.json) that runs the MCP via `uv run garmin-mcp`, so it always tracks the working tree.
-
-```bash
-git clone https://github.com/Taxuspt/garmin_mcp.git
-cd garmin_mcp
-uv sync                # install dependencies
-garmin-mcp-auth        # one-time Garmin login (skip if ~/.garminconnect already exists)
-opencode               # launches with the garmin MCP attached
-```
-
-Verify the server is connected:
-
-```bash
-opencode mcp list
-# ●  ✓ garmin   connected
-#       uv run garmin-mcp
-```
-
-#### From any other directory (GitHub install)
-
-Add the server to your global opencode config at `~/.config/opencode/opencode.json` after running `garmin-mcp-auth`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "garmin": {
-      "type": "local",
-      "command": [
-        "uvx",
-        "--python",
-        "3.12",
-        "--from",
-        "git+https://github.com/Taxuspt/garmin_mcp",
-        "garmin-mcp"
-      ],
-      "enabled": true,
-      "timeout": 30000
-    }
-  }
-}
-```
-
-Restart opencode after saving the file. The first `uvx` invocation downloads and caches the package, so the initial startup may take a few seconds.
-
-### With Docker
-
-Docker provides an isolated and consistent environment for running the MCP server.
-
-#### Quick Start with Docker Compose (Recommended)
-
-1. Create a `.env` file with your credentials:
-
-```bash
-echo "GARMIN_EMAIL=your_email@example.com" > .env
-echo "GARMIN_PASSWORD=your_password" >> .env
-```
-
-2. Start the container:
-
-```bash
-docker compose up -d
-```
-
-3. View logs to monitor the server:
-
-```bash
-docker compose logs -f garmin-mcp
-```
-
-#### Using Docker Directly
-
-```bash
-# Build the image
-docker build -t garmin-mcp .
-
-# Run the container
-docker run -it \
-  -e GARMIN_EMAIL="your_email@example.com" \
-  -e GARMIN_PASSWORD="your_password" \
-  -v garmin-tokens:/root/.garminconnect \
-  garmin-mcp
-```
-
-#### Using File-Based Secrets (More Secure)
-
-For enhanced security, especially in production environments, use file-based secrets instead of environment variables:
-
-1. Create a secrets directory and add your credentials:
-
-```bash
-mkdir -p secrets
-echo "your_email@example.com" > secrets/garmin_email.txt
-echo "your_password" > secrets/garmin_password.txt
-chmod 600 secrets/*.txt
-```
-
-2. Edit [docker-compose.yml](docker-compose.yml) and uncomment the secrets section:
-
-```yaml
-services:
-  garmin-mcp:
-    environment:
-      - GARMIN_EMAIL_FILE=/run/secrets/garmin_email
-      - GARMIN_PASSWORD_FILE=/run/secrets/garmin_password
-    secrets:
-      - garmin_email
-      - garmin_password
-
-secrets:
-  garmin_email:
-    file: ./secrets/garmin_email.txt
-  garmin_password:
-    file: ./secrets/garmin_password.txt
-```
-
-3. Start the container:
-
-```bash
-docker compose up -d
-```
-
-#### Handling MFA with Docker
-
-If you have multi-factor authentication (MFA) enabled on your Garmin account:
-
-1. Run the authentication CLI with the service's token volume:
-
-```bash
-docker compose run --rm --entrypoint garmin-mcp-auth garmin-mcp
-```
-
-2. When prompted, enter your MFA code:
-
-```
-Garmin Connect MFA required. Please check your email/phone for the code.
-Enter MFA code: 123456
-```
-
-3. The OAuth tokens will be saved to the Docker volume (`garmin-tokens`), so you won't need to re-authenticate on subsequent runs.
-
-4. After MFA setup, you can run the container normally:
-
-```bash
-docker compose up -d
-```
-
-#### Docker Volume Management
-
-The OAuth tokens are stored in a persistent Docker volume to avoid re-authentication:
-
-```bash
-# List volumes
-docker volume ls
-
-# Inspect the tokens volume
-docker volume inspect garmin_mcp_garmin-tokens
-
-# Remove the volume (will require re-authentication)
-docker volume rm garmin_mcp_garmin-tokens
-```
-
-#### Using with Claude Desktop via Docker
-
-To use the Dockerized MCP server with Claude Desktop, you can configure it to communicate with the container. However, note that MCP servers typically communicate via stdio, which works best with direct process execution. For Docker-based deployments, consider using the standard `uvx` method shown in the [With Claude Desktop](#with-claude-desktop) section instead.
-
-
-## Usage Examples
-
-Once connected in Claude, you can ask questions like:
-
-- "Show me my recent activities"
-- "What was my sleep like last night?"
-- "How many steps did I take yesterday?"
-- "Show me the details of my latest run"
-- "Analyze my last ride's power zones and compare to my training zones"
-- "Show me my CTL, ATL, and TSB trend for the last 6 weeks"
-- "What was my power duration curve from yesterday's ride? Estimate my FTP."
-- "Analyze the FIT data from my last cycling activity — how was my shifting quality on the climbs?"
-- "Show me my HRV trend for the last 2 weeks and flag any recovery concerns"
-- "What's my season best 20-minute power and when did I set it?"
-
-## Troubleshooting
-
-### `get_training_effect` returns HTTP 403 for a valid activity
-
-Garmin's activity-details endpoint (`/activity-service/activity/{id}`) can
-return **403 Forbidden** even when the same activity is visible in list tools.
-`get_training_effect` now falls back to activity list search, which still
-includes aerobic/anaerobic training effect for recent activities.
-
-If the activity is older than the recent-search window, list the activity with
-`get_activities` / `get_activities_by_date` and retry, or use those list fields
-directly.
-
-### `get_goals` returns no goals that exist in Garmin Connect
-
-Garmin's goal-service only returns goals created in Connect's current Goals UI
-(named distance/time targets such as a monthly cycling goal) when the request
-sends `Sec-Fetch-Site: same-origin` and uses a 1-based `start`. With
-`start=0`, it returns an empty list. python-garminconnect's `get_goals()` does not do both
-(through 0.3.16), so `get_goals` here calls `/goal-service/goal/goals`
-directly the way Connect's Goals page does, and uses the library call only as
-a fallback.
-
-### "Failed to spawn process: No such file or directory"
-
-If Claude Desktop can't find `uvx`, it's because `uvx` is not in the PATH that Claude Desktop uses. To fix this:
-
-1. Find where `uvx` is installed:
-```bash
-which uvx
-```
-
-2. Use the full path in your configuration. For example, if `uvx` is at `/Users/username/.cargo/bin/uvx`:
-```json
-{
-  "mcpServers": {
-    "garmin": {
-      "command": "/Users/username/.cargo/bin/uvx",
-      "args": [
-        "--python",
-        "3.12",
-        "--from",
-        "git+https://github.com/tagsvc/garmin_mcp",
-        "garmin-mcp"
-      ]
-    }
-  }
-}
-```
-
-### Windows: Smart App Control blocks `uv` / `uvx`
-
-On Windows 11 with **Smart App Control** enabled, `uv.exe` / `uvx.exe` may be blocked when launching Garmin_MCP — including when `uv` tries to load an unsigned `garmin-mcp.exe` from a local `.venv`.
-
-This is **not** the same as Microsoft Defender Antivirus quarantine. Smart App Control is under:
-
-**Windows Security → App & browser control → Smart App Control**
-
-#### Symptoms
-- Smart App Control notification when running `uv`, `uvx`, or Claude Desktop with `command: "uvx"`
-- Claude Desktop fails to spawn the server even though `uvx` appears installed
-- Event Viewer → *Applications and Services Logs* → *Microsoft* → *Windows* → *CodeIntegrity* → *Operational* shows **CodeIntegrity Error 3077** mentioning `uv.exe` and `garmin-mcp.exe` (policy / Enterprise signing level)
-
-#### Confirm
-1. Smart App Control is **On** (Evaluation or Enforcement).
-2. Check the CodeIntegrity Operational log for event **3077** around the failed launch.
-3. Defender “Virus & threat protection” history may be empty — that does not rule SAC out.
-
-#### Recoveries (prefer keeping Smart App Control on)
-1. Install or reinstall `uv` via a packaged channel, then verify in PowerShell:
-   ```powershell
-   winget install --id=astral-sh.uv -e
-   # or: scoop install main/uv
-   uvx --version
-   ```
-2. Point Claude Desktop at the full path to `uvx.exe` (same idea as the PATH troubleshooting above), for example:
-   ```json
-   "command": "C:\\Users\\<you>\\.local\\bin\\uvx.exe"
-   ```
-3. If Enforcement still blocks loading `garmin-mcp.exe`, you may need an admin/policy exception for that binary path. Turning Smart App Control off globally is a last resort, not the default advice.
-4. If local uvx remains blocked, use the Docker Compose install path instead.
-
-### Login Issues
-
-If you encounter login issues:
-
-1. Verify your credentials are correct
-2. Check if Garmin Connect requires additional verification
-3. Ensure the garminconnect package is up to date
-
-### Logs
-
-For other issues, check the Claude Desktop logs at:
-
-- macOS: `~/Library/Logs/Claude/mcp-server-garmin.log`
-- Windows: `%APPDATA%\Claude\logs\mcp-server-garmin.log`
-
-### Garmin Connect Multi-Factor Authentication (MFA)
-
-#### Understanding MFA with MCP Servers
-
-MCP servers run as background processes without direct terminal access. If your Garmin account has MFA enabled, you must authenticate once using the pre-authentication tool before the server can run.
-
-#### Recommended: Pre-Authentication Tool
-
-The easiest way to handle MFA is using the dedicated authentication tool:
-
-```bash
-garmin-mcp-auth
-```
-
-This saves OAuth tokens to `~/.garminconnect` for future use. The server will automatically use these tokens when running in Claude Desktop or other MCP clients.
-
-**Additional Options:**
-
-```bash
-# Use environment variables for credentials
-GARMIN_EMAIL=you@example.com GARMIN_PASSWORD=secret garmin-mcp-auth
-
-# Verify existing tokens
-garmin-mcp-auth --verify
-
-# Show where tokens are looked up, what is on disk, and whether they work
-garmin-mcp-auth --diagnose
-
-# Force re-authentication (e.g., when tokens expire)
-garmin-mcp-auth --force-reauth
-
-# Use custom token location
-garmin-mcp-auth --token-path ~/.garmin_tokens
-```
-
-#### Alternative: Manual First Run
-
-You can provide credentials from files to the authentication CLI:
-
-```bash
-# Store credentials in files for security
-echo "your_email@example.com" > ~/.garmin_email
-echo "your_password" > ~/.garmin_password
-chmod 600 ~/.garmin_email ~/.garmin_password
-
-# Run the authentication CLI before starting the server
-GARMIN_EMAIL_FILE=~/.garmin_email GARMIN_PASSWORD_FILE=~/.garmin_password \
-  uvx --python 3.12 --from git+https://github.com/tagsvc/garmin_mcp garmin-mcp-auth
-
-# Enter MFA code when prompted
-# Tokens will be saved automatically
-# Now add to Claude Desktop config without credentials
-```
-
-After initial authentication, configure Claude Desktop **without** credentials (tokens are already saved):
-
-```json
-{
-  "mcpServers": {
-    "garmin": {
-      "command": "uvx",
-      "args": [
-        "--python",
-        "3.12",
-        "--from",
-        "git+https://github.com/tagsvc/garmin_mcp",
-        "garmin-mcp"
-      ]
-    }
-  }
-}
-```
-
-#### Using Docker with MFA
-
-If using Docker, follow the [Handling MFA with Docker](#handling-mfa-with-docker) section above for a streamlined experience with persistent token storage.
-
-#### Troubleshooting MFA
-
-**Error: "MFA required; run 'garmin-mcp-auth' before starting the server."**
-
-Solution:
-1. Open terminal
-2. Run: `garmin-mcp-auth`
-3. Enter credentials and MFA code
-4. Restart Claude Desktop
-
-**Token Expired**
-
-OAuth tokens expire periodically (approximately every 6 months). Re-authenticate:
-```bash
-garmin-mcp-auth --force-reauth
-```
-
-**Verify Tokens Work**
-```bash
-garmin-mcp-auth --verify
-```
-
-**`garmin-mcp-auth` succeeded, but the server still cannot log in**
-
-The server loads tokens only from `garmin_tokens.json` inside the token
-directory (`$GARMINTOKENS`, default `~/.garminconnect`). Its startup error says
-what it found there: no directory, no token file, a file it cannot read, or
-tokens Garmin rejected. The usual cause is the MCP client starting the server
-with a different `GARMINTOKENS` or `HOME` than the shell that ran
-`garmin-mcp-auth` (common with Claude Desktop on Windows), so the two resolve
-to different directories. Compare them with:
-```bash
-garmin-mcp-auth --diagnose
-```
-The `~/.garminconnect_base64` file that `garmin-mcp-auth` also writes is a copy
-for other garminconnect-based tools; the server does not read it.
-## Remote Mode (Multi-User, HTTP + OAuth2)
-
-Remote mode runs the MCP server over HTTP with OAuth2 authentication, enabling multi-user access. Each user authenticates directly with their **Garmin Connect credentials** during the OAuth2 flow — no pre-created accounts or manual account linking required.
-
-### How It Works
-
-When a client (e.g., Claude) connects to the remote server:
-
-1. The client discovers the OAuth2 endpoints and initiates authorization
-2. The user is redirected to a login page asking for their **Garmin Connect email and password**
-3. If 2FA is enabled on the Garmin account, a second page asks for the verification code
-4. On success, the Garmin session tokens are stored server-side and an OAuth2 access token is returned to the client
-5. The client uses this token to access all Garmin tools — no extra setup needed
-
-```
-Client → 401 → OAuth2 discovery
-  → /authorize → redirect to /login?state=...
-  → User enters Garmin email + password
-  → POST /login/callback
-      ├─ No 2FA → create user + session → redirect with auth code
-      └─ 2FA required → redirect to /login/mfa?state=...
-           → User enters verification code
-           → POST /login/mfa/callback → create user + session → redirect with auth code
-  → Client exchanges code for tokens → access granted
-```
-
-### Security
-
-**Access control**
-
-- **Email allowlist** (`GARMIN_ALLOWED_EMAILS`): only Garmin accounts on this list may authenticate. Fail-closed — if unset, every login is rejected.
-- **Token import gating** (`GARMIN_IMPORT_SECRET`): importing a pre-minted token (login page or `POST /import-token`) requires this shared secret in addition to the allowlist, so knowing an allowlisted email alone cannot overwrite a user's session. Fail-closed — unset disables import.
-- OAuth2 + PKCE on `/mcp`; auth codes are single-use and refresh tokens rotate.
-- The login page returns a **single generic error** whether an email is off the allowlist or the password is wrong, so allowlist membership cannot be inferred by comparing responses. The specific reason is logged server-side.
-
-**Credentials and data at rest**
-
-- Garmin credentials are **never stored** — only the resulting session tokens are persisted on disk (per user, in garminconnect's native format).
-- Session token directories are **owner-only** (`0700`/`0600`), applied after every write and swept at startup so pre-existing files are healed too.
-- OAuth access/refresh tokens are stored **SHA-256 hashed**; a read of the database yields no usable bearer tokens.
-- The 2FA client state is held in memory only, with a 5-minute TTL and single-use (`pop`).
-- Users are identified by their Garmin email (upserted on login), and per-user state (Garmin sessions, saved analytics reports) is **scoped by user id** — one authenticated user cannot read or overwrite another's.
-
-**Hardening**
-
-- **Rate limiting** on `/login`, the MFA callback, and `/import-token`. The login limiter is keyed on email **plus client IP**, so one bad actor cannot lock a legitimate account out; the client IP is taken from the last `X-Forwarded-For` hop, which the client cannot spoof.
-- **Response security headers** on every reply: HSTS, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, a strict CSP (`default-src 'none'`), and `Referrer-Policy: no-referrer`.
-- Reflected values on the login/MFA pages are **HTML-escaped**, and untrusted values are escaped before logging (no log injection).
-- **Remote tools never read the server's filesystem.** `upload_course` takes `gpx_base64` in remote mode and refuses `gpx_path` — see [Courses](#courses-and-gpx-uploads).
-- **Three tools are stdio-only.** `check_garmin_auth` and `login_to_garmin` (on a network server, `login_to_garmin` would let any authenticated user store tokens for *any* Garmin account, bypassing the email allowlist), and `delete_activity` (irreversible, and an activity is the training history that Garmin Coach grades and every load and analytics figure is computed from). `delete_workout` and `delete_course` remain available — a workout or course can be recreated.
-- **Stateless transport.** The server runs Streamable HTTP in stateless mode: no `Mcp-Session-Id`, nothing held per session, so there is no session state to accumulate or to expire under an idle client.
-- **Every remote tool carries effect annotations** (`readOnlyHint` / `destructiveHint` / `idempotentHint` / `openWorldHint`), so a client can tell a delete from a read and ask before running one. Results are returned as plain text, not additionally wrapped as `{"result": ...}` structured content.
-- The container **does not run the server as root**: the entrypoint takes ownership of `/data`, then drops to an unprivileged user.
-
-### Courses and GPX uploads
-
-`upload_course` accepts the GPX in one of two ways:
-
-- **`gpx_base64`** — the file's bytes, base64-encoded. Works in both modes and is **required in remote mode**.
-- **`gpx_path`** — a path on the machine running the server. **stdio (local) mode only.**
-
-A path is refused in remote mode by design: there it would name the *server's* disk rather than yours, which is both useless to the caller and an arbitrary-file-read primitive. Locally the path is your own disk, so it stays supported.
-
-### Running the Remote Server
-
-#### With Docker Compose (Recommended)
-
-```bash
-# Set the public URL of your server
-export GARMIN_MCP_SERVER_URL=https://garmin-mcp.example.com
-
-# Start
-docker compose -f docker-compose.remote.yml up -d
-```
-
-#### Locally
-
-```bash
-export GARMIN_MCP_SERVER_URL=http://localhost:8000
-
-uv run garmin-mcp-remote
-```
-
-#### On Railway (deploy from git)
-
-The repo ships a `railway.json` that pins the build to `Dockerfile.remote`
-(the HTTP/OAuth server), so Railway deploys the right image straight from git —
-the bare `Dockerfile` runs the stdio server and must **not** be used for the
-remote deployment.
-
-1. Create a Railway service from this repo. The `railway.json` selects the
-   Dockerfile builder automatically; no build config needed in the dashboard.
-2. Add a **volume mounted at `/data`** (persists the SQLite DB and Garmin
-   session tokens across redeploys — without it, every redeploy logs users out).
-3. Set the required environment variables (see table below). At minimum:
-   `GARMIN_MCP_SERVER_URL` (your public Railway URL) and `GARMIN_ALLOWED_EMAILS`.
-
-The server binds to Railway's injected `PORT` automatically, so you do not need
-to set `GARMIN_MCP_PORT`.
-
-4. Back up the volume. It is the only stateful thing in the deployment: lose it
-   and every user has to authenticate again. See `OPERATIONS.md` for the backup
-   policy and the second recovery path.
-
-### Configuration (Environment Variables)
-
-| Variable | Default | Description |
-|---|---|---|
-| `GARMIN_MCP_SERVER_URL` | *(required)* | Public URL of the server |
-| `GARMIN_MCP_HOST` | `0.0.0.0` | Listen address |
-| `GARMIN_MCP_PORT` | `$PORT` or `8000` | Listen port. Falls back to the platform-injected `PORT` (e.g. Railway), then `8000`. |
-| `GARMIN_MCP_PATH` | `/mcp` | MCP endpoint path |
-| `DB_PATH` | `/data/garmin_mcp.db` | SQLite database path |
-| `SESSION_STORAGE_PATH` | `/data/garmin_sessions` | Garth token storage |
-| `GARMIN_ALLOWED_EMAILS` | *(required)* | Comma-separated allowlist of Garmin Connect emails permitted to log in. **Fail-closed:** if unset or empty, every login is rejected. |
-| `GARMIN_IMPORT_SECRET` | *(optional)* | Shared secret enabling the `POST /import-token` endpoint for programmatic token refresh. If unset, the endpoint is disabled (404). See "Refreshing tokens" below. |
-
-### Token import / refresh (datacenter-IP 429 workaround)
-
-Garmin rate-limits (HTTP 429) its OAuth token-mint endpoint from datacenter/cloud
-IPs, so the remote server often cannot complete a Garmin login itself even though
-the same flow works from a residential IP. Mint a token on a trusted machine and
-import it. **Both import paths require `GARMIN_IMPORT_SECRET`** (a long random
-value you set) in addition to the email allowlist — writing a session is a
-state-changing action and an email is not a secret, so the secret prevents anyone
-who merely knows an allowlisted email from overwriting a user's session.
-
-Mint a token on a trusted (residential-IP) machine:
-
-```bash
-python -c "from garminconnect import Garmin; g=Garmin(); g.login('~/.garminconnect'); print(g.client.dumps())"
-```
-
-Then import it via either:
-
-- **Login page:** expand "Advanced: import an existing Garmin token" on the
-  Garmin login page, paste the blob, enter your allowlisted email and the import
-  secret, leave password blank. The server stores it without performing SSO.
-- **Endpoint (`POST /import-token`):** header `X-Import-Secret`, JSON body
-  `{"email": "...", "token": "..."}`.
-
-> **Security note:** the remote server gates authentication on `GARMIN_ALLOWED_EMAILS`.
-> Only the Garmin Connect accounts whose login email is on this list can authenticate.
-> Matching is case-insensitive. Because the default is fail-closed, you must set this
-> variable (e.g. `GARMIN_ALLOWED_EMAILS=you@example.com,partner@example.com`) before any
-> user can connect.
-
-### Testing with MCP Inspector
-
-```bash
-npx @modelcontextprotocol/inspector http://localhost:8000/mcp
-```
-
-## Testing
-
-This project includes comprehensive tests for all MCP tools. **All tests are currently passing (100%)**.
-
-### Running Tests
-
-```bash
-# Run unit and integration tests (default - uses mocked Garmin API, e2e tests are deselected)
-uv run pytest
-
-# Run only the integration tests
-uv run pytest tests/integration/
-
-# Run tests with verbose output
-uv run pytest tests/integration/ -v
-
-# Run a specific test module
-uv run pytest tests/integration/test_health_wellness_tools.py -v
-
-# Run end-to-end tests (requires real Garmin credentials).
-# Some of these create and delete foods, food logs and workouts in your account.
-uv run pytest tests/e2e/ -m e2e -v
-```
-
-### Test Structure
-
-- **Integration tests** (200+ tests): Test all MCP tools using FastMCP integration with mocked Garmin API responses
-- **End-to-end tests** (`tests/e2e/`): Test with real MCP server and Garmin API (requires valid credentials). Only run with `-m e2e`.
-
-## Reinstalling from local path
-
-If you are working from a local checkout or fork:
-
-```bash
-uv tool install --python 3.12 --force C:\Users\aresd\Desktop\programacion\garmin_mcp
-```
+`pytest.ini` deselects e2e tests by default, so a plain `uv run pytest` is safe
+on a machine with saved tokens; some e2e tests create and delete foods, food
+logs and workouts in the real account.
+
+- **CI:** every pull request runs `test (3.12)`, `test (3.13)`, `validate` and
+  `test-installation`, and all four must pass before it can merge. `main` takes
+  no direct pushes. `security.yml` adds a lock-file check and a dependency
+  audit that report without blocking. Details in OPERATIONS.md.
+- **Rules:** [CLAUDE.md](CLAUDE.md) holds the working rules (including the
+  steps after any upstream merge), and [FORK.md](FORK.md) the invariants and the
+  upstream-sync procedure. Documented tool counts are test-enforced
+  (`tests/unit/test_documented_counts.py`); a new read-only tool goes in
+  `tests/integration/test_units_times_sweep.py`'s table.
+- **Field coverage:** after changing a tool module, run
+  `uv run python scripts/field_coverage.py` on a machine with real Garmin
+  tokens. It lists the fields Garmin sent that each read-only tool leaves out,
+  by name only; keep the report out of the repo.
+- **Comments and docs** say why, in the present tense; history goes in
+  CHANGELOG.md.
 
 ## Credits
 
-This fork stands on work from several projects:
+- **[Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp)**: the original
+  Garmin MCP server and this fork's upstream, from which new tools and fixes are
+  synced.
+- **[Tomas2D/garmin_mcp](https://github.com/Tomas2D/garmin_mcp)**: the OAuth2
+  remote server (RFC 9728, claude.ai compatible) this fork's remote mode is
+  built on.
+- **[coloboxp/garmin_mcp](https://github.com/coloboxp/garmin_mcp)**: the
+  historical analytics and interactive auth tools.
+- **[cyberjunky/python-garminconnect](https://github.com/cyberjunky/python-garminconnect)**:
+  the library used to reach the Garmin Connect API.
 
-- **[Taxuspt/garmin_mcp](https://github.com/Taxuspt/garmin_mcp)** — the original
-  Garmin MCP server and our upstream (we sync new tools and fixes from here).
-- **[Tomas2D/garmin_mcp](https://github.com/Tomas2D/garmin_mcp)** — the OAuth2
-  remote server (PR #124, RFC 9728 / claude.ai compatible) that this fork's
-  remote mode is built on.
-- **[coloboxp/garmin_mcp](https://github.com/coloboxp/garmin_mcp)** — the
-  historical analytics and interactive auth tools (PR #121).
-- **[cyberjunky/python-garminconnect](https://github.com/cyberjunky/python-garminconnect)**
-  — the underlying library used to access the Garmin Connect API.
-
-This fork adds the email allowlist, secret-gated token import, 429 fail-fast
-login, Railway deployment, and the security hardening (rate limiting, token-at-rest
-hashing, response security headers). See `CHANGELOG.md` for the full divergence.
+This fork adds the email allowlist, secret-gated token import, a login client
+that fails fast on Garmin's rate limit, the Railway deployment and the security
+hardening; [CHANGELOG.md](CHANGELOG.md) lists the full divergence.

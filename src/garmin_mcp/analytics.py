@@ -684,17 +684,22 @@ def _report_store_path(ctx=None) -> Path:
 
     In remote (multi-user) mode the store is scoped per user: a single shared
     file would let any authenticated user read, overwrite, or delete another
-    user's saved report definitions. In stdio mode there is only one user, so
-    the historical single-file location is kept.
+    user's saved report definitions. It defaults to the directory above the
+    Garmin sessions (the /data volume on Railway), so saved reports survive a
+    redeploy as the sessions do; the container's home directory does not. In
+    stdio mode there is only one user, and the store is a file in the home
+    directory. GARMIN_REPORTS_PATH overrides both.
     """
     configured = os.getenv("GARMIN_REPORTS_PATH")
-    base = (
-        Path(os.path.expanduser(configured))
-        if configured
-        else Path.home() / ".garmin_mcp_reports.json"
-    )
-
     user_id = get_user_id(ctx)
+    if configured:
+        base = Path(os.path.expanduser(configured))
+    elif user_id:
+        sessions = Path(os.getenv("SESSION_STORAGE_PATH", "/data/garmin_sessions"))
+        base = sessions.parent / "garmin_mcp_reports.json"
+    else:
+        base = Path.home() / ".garmin_mcp_reports.json"
+
     if not user_id:
         return base
     # Server-generated hex id, so it is safe as a path component.
