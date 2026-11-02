@@ -31,9 +31,14 @@ required checks must pass before it can merge.
    floor (CVE-2026-59951), remote server stateless, `auth_tools` stdio-only, `delete_activity` withheld
    from remote, `inspect_garmin` read-only (read-only tools and GET only), recovery hours from `recoveryTime` (never the change phrase), account-unit
    companions added beside metric fields (never replacing them), times as `*_gmt`/`*_local`
-   with local from the record's own offset before the profile zone, no `VOLUME` in
-   `Dockerfile.remote`, `$PORT` handling).
+   with local from the record's own offset before the profile zone, timed writes
+   passed as plain local times (garminconnect places them in the profile zone),
+   upstream's direct calls left as upstream wrote them, the remote login on garth,
+   no `VOLUME` in `Dockerfile.remote`, `$PORT` handling).
 3. Re-enumerate tool counts if registration changed (expect stdio 181 / remote 178).
+   Before changing the garminconnect version, run
+   `tests/integration/test_garminconnect_client.py` against the new version
+   (FORK.md, "What a version change has to keep working").
 4. A new read-only tool goes in `tests/integration/test_units_times_sweep.py`'s
    table; a units/times contract failure is fixed, not allowlisted without a reason.
 5. If a tool module changed, ask the user to run

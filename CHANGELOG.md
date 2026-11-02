@@ -146,6 +146,20 @@ Railway volume carry over and a rollback needs no volume change.
     base64) under 0.3.20;
   - a 0.3.20-written one loads under 0.3.5.
 
+## History out of the code — 2026-11-01
+
+- **The rule:** comments and docstrings say why the code is as it is, in the
+  present tense. History (what the code used to do, when or how something was
+  found, dates, PR numbers) lives in this file and in commit messages.
+  CLAUDE.md states the rule.
+- **The change:** 48 files were reworded to fit it. Each kept the same AST as
+  before, docstrings aside, so the code did not change.
+- **Kept as they were:**
+  - all `FORK:` tags. "FORK: was X" became "FORK: upstream's X is ...";
+  - comments upstream wrote, word for word;
+  - observations that are evidence for a rule;
+  - security finding IDs.
+
 ## Ready for a newer garminconnect, still on 0.3.5 — 2026-11-01
 
 Fixes found while assessing garminconnect 0.3.20. Each works on 0.3.5 and on
