@@ -62,26 +62,31 @@ coverage.
 - **`mcp` stays capped `<2`.** mcp 2.x renames `mcp.server.fastmcp` -> `mcp.server.mcpserver`
   (`FastMCP` -> `MCPServer`); the server is not ported. Don't remove the upper bound
   until that port is done.
-- **`garminconnect==0.3.5` stays pinned** (`pyproject.toml`). Do **not** downgrade
-  to 0.2.x, and do not go below 0.3.5 (CVE-2026-54447: ≤0.3.4 writes the token
-  store world-readable). If upstream bumps it, re-verify `session_manager` +
-  token import before taking it.
-  - **The real dependency is `garth`, not the 0.3.x line.** An earlier version of
-    this note said the stored-token format depends on "the 0.3.x line", which
-    implied any 0.3.x is safe. It is not. Checked on 2026-09-10: **0.3.13 drops
-    garth entirely**, replacing it with `curl_cffi` + `ua-generator`. Our auth
-    substrate is garth throughout — `session_manager.garth.dump(token_dir)` and
-    its `OAuth1Token`/`OAuth2Token` handling, the `di_token` / `di_refresh_token`
-    / `di_client_id` blob the token-import page accepts, `GarthHTTPError` in
-    `auth_tools`, and the 429 fail-fast client, which patches garth's retry
-    `status_forcelist`. A bump past the last garth-based release is not a version
-    change but a replacement of the authentication layer, and would likely
-    invalidate every session already stored on the `/data` volume.
-  - Between 0.3.5 and 0.3.13 upstream added 16 methods and removed none. The
-    appealing ones (`push_workout_to_device`, `update_workout`,
-    `get_hrv_data_range`) are conveniences over capabilities this fork already
-    has, so they do not justify the migration. Re-evaluate only if something
-    genuinely unavailable appears, and scope it as an auth-layer rewrite.
+- **`garminconnect==0.3.5` stays pinned exactly** (`pyproject.toml` and `uv.lock`;
+  `tests/unit/test_project_dependencies.py` checks both). Do **not** downgrade to
+  0.2.x, and do not go below 0.3.5 (CVE-2026-54447: ≤0.3.4 writes the token store
+  world-readable). Each version change is its own PR.
+  - **garth is the fork's own dependency, not garminconnect's.** garminconnect
+    (0.3.5 and later) has its own client and stores a DI token as one `garmin_tokens.json`
+    (`di_token` / `di_refresh_token` / `di_client_id`), the blob the token-import
+    page accepts. The fork uses garth (`garth>=0.5.17,<0.6.0`) for the remote
+    server's browser login and MFA, and for the 429 fail-fast client;
+    `session_manager.create_session_from_garth_tokens` turns garth's OAuth2 pair
+    into that token file. A garminconnect version change leaves garth alone.
+  - **What a version change has to keep working.**
+    `tests/integration/test_garminconnect_client.py` drives a real `Garmin` client
+    with only its HTTP session stubbed; run it against the new version before the
+    PR. It covers:
+    - request paths carry no query string: queries go in `params`, because newer
+      releases refuse a path containing `?`;
+    - after a credential login or MFA the tokens are saved before the profile
+      loads (`client.login` / `client.resume_login`, then `dump`, then a login
+      from the saved tokens), so a 429 on the profile cannot lose them; this
+      holds in `garmin-mcp-auth`, the stdio server and `login_to_garmin`;
+    - `MfaRequired` subclasses `GarminConnectAuthenticationError`, which
+      `Garmin.login` re-raises instead of wrapping, so `login_to_garmin` answers
+      `mfa_required`;
+    - saved token files load and sign requests, and dumped ones are owner-only.
 - **Allowlist is fail-closed.** An empty/unset `GARMIN_ALLOWED_EMAILS` rejects every login.
 - **Token import is fail-closed and secret-gated.** `GARMIN_IMPORT_SECRET` (constant-time
   compare) is required on both the login-page import and `POST /import-token`; unset disables import.

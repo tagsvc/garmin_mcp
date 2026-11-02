@@ -169,7 +169,11 @@ def authenticate(token_path: str, token_base64_path: str, force_reauth: bool = F
 
         if result1 == "needs_mfa":
             mfa_code = get_mfa()
-            garmin.resume_login(result2, mfa_code)
+            # The client-level resume only finishes the token exchange.
+            # Garmin.resume_login also loads the profile, and a failure there
+            # (a 429, say) must not lose the tokens MFA just minted: save them
+            # first, and verify them with a separate login below.
+            garmin.client.resume_login(result2, mfa_code)
 
         # Save tokens to directory
         garmin.client.dump(token_path)

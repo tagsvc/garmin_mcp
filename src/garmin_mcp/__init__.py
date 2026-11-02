@@ -687,7 +687,11 @@ def init_api(email, password, tokenstore=None, tokenstore_base64=None, is_cn=Non
             result1, result2 = garmin.client.login(email, password, return_on_mfa=True)
             if result1 == "needs_mfa":
                 mfa_code = get_mfa()
-                garmin.resume_login(result2, mfa_code)
+                # The client-level resume only finishes the token exchange.
+                # Garmin.resume_login also loads the profile, and a failure
+                # there (a 429, say) must not lose the tokens MFA just minted:
+                # save them first, and load the profile from them below.
+                garmin.client.resume_login(result2, mfa_code)
             # Save Oauth1 and Oauth2 token files to directory for next login
             garmin.client.dump(tokenstore)
             # Restrict the freshly written tokens to owner-only. These are

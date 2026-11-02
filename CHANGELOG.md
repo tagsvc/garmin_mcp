@@ -5,6 +5,48 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Ready for a newer garminconnect, still on 0.3.5 — 2026-11-01
+
+Fixes found while assessing garminconnect 0.3.20. Each works on 0.3.5 and on
+0.3.20; the version itself is unchanged.
+
+- **Garmin Coach queries go in `params`.** `get_coach_plan_details`,
+  `get_coach_plan_progress` and `get_coach_plans` built their query into the
+  path. 0.3.20 refuses such a path, which would have broken the first two and
+  quietly turned every ended plan in the third into "ended". A plan detail that
+  cannot be read is now logged as well.
+- **MFA tokens are saved before the profile loads** (`garmin-mcp-auth` and the
+  stdio server's credential login). `Garmin.resume_login` also loads the
+  profile, and 0.3.20 raises when that fails, so a 429 right after a correct
+  code would have lost the new tokens. The client-level resume finishes the
+  exchange, the tokens are saved, and a separate login from them loads the
+  profile as before.
+- **`login_to_garmin`** (stdio auth tool):
+  - answers `mfa_required` when Garmin asks for a code. It answered `failed` /
+    "Login failed" on both versions, because `Garmin.login` wrapped the tool's
+    `MfaRequired`; that now subclasses `GarminConnectAuthenticationError`;
+  - saves the tokens before the profile loads, the same order as above. On 0.3.5
+    too, a 429 on the profile straight after a correct code lost the tokens.
+    When only the profile load fails it answers `tokens_saved`;
+  - writes the optional copy at `token_base64_path` as base64 with owner-only
+    permissions, as the other two login paths do. It was raw JSON, created
+    with the process umask. A failure to write it is now a warning, not a
+    failed login.
+- **A write error's `upstream_body`** falls back to the response garminconnect
+  attaches, when the error message carries only the status (0.3.20 leaves
+  Garmin's text out unless it is a plain message).
+- **Removed `SessionManager.create_session`**, unused and calling a
+  `garmin.garth` that garminconnect 0.3.x does not have.
+- **Tests:** `tests/integration/test_garminconnect_client.py` drives a real
+  `Garmin` client with only its HTTP session stubbed (tokens, MFA, the Coach
+  requests, and a source scan for query strings in request paths), and a
+  dependency test holds garminconnect to one exact version, at or above 0.3.5,
+  matching `uv.lock`.
+- **FORK.md:** the note on the pin said garminconnect's later releases replace
+  the fork's garth-based authentication. garminconnect 0.3.5 already has its own
+  client (on `curl_cffi` and `ua-generator`) and no garth dependency; garth is the
+  fork's own, and 0.3.20 keeps the token format.
+
 ## Personal record and sensor times labelled — 2026-11-01
 
 - **`get_personal_record`:** Garmin gives activity records (fastest 1K, mile and

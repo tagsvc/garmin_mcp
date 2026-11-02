@@ -11,6 +11,7 @@ Exception shapes mirror what garminconnect 0.3.x / requests raised live:
 
 import json
 import logging
+from types import SimpleNamespace
 
 import pytest
 import requests
@@ -57,6 +58,25 @@ class TestClassification:
         assert result["upstream_status"] == 400
         assert result["upstream_body"] == "Required Parameter meal id is null"
         assert result["write_committed"] is False
+
+    def test_a_status_only_message_takes_the_body_from_the_attached_response(self):
+        """Some garminconnect releases put only the status in the message."""
+        exc = GarminConnectConnectionError("API Error 400")
+        exc.response = SimpleNamespace(text='  {"errorMessage": "mealId is null"}\n')
+        result = _error(exc, sent=True)
+        assert result["upstream_status"] == 400
+        assert result["upstream_body"] == '{"errorMessage": "mealId is null"}'
+        assert result["write_committed"] is False
+
+    def test_the_message_body_wins_over_the_attached_response(self):
+        exc = GarminConnectConnectionError("API Error 400 - mealId is null")
+        exc.response = SimpleNamespace(text="the raw body")
+        assert _error(exc, sent=True)["upstream_body"] == "mealId is null"
+
+    def test_an_attached_body_is_trimmed(self):
+        exc = GarminConnectConnectionError("API Error 502")
+        exc.response = SimpleNamespace(text="x" * 5000)
+        assert len(_error(exc, sent=True)["upstream_body"]) == 500
 
     @pytest.mark.parametrize("status", [400, 404])
     def test_garmin_4xx_after_send_is_rejected(self, status):
