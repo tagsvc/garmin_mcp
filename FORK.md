@@ -411,6 +411,14 @@ each divergence so a merge doesn't silently undo a deliberate decision.
   (more retries/backoff) was rejected because it amplifies the limit. _On merge:_
   keep 429 out of the client's retry `status_forcelist`.
 
+- **The remote login stays on garth.** Why: garminconnect (0.3.0 and later) calls
+  garth deprecated and offers its own resumable MFA login, but that login runs a
+  chain of strategies (up to about 11 credential POSTs) and has no setting to
+  stop at the first 429. From Railway's datacenter IP that deepens Garmin's
+  throttle, which the fail-fast client above exists to avoid. Token import is
+  the main remote path and needs neither. _Revisit_ if garth stops working with
+  Garmin's SSO, rebuilding fail-fast on garminconnect's single-strategy option.
+
 - **Token import (login-page paste + `POST /import-token`).** Why: Garmin
   rate-limits its OAuth token-mint endpoint from datacenter IPs, so the server
   often can't complete a login even with a correct MFA code. Minting on a
