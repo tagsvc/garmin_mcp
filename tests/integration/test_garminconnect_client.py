@@ -384,7 +384,7 @@ async def test_ecg_requests_go_to_garmins_ecg_host_signed_in(snapshots, offline_
     assert call["headers"]["Authorization"] == f"Bearer {TOKENS['di_token']}"
 
 
-# ─── sensors: the library's request is the one the tool used to send ──────
+# ─── sensors: the library's request, with no query ────────────────────────
 
 
 @pytest.mark.asyncio

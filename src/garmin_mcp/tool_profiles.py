@@ -1,10 +1,15 @@
 """Built-in tool profiles for GARMIN_TOOL_PROFILE.
 
-The server registers 155 tools. A profile narrows that to one area so an LLM
-client carries less context, without the user having to list tool names in
-GARMIN_ENABLED_TOOLS. Each profile is a set of registered tool names; a unit
-test checks every name here against the tools the modules actually register,
-so a renamed tool fails the suite instead of silently dropping out.
+By default the server registers every tool. A profile narrows that to one
+area so an LLM client carries less context, without the user having to list
+tool names in GARMIN_ENABLED_TOOLS. Each profile is a set of registered tool
+names; a unit test checks every name here against the tools the modules
+actually register, so a renamed tool fails the suite instead of silently
+dropping out.
+
+FORK: every registered tool is in at least one profile, or in NO_PROFILE_TOOLS.
+A unit test enforces it, so a new tool cannot be left out of every profile
+without anyone deciding so.
 """
 
 # Identity and unit settings. Cheap, and every area needs them to label the
@@ -16,6 +21,11 @@ CORE_TOOLS = frozenset(
         "get_unit_system",
         "get_user_profile",
         "get_userprofile_settings",
+        # FORK: the interactive login tools. Without them a local server started
+        # with a profile could not sign in again when its tokens expire. The
+        # remote server registers neither and ignores profiles.
+        "check_garmin_auth",
+        "login_to_garmin",
     }
 )
 
@@ -99,6 +109,19 @@ HEALTH_TOOLS = CORE_TOOLS | frozenset(
         "get_hrv_data",
         "get_hrv_trend",
         "get_respiration_trend",
+        # FORK: Garmin's Health Status (overnight HRV, resting HR, SpO2,
+        # respiration and skin temperature against the personal range)
+        "get_health_status",
+        "get_health_status_range",
+        # FORK: historical analytics (analytics module)
+        "get_health_baselines",
+        "get_lagged_health_correlations",
+        "get_weekly_health_review",
+        "get_wellness_anomalies",
+        "list_health_report_metrics",
+        "list_saved_health_reports",
+        "run_custom_health_report",
+        "save_custom_health_report",
     }
 )
 
@@ -138,6 +161,7 @@ ACTIVITIES_TOOLS = CORE_TOOLS | frozenset(
         # gear_management
         "add_gear_to_activity",
         "get_gear",
+        "get_gear_activities",
         "remove_gear_from_activity",
         # courses
         "delete_course",
@@ -174,12 +198,21 @@ WORKOUTS_TOOLS = CORE_TOOLS | frozenset(
         "schedule_week",
         # calendar_events
         "get_calendar_events",
+        # FORK: moving a scheduled workout and sending one to the watch
+        "push_workout_to_device",
+        "reschedule_workout",
+        # FORK: the Garmin Coach plan itself, beside its workouts above
+        "get_coach_plan_details",
+        "get_coach_plan_progress",
+        "get_coach_plans",
     }
 )
 
 TRAINING_TOOLS = CORE_TOOLS | frozenset(
     {
         "get_power_zones",
+        # FORK: the zones that training metrics are scored against
+        "set_heart_rate_zones",
         # training
         "get_acclimation",
         "get_cycling_ftp",
@@ -246,6 +279,25 @@ NUTRITION_TOOLS = CORE_TOOLS | frozenset(
     }
 )
 
+# FORK: the watch, the paired sensors and what the devices report.
+DEVICES_TOOLS = CORE_TOOLS | frozenset(
+    {
+        "get_device_alarms",
+        "get_device_last_used",
+        "get_device_settings",
+        "get_device_solar_data",
+        "get_devices",
+        "get_primary_training_device",
+        "get_sensors",
+        "push_workout_to_device",
+    }
+)
+
+# FORK: tools that belong to no area. inspect_garmin reads any Garmin endpoint
+# raw to check what a curated tool leaves out, so it serves every area and none;
+# add it with GARMIN_ENABLED_TOOLS.
+NO_PROFILE_TOOLS = frozenset({"inspect_garmin"})
+
 # None means "every tool", the default.
 TOOL_PROFILES = {
     "all": None,
@@ -255,6 +307,7 @@ TOOL_PROFILES = {
     "workouts": WORKOUTS_TOOLS,
     "training": TRAINING_TOOLS,
     "nutrition": NUTRITION_TOOLS,
+    "devices": DEVICES_TOOLS,
 }
 
 

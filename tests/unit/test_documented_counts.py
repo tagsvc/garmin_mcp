@@ -88,3 +88,13 @@ def test_readme_section_counts_sum_to_the_real_total(counts):
         f"(off by {stdio - total}). Sections: "
         + ", ".join(f"{name.strip()}={n}" for name, n in sections)
     )
+
+
+def test_readme_profile_table_matches_the_profiles():
+    """FORK: each README profile row gives that profile's real size, and every
+    profile has a row."""
+    from garmin_mcp.tool_profiles import TOOL_PROFILES
+
+    rows = dict(re.findall(r"^\| `(\w+)` \| (\d+) \|", _read("README.md"), re.M))
+    expected = {name: str(len(tools)) for name, tools in TOOL_PROFILES.items() if tools is not None}
+    assert rows == expected, f"README profile table {rows} disagrees with tool_profiles.py {expected}"

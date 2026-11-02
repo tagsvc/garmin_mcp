@@ -5,6 +5,49 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Every tool in a tool profile; a check for history in code — 2026-11-02
+
+- **`GARMIN_TOOL_PROFILE` now covers every tool but one.** 26 tools were in no
+  profile, so setting any profile dropped them: the Garmin Coach plan tools,
+  `reschedule_workout`, `push_workout_to_device`, the device and sensor tools,
+  `get_gear_activities`, the eight analytics tools, `get_health_status` /
+  `get_health_status_range`, `set_heart_rate_zones`, `inspect_garmin` and the
+  two auth tools. Each is now in its area's profile:
+  - `health`: Health Status and the analytics;
+  - `workouts`: the Coach plan, rescheduling, sending to the watch;
+  - `activities`: `get_gear_activities`;
+  - `training`: `set_heart_rate_zones`;
+  - a new **`devices`** profile: the device tools, `get_sensors`,
+    `get_primary_training_device` and `push_workout_to_device`;
+  - every profile: `check_garmin_auth` and `login_to_garmin`. Without them, a
+    local server started with a profile could not sign in again once its
+    tokens expired.
+- **`inspect_garmin` stays out of every profile on purpose.** It serves every
+  area, and is added with `GARMIN_ENABLED_TOOLS`. It is listed in
+  `NO_PROFILE_TOOLS`.
+- **New tests:**
+  - every registered tool is in a profile or in `NO_PROFILE_TOOLS`;
+  - every profile keeps the login tools;
+  - the README profile table gives each profile's real size.
+- **Profile sizes:** `minimal` 22, `health` 69, `activities` 45, `workouts` 33,
+  `training` 42, `nutrition` 25, `devices` 15. The remote server ignores
+  profiles, so nothing changes on Railway.
+- **`tests/unit/test_no_history_in_code.py`** enforces the comment rule from
+  CLAUDE.md. It fails on any of these in a comment or docstring under `src/`,
+  `scripts/` and `tests/`:
+  - a PR or issue number;
+  - a month and year;
+  - a date beside a verb of change;
+  - a phrase about the code's past ("used to send", "previously", "no longer").
+
+  A date alone is allowed, since tests name the day their data comes from. The
+  46 upstream lines that match are listed word for word in `UPSTREAM_TEXT`, and
+  a listed line that disappears fails the check too. The one fork line it
+  caught, a test heading saying what the sensors tool "used to send", is
+  reworded.
+- **`tool_profiles.py`'s docstring** no longer gives a tool count; its "155" was
+  upstream's figure.
+
 ## Saved reports kept on the data volume; one user per email — 2026-11-02
 
 - **Saved analytics reports survive redeploys.** On the remote server, the

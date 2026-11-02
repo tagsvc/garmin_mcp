@@ -607,7 +607,7 @@ serves its full set.
 
 | Variable | Effect |
 |---|---|
-| `GARMIN_TOOL_PROFILE` | A built-in subset: `minimal`, `health`, `activities`, `workouts`, `training`, `nutrition`, or `all` (the default). Combine with commas, e.g. `health,training`. |
+| `GARMIN_TOOL_PROFILE` | A built-in subset: `minimal`, `health`, `activities`, `workouts`, `training`, `nutrition`, `devices`, or `all` (the default). Combine with commas, e.g. `health,training`. |
 | `GARMIN_ENABLED_TOOLS` | Comma-separated allowlist: only these tools register. With a profile, they are **added** to it. |
 | `GARMIN_DISABLED_TOOLS` | Comma-separated denylist. Ignored when an allowlist is set, unless a profile is also set; then it removes tools from the result. |
 
@@ -617,20 +617,21 @@ list of known profiles.
 
 | Profile | Tools | What it covers |
 |---|---:|---|
-| `minimal` | 20 | Recent activities with splits, daily stats, sleep, HRV, stress, body battery, training readiness and status |
-| `health` | 57 | The health_wellness tools except `get_health_status` / `get_health_status_range`; Health Snapshot and ECG; weight, body composition, blood pressure, hydration; women's health; fitness age, HRV and respiration trends |
-| `activities` | 42 | Activity list, detail, splits and edits; FIT analysis, power curve and file downloads; gear on activities; courses |
-| `workouts` | 26 | Workout library, upload, schedule and delete; Garmin Coach plan workouts; the high-level builders; the calendar |
-| `training` | 39 | Training status, load, effect, VO2 max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, power zones, personal records, race predictions, goals, badges |
-| `nutrition` | 23 | Food log, custom foods, daily nutrition settings, hydration, energy balance |
+| `minimal` | 22 | Recent activities with splits, daily stats, sleep, HRV, stress, body battery, training readiness and status |
+| `health` | 69 | Every health_wellness tool, Health Status included; Health Snapshot and ECG; weight, body composition, blood pressure, hydration; women's health; fitness age, HRV and respiration trends; the historical analytics and saved health reports |
+| `activities` | 45 | Activity list, detail, splits and edits; FIT analysis, power curve and file downloads; gear and its activities; courses |
+| `workouts` | 33 | Workout library, upload, schedule, reschedule and delete; sending a workout to the watch; the Garmin Coach plan and its workouts; the high-level builders; the calendar |
+| `training` | 42 | Training status, load, effect, VO2 max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, heart rate zones (read and write), power zones, personal records, race predictions, goals, badges |
+| `nutrition` | 25 | Food log, custom foods, daily nutrition settings, hydration, energy balance |
+| `devices` | 15 | Devices, their settings, alarms, solar data and last sync; paired sensors; the primary training device; sending a workout to the watch |
 
 Every profile also includes `get_full_name`, `get_heart_rate_zones`,
 `get_unit_system`, `get_user_profile` and `get_userprofile_settings`, so the
-client can label the numbers it gets back. Some tools are in no profile: the
-Garmin Coach plan tools, `reschedule_workout`, the device and sensor tools,
-`get_gear_activities`, the historical analytics, `get_health_status`,
-`set_heart_rate_zones`, `inspect_garmin` and the interactive auth tools. Add
-them with `GARMIN_ENABLED_TOOLS`.
+client can label the numbers it gets back, and the interactive auth tools
+(`check_garmin_auth`, `login_to_garmin`), so a profile never stops the server
+signing in again. Every tool is in at least one profile except
+`inspect_garmin`, the raw diagnostic; add it with `GARMIN_ENABLED_TOOLS`. A test
+fails when a new tool is in no profile.
 
 For example, the health profile plus recent activities, without the health
 write tools (in the client config's `env`; `"GARMIN_TOOL_PROFILE":
