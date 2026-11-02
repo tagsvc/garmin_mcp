@@ -1,9 +1,8 @@
 """Health Snapshot and ECG tools.
 
-The Health Snapshot payloads follow the shape of live replies (summary list,
-one summary, per-second epochs); every value and id here is synthetic. The
-ECG shape is not yet confirmed from a live account, so its tests pin the
-generic handling: Garmin's layout kept, times zoned, long sample lists left out.
+The payloads follow the shape of live replies (Health Snapshot list, summary
+and per-second epochs; ECG list and recording); every value and id here is
+synthetic.
 """
 import json
 from unittest.mock import Mock
@@ -152,46 +151,94 @@ async def test_samples_are_fetched_only_when_asked(app, client):
 
 # --- ECG -----------------------------------------------------------------------
 
-ECG = {
-    "ecgId": "e1",
-    "rhythmClassification": "SINUS_RHYTHM",
-    "averageHeartRate": 71,
-    "startTimeGmt": "2026-11-01T22:44:00.0",
-    "startTimeLocal": "2026-11-01T17:44:00.0",
-    "waveform": [0.1] * 600,
+ECG_ID = "00000000-0000-4000-8000-0000000000e1"
+ECG_SUMMARY = {
+    "detailId": ECG_ID,
+    "startTime": 1793573000000,  # 2026-11-01T22:43:20Z
+    "startTimeLocal": "2026-11-01T17:43:20.0",
+    "timeZoneOffsetInSeconds": -18000,
+    "rhythmClassification": "SINUS_NORMAL",
+    "mountingSide": "LEFT",
+    "rmssdHrv": 45,
+    "heartRateAverage": 70.0,
+    "ecgAppVersion": "1.0.0",
+    "udi": "(01)00000000000000(10)1.0.0",
+    "symptoms": [],
+    "deviceInfo": {"productName": "WATCH", "productId": 1, "firmwareVersion": "1.00",
+                   "partNumber": "000-00000-00"},
+    "healthDeviceId": "1",
+}
+ECG_RECORDING = {
+    "summary": ECG_SUMMARY,
+    "reading": {"sampleRate": 128.0, "rawSampleRate": 512.0, "durationInSeconds": 30,
+                "samples": [0.01] * 3840},
+    "processingInfo": {"uploadTime": 1793573045000, "processingTime": 1793573045010,
+                       "apiVersion": "1.0.0"},
 }
 
 
 @pytest.mark.asyncio
-async def test_an_ecg_keeps_garmins_layout_with_its_times_zoned(app, client):
-    client.get_ecg.return_value = dict(ECG)
-
-    payload = json.loads(await _call(app, "get_ecg", {"ecg_id": "e1"}))
-
-    assert payload["rhythmClassification"] == "SINUS_RHYTHM"
-    assert payload["startTimeGmt"] == "2026-11-01T22:44:00Z"
-    assert payload["startTimeLocal"] == "2026-11-01T17:44:00-05:00"
-    assert payload["waveform"] == {"omitted_samples": 600}
-
-
-@pytest.mark.asyncio
-async def test_the_waveform_comes_back_when_asked(app, client):
-    client.get_ecg.return_value = dict(ECG)
-
-    payload = json.loads(await _call(app, "get_ecg", {"ecg_id": "e1", "include_waveform": True}))
-
-    assert len(payload["waveform"]) == 600
-
-
-@pytest.mark.asyncio
-async def test_ecg_recordings_drop_long_sample_lists(app, client):
-    client.get_ecg_list.return_value = {"ecgs": [dict(ECG)], "nextPage": None}
+async def test_ecg_recordings_are_listed_with_their_result(app, client):
+    client.get_ecg_list.return_value = {"content": [ECG_SUMMARY], "transformErrors": []}
 
     payload = json.loads(await _call(app, "get_ecg_recordings", {"start_date": "2026-11-01"}))
 
     client.get_ecg_list.assert_called_once_with(start="2026-11-01", end="2026-11-01")
-    assert payload["ecg"]["ecgs"][0]["waveform"] == {"omitted_samples": 600}
-    assert payload["ecg"]["ecgs"][0]["startTimeLocal"] == "2026-11-01T17:44:00-05:00"
+    assert payload["count"] == 1
+    assert "transform_errors" not in payload
+    ecg = payload["recordings"][0]
+    assert ecg["ecg_id"] == ECG_ID
+    assert (ecg["rhythm"], ecg["heart_rate_avg_bpm"], ecg["hrv_rmssd_ms"]) == ("SINUS_NORMAL", 70.0, 45)
+    assert ecg["wrist"] == "LEFT" and ecg["symptoms"] == []
+    assert ecg["device"] == {"name": "WATCH", "firmware": "1.00"}
+    assert "healthDeviceId" not in ecg and "detailId" not in ecg
+
+
+@pytest.mark.asyncio
+async def test_ecg_times_take_the_recordings_own_offset(app, client):
+    """startTime is a GMT epoch; timeZoneOffsetInSeconds is the recording's own."""
+    client.get_ecg_list.return_value = {"content": [dict(ECG_SUMMARY, timeZoneOffsetInSeconds=-14400,
+                                                         startTimeLocal="2026-11-01T18:43:20.0")]}
+
+    ecg = json.loads(await _call(app, "get_ecg_recordings", {"start_date": "2026-11-01"}))["recordings"][0]
+
+    assert ecg["start_time_gmt"] == "2026-11-01T22:43:20Z"
+    # The recording's own offset wins over the profile's zone (-05:00 that day).
+    assert ecg["start_time_local"] == "2026-11-01T18:43:20-04:00"
+    assert "local_time_zone" not in ecg
+
+
+@pytest.mark.asyncio
+async def test_one_ecg_with_its_reading_and_no_waveform_by_default(app, client):
+    client.get_ecg.return_value = ECG_RECORDING
+
+    ecg = json.loads(await _call(app, "get_ecg", {"ecg_id": ECG_ID}))
+
+    client.get_ecg.assert_called_once_with(ECG_ID)
+    assert ecg["rhythm"] == "SINUS_NORMAL"
+    assert (ecg["sample_rate_hz"], ecg["raw_sample_rate_hz"], ecg["duration_seconds"]) == (128.0, 512.0, 30)
+    assert ecg["sample_count"] == 3840
+    assert ecg["uploaded_gmt"] == "2026-11-01T22:44:05Z"
+    assert ecg["uploaded_local"] == "2026-11-01T17:44:05-05:00"
+    assert "samples" not in ecg
+
+
+@pytest.mark.asyncio
+async def test_the_waveform_comes_back_when_asked(app, client):
+    client.get_ecg.return_value = ECG_RECORDING
+
+    ecg = json.loads(await _call(app, "get_ecg", {"ecg_id": ECG_ID, "include_waveform": True}))
+
+    assert len(ecg["samples"]) == 3840
+
+
+@pytest.mark.asyncio
+async def test_no_ecg_recordings_is_said_plainly(app, client):
+    client.get_ecg_list.return_value = {"content": [], "transformErrors": []}
+
+    text = await _call(app, "get_ecg_recordings", {"start_date": "2026-11-01"})
+
+    assert text == "No ECG recordings between 2026-11-01 and 2026-11-01."
 
 
 @pytest.mark.asyncio
