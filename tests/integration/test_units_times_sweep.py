@@ -264,9 +264,13 @@ def _garmin_double():
     client.get_health_snapshot_epochs.return_value = {
         "epochDescriptorDTOList": [{"index": 0, "key": "timestamp"}, {"index": 1, "key": "heartRate"}],
         "epochArray": [[EPOCH_GMT, 65.0]]}
-    ecg = {"ecgId": "e1", "startTimeGmt": GMT, "startTimeLocal": LOCAL, "waveform": [0.0] * 300}
-    client.get_ecg_list.return_value = {"ecgs": [ecg]}
-    client.get_ecg.return_value = ecg
+    ecg = {"detailId": "e1", "startTime": EPOCH_GMT, "startTimeLocal": LOCAL,
+           "timeZoneOffsetInSeconds": -14400, "rhythmClassification": "SINUS_NORMAL",
+           "heartRateAverage": 70.0}
+    client.get_ecg_list.return_value = {"content": [ecg], "transformErrors": []}
+    client.get_ecg.return_value = {"summary": ecg,
+                                   "reading": {"sampleRate": 128.0, "samples": [0.0] * 10},
+                                   "processingInfo": {"uploadTime": EPOCH_GMT + 45000}}
     # Tools label Garmin's payloads in place, and several share a payload
     # here: each call gets its own copy, so one tool's labels cannot cover
     # for another's.

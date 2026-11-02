@@ -333,7 +333,7 @@
     },
     {
       "name": "get_ecg",
-      "description": "One ECG recording: Garmin's result for it and, if asked, the waveform."
+      "description": "One ECG recording: its summary, the reading's sampling and, if asked, the waveform."
     },
     {
       "name": "get_ecg_recordings",

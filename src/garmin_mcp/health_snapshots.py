@@ -5,9 +5,9 @@ FORK: both need garminconnect 0.3.20 or later, which has the methods.
 - A Health Snapshot is a two-minute reading the watch takes on request:
   heart rate, respiration, stress, SpO2 and HRV, summarised and sampled
   every second (wellnessactivity-service).
-- An ECG is a 30-second heart rhythm recording from the watch's ECG app.
-  Garmin serves it from a separate host (ghs.garmin.com), so its reply is
-  returned close to as sent, with Garmin's own time text given its zone.
+- An ECG is a 30-second heart rhythm recording from the watch's ECG app,
+  served from a separate host (ghs.garmin.com): a summary (rhythm, average
+  heart rate, HRV, the wrist) and the waveform, sampled at 128 Hz.
 """
 import datetime
 import json
@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import gmt, profile_time_zone, put_times, zone_garmin_times
+from garmin_mcp.times import gmt, profile_time_zone, put_times
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -38,9 +38,6 @@ _SAMPLE_KEYS = {
     "spo2": "spo2_percent",
     "respiration": "respiration_brpm",
 }
-# An ECG waveform runs to thousands of numbers; a list this long is left out
-# unless asked for.
-_WAVEFORM_MIN_LENGTH = 200
 
 
 def configure(client):
@@ -138,17 +135,36 @@ def _curate_samples(epochs: Any, start: Optional[datetime.datetime]) -> List[Dic
     return samples
 
 
-def _drop_waveforms(node: Any) -> Any:
-    """Replace long lists of numbers (waveform samples) with their length."""
-    if isinstance(node, dict):
-        return {k: _drop_waveforms(v) for k, v in node.items()}
-    if isinstance(node, list):
-        if len(node) >= _WAVEFORM_MIN_LENGTH and all(
-            isinstance(x, (int, float, list)) and not isinstance(x, bool) for x in node
-        ):
-            return {"omitted_samples": len(node)}
-        return [_drop_waveforms(v) for v in node]
-    return node
+def _ecg_offset(summary: Dict[str, Any]) -> Optional[datetime.timedelta]:
+    seconds = summary.get("timeZoneOffsetInSeconds")
+    if isinstance(seconds, (int, float)) and not isinstance(seconds, bool):
+        return datetime.timedelta(seconds=seconds)
+    return None
+
+
+def _curate_ecg_summary(summary: Dict[str, Any], zone: Optional[str]) -> Dict[str, Any]:
+    """An ECG summary: its result, when it was taken, and on what."""
+    ecg: Dict[str, Any] = {"ecg_id": summary.get("detailId")}
+    if put_times(ecg, "start_time", summary.get("startTime"), summary.get("startTimeLocal"),
+                 offset=_ecg_offset(summary), zone=zone):
+        ecg["local_time_zone"] = zone
+    ecg.update({
+        "rhythm": summary.get("rhythmClassification"),
+        "heart_rate_avg_bpm": summary.get("heartRateAverage"),
+        "hrv_rmssd_ms": summary.get("rmssdHrv"),
+        "wrist": summary.get("mountingSide"),
+        "symptoms": summary.get("symptoms"),
+        "ecg_app_version": summary.get("ecgAppVersion"),
+        "udi": summary.get("udi"),
+    })
+    device = summary.get("deviceInfo")
+    if isinstance(device, dict):
+        ecg["device"] = {
+            k: v for k, v in {"name": device.get("productName"),
+                              "firmware": device.get("firmwareVersion")}.items()
+            if v is not None
+        }
+    return {k: v for k, v in ecg.items() if v is not None}
 
 
 def _not_found(exc: Exception) -> bool:
@@ -227,11 +243,14 @@ def register_tools(app):
     async def get_ecg_recordings(ctx: Context, start_date: str, end_date: Optional[str] = None) -> str:
         """List your ECG recordings (the watch's ECG app) in a date range.
 
-        Garmin's reply is returned in its own layout, with its time text given
-        a zone (GMT values end in Z; local values carry their offset). Long
-        sample lists are replaced by {"omitted_samples": n}; get_ecg returns
-        one recording with its waveform. An account without the ECG feature
-        gets a "no ECG data" answer.
+        Each recording gives its rhythm (Garmin's classification, e.g.
+        SINUS_NORMAL), average heart rate (heart_rate_avg_bpm), HRV as RMSSD
+        (hrv_rmssd_ms), the wrist the watch was on, any symptoms logged, the
+        ECG app version and the device and its firmware. start_time_gmt and
+        start_time_local give when it was taken, local from the recording's own
+        offset; local_time_zone appears only when the profile's zone had to be
+        used. get_ecg returns one recording with its waveform. An account
+        without the ECG feature gets a "no ECG data" answer.
 
         Args:
             start_date: First day, YYYY-MM-DD.
@@ -241,10 +260,19 @@ def register_tools(app):
             client = get_client(ctx)
             end = end_date or start_date
             data = client.get_ecg_list(start=start_date, end=end)
-            if not data:
+            content = data.get("content") if isinstance(data, dict) else None
+            entries = [e for e in content or [] if isinstance(e, dict)]
+            if not entries:
                 return f"No ECG recordings between {start_date} and {end}."
-            reply = _drop_waveforms(zone_garmin_times(data, zone=profile_time_zone(client)))
-            return json.dumps({"start_date": start_date, "end_date": end, "ecg": reply}, indent=2)
+            zone = profile_time_zone(client)
+            result: Dict[str, Any] = {
+                "count": len(entries),
+                "recordings": [_curate_ecg_summary(e, zone) for e in entries],
+            }
+            errors = data.get("transformErrors")
+            if errors:
+                result["transform_errors"] = errors
+            return json.dumps(result, indent=2)
         except Exception as e:
             if _not_found(e):
                 return "No ECG data: Garmin has no ECG recordings for this account (or no ECG feature)."
@@ -252,26 +280,43 @@ def register_tools(app):
 
     @app.tool()
     async def get_ecg(ctx: Context, ecg_id: str, include_waveform: bool = False) -> str:
-        """One ECG recording: Garmin's result for it and, if asked, the waveform.
+        """One ECG recording: its summary, the reading's sampling and, if asked, the waveform.
 
-        Returned in Garmin's own layout, with its time text given a zone (GMT
-        values end in Z; local values carry their offset). The waveform runs
-        to thousands of samples, so it is replaced by {"omitted_samples": n}
-        unless include_waveform is set.
+        The summary is as in get_ecg_recordings. The reading gives the sample
+        rate (sample_rate_hz, and the watch's raw_sample_rate_hz), its length
+        (duration_seconds) and sample_count. With include_waveform the samples
+        themselves are returned as Garmin sends them (a few thousand numbers).
+        uploaded_gmt/_local and processed_gmt/_local say when Garmin received
+        and analysed it. start_time_gmt/_local as in the list; local_time_zone
+        appears only when the profile's zone had to be used.
 
         Args:
-            ecg_id: The recording's id, from get_ecg_recordings.
+            ecg_id: The recording's ecg_id, from get_ecg_recordings.
             include_waveform: Also return the waveform samples (default False).
         """
         try:
             client = get_client(ctx)
             data = client.get_ecg(ecg_id)
-            if not data:
+            if not isinstance(data, dict) or not data:
                 return f"No ECG recording {ecg_id}."
-            reply = zone_garmin_times(data, zone=profile_time_zone(client))
-            if not include_waveform:
-                reply = _drop_waveforms(reply)
-            return json.dumps(reply, indent=2)
+            summary = data.get("summary") if isinstance(data.get("summary"), dict) else {}
+            zone = profile_time_zone(client)
+            ecg = _curate_ecg_summary(summary, zone)
+            reading = data.get("reading") if isinstance(data.get("reading"), dict) else {}
+            samples = reading.get("samples") if isinstance(reading.get("samples"), list) else None
+            ecg.update({k: v for k, v in {
+                "sample_rate_hz": reading.get("sampleRate"),
+                "raw_sample_rate_hz": reading.get("rawSampleRate"),
+                "duration_seconds": reading.get("durationInSeconds"),
+                "sample_count": len(samples) if samples is not None else None,
+            }.items() if v is not None})
+            processing = data.get("processingInfo") if isinstance(data.get("processingInfo"), dict) else {}
+            offset = _ecg_offset(summary)
+            for stem, key in (("uploaded", "uploadTime"), ("processed", "processingTime")):
+                put_times(ecg, stem, processing.get(key), offset=offset, zone=zone)
+            if include_waveform and samples is not None:
+                ecg["samples"] = samples
+            return json.dumps(ecg, indent=2)
         except Exception as e:
             if _not_found(e):
                 return f"No ECG recording {ecg_id}."

@@ -5,6 +5,25 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## ECG tools curated from the live reply — 2026-11-02
+
+The first live ECG reply (a 30-second recording from a fenix 8, ECG app 1.1.4)
+showed Garmin's fields, so `get_ecg_recordings` and `get_ecg` now curate them
+instead of returning Garmin's layout:
+
+- **Each recording:**
+  - `ecg_id`;
+  - `rhythm` (Garmin's classification, e.g. `SINUS_NORMAL`);
+  - `heart_rate_avg_bpm`, `hrv_rmssd_ms`;
+  - `wrist`, `symptoms`, `ecg_app_version`, `udi`;
+  - the device's name and firmware.
+- **Times:** `start_time_gmt`/`_local`, from Garmin's GMT `startTime` epoch and
+  the recording's own `timeZoneOffsetInSeconds`.
+- **`get_ecg` adds the reading:** `sample_rate_hz` (128), `raw_sample_rate_hz`
+  (512), `duration_seconds`, `sample_count`, and when Garmin received and
+  analysed the recording (`uploaded_*`, `processed_*`).
+- **The waveform** (3,840 samples) comes back only with `include_waveform`.
+
 ## Library calls in place of the fork's own — 2026-11-02
 
 - **`get_sensors` and the distance check** read paired sensors through
