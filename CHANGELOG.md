@@ -5,6 +5,24 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Saved reports kept on the data volume; one user per email — 2026-11-02
+
+- **Saved analytics reports survive redeploys.** On the remote server, the
+  per-user store defaulted to the container's home directory, which every
+  redeploy replaces, so saved report definitions were lost. It now defaults to
+  the directory above the Garmin sessions (`/data` on Railway).
+  `GARMIN_REPORTS_PATH` still overrides it; the stdio server is unchanged.
+- **One user per Garmin account, whatever the email's case.** Users were looked
+  up by the email exactly as typed while the allowlist ignores case. So signing
+  in as `Me@x.com` and importing as `me@x.com` made two users, and the import
+  landed on the one the claude.ai connection does not use. The lookup now
+  ignores case and surrounding spaces. Rows stored in another case are still
+  found, and where case variants exist the oldest is the user. New users are
+  stored in lowercase.
+- **`docker-compose.remote.yml` passes `GARMIN_ALLOWED_EMAILS` and
+  `GARMIN_IMPORT_SECRET` through.** As shipped, it set neither, so every login
+  was rejected.
+
 ## README: remote-first, reference material moved to docs/ — 2026-11-02
 
 The README is now this fork's own document: the remote server on Railway first,

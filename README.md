@@ -149,7 +149,7 @@ Read by `src/garmin_mcp/config.py` and `remote.py`:
 | `GARMIN_MCP_PATH` | `/mcp` | MCP endpoint path. |
 | `MCP_SCOPE` | `garmin` | OAuth scope the server requires. |
 | `GARMIN_MCP_CALL_TIMEOUT` | `90` | Seconds before a stalled Garmin request is abandoned with a retry-able error; `0` disables the bound. |
-| `GARMIN_REPORTS_PATH` | `~/.garmin_mcp_reports.json` | Saved analytics reports, one file per user beside this path. The default is in the container's home directory, not on `/data`; point it under `/data` (e.g. `/data/garmin_mcp_reports.json`) to keep saved reports across redeploys. |
+| `GARMIN_REPORTS_PATH` | `garmin_mcp_reports.json` beside the sessions directory (`/data`) | Saved analytics reports, one file per user beside this path, so they survive redeploys with the sessions. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` shows why garminconnect could not load or refresh a session. |
 
 ### Signing in
@@ -203,8 +203,8 @@ writing a session is a state-changing action, and an email is not a secret.
      It answers `{"status": "ok", ...}`, or 401 (wrong secret), 403 (email
      not allowlisted), 400 (malformed token) or 429 (too many attempts).
 
-Use the email exactly as you signed in with it: the server keys each user on
-the email as written.
+The email's case does not matter: the server keys each user on the email
+ignoring case, as the allowlist does.
 
 **Refreshing.** When the Garmin session on the server stops working, tool calls
 answer "Garmin session expired or not available. Please re-authenticate."
@@ -271,12 +271,13 @@ sign-in page (OPERATIONS.md covers backups and recovery).
 ### Running the remote server elsewhere
 
 With Docker Compose, `docker-compose.remote.yml` builds `Dockerfile.remote` and
-keeps `/data` in a named volume. It does not set `GARMIN_ALLOWED_EMAILS` or
-`GARMIN_IMPORT_SECRET`: add them to its `environment:` list first, since
-without the allowlist every login is rejected.
+keeps `/data` in a named volume. It passes `GARMIN_ALLOWED_EMAILS` and
+`GARMIN_IMPORT_SECRET` through from the shell or a `.env` file; without the
+allowlist every login is rejected.
 
 ```bash
 export GARMIN_MCP_SERVER_URL=https://garmin-mcp.example.com
+export GARMIN_ALLOWED_EMAILS=user@example.com
 docker compose -f docker-compose.remote.yml up -d
 ```
 

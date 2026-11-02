@@ -288,3 +288,32 @@ async def test_import_endpoint_rejects_invalid_token(secret_provider):
     )
     resp = await secret_provider.handle_import_token(req)
     assert resp.status_code == 400
+
+
+# ─── one user per account, whatever the email's case ──────────────────────
+
+def test_the_same_email_in_another_case_is_the_same_user(provider):
+    first = provider._get_or_create_user("Allowed@Example.com")
+
+    assert provider._get_or_create_user("allowed@example.com") == first
+    assert provider._get_or_create_user("  ALLOWED@example.COM ") == first
+
+
+def test_a_user_stored_in_mixed_case_is_still_found(provider):
+    """Rows written before lookups ignored case keep working."""
+    conn = provider._get_conn()
+    conn.execute("INSERT INTO users (id, garmin_email, created_at) VALUES ('old', 'Allowed@Example.com', 1)")
+    conn.commit()
+    conn.close()
+
+    assert provider._get_or_create_user("allowed@example.com") == "old"
+
+
+def test_where_case_variants_exist_the_oldest_is_the_user(provider):
+    conn = provider._get_conn()
+    conn.execute("INSERT INTO users (id, garmin_email, created_at) VALUES ('newer', 'allowed@example.com', 20)")
+    conn.execute("INSERT INTO users (id, garmin_email, created_at) VALUES ('older', 'Allowed@Example.com', 10)")
+    conn.commit()
+    conn.close()
+
+    assert provider._get_or_create_user("ALLOWED@EXAMPLE.COM") == "older"
