@@ -348,6 +348,10 @@
       "description": "Estimate a composition-derived TDEE from logged intake, Garmin's"
     },
     {
+      "name": "get_fastest_splits",
+      "description": "Your fastest 1K, mile, 5K (and longer, where run) in a date range (FORK)."
+    },
+    {
       "name": "get_fitnessage_data",
       "description": "Get fitness age data"
     },

@@ -220,6 +220,7 @@ _FORK_READ_ONLY_TOOLS = frozenset(
         "get_coach_plans",
         "get_ecg",
         "get_ecg_recordings",
+        "get_fastest_splits",
         "get_gear_activities",
         "get_health_baselines",
         "get_health_snapshot",

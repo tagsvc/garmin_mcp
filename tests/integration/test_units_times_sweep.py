@@ -254,6 +254,9 @@ def _garmin_double():
     client.get_lifestyle_logging_data.return_value = {"calendarDate": D, "dailyLogsReport": []}
     client.get_full_name.return_value = "Runner"
     client.get_sensors.return_value = [{"deviceName": "HRM", "serialNumber": 1, "batteryLevel": 80}]
+    client.get_fastest_splits.return_value = [
+        {"distance": 1000, "activityId": 1, "activityDate": D, "time": 330.0},
+        {"distance": 1609, "activityId": 1, "activityDate": D, "time": 540.0}]
     client.get_power_zones.return_value = [{"sport": "RUNNING", "functionalThresholdPower": 300.0,
                                             "zone1Floor": 200.0, "zone2Floor": 240.0, "zone3Floor": 270.0,
                                             "zone4Floor": 300.0, "zone5Floor": 345.0, "zone6Floor": 0.0,
@@ -363,6 +366,7 @@ ARGS = {
                             "include_samples": True},
     "get_ecg_recordings": {"start_date": D}, "get_ecg": {"ecg_id": "e1"},
     "get_power_zones": {},
+    "get_fastest_splits": {"start_date": D, "end_date": D2},
 }
 
 # Tools whose sweep payload carries the checked unit and time fields: these
@@ -390,7 +394,7 @@ MUST_RETURN_JSON = {
     "get_race_predictions", "get_fitnessage_data", "get_all_day_events", "get_full_name",
     "get_sleep_summary_range",
     "get_health_snapshots", "get_health_snapshot", "get_ecg_recordings", "get_ecg",
-    "get_power_zones",
+    "get_power_zones", "get_fastest_splits",
 }
 
 

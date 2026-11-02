@@ -5,6 +5,22 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Fastest splits — 2026-11-02
+
+`get_fastest_splits`, on garminconnect 0.3.20's `get_fastest_splits()`, gives
+Garmin's best 1K, mile and 5K efforts (and longer distances, where run) for a
+date range, ranked by time for each distance. Each effort has:
+
+- its time, in seconds and as m:ss;
+- its average speed and pace in the account's units;
+- the date and the `activity_id`.
+
+The bests come from each activity's recorded distance, so a run with a wrong
+distance gives a wrong best. The tool's description says so, and the tool runs
+no distance check of its own.
+
+Tool counts: stdio 181, remote 178.
+
 ## Power zones — 2026-11-02
 
 `get_power_zones`, on garminconnect 0.3.20's `get_power_zones()`. For each sport

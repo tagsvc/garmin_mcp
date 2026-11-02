@@ -16,7 +16,7 @@ from garmin_mcp.times import (
     put_times,
     zone_garmin_times,
 )
-from garmin_mcp.units import account_unit_system, add_account_units, is_imperial
+from garmin_mcp.units import account_unit_system, add_account_units, format_duration, is_imperial
 from garmin_mcp.write_errors import WriteTracker
 
 # FIT stores lap distance as uint32 centimetres. A device that writes a small
@@ -141,6 +141,37 @@ def _laps_are_swim(laps) -> bool:
 
 # The garmin_client will be set by the main file
 garmin_client = None
+
+
+# Garmin's fastest-split distances, in meters, by the name a runner uses.
+_SPLIT_NAMES = {1000: "1K", 1609: "mile", 5000: "5K", 10000: "10K",
+                21097: "half marathon", 42195: "marathon"}
+
+
+def _curate_fastest_splits(data: Any) -> List[Dict[str, Any]]:
+    """Garmin's best efforts, grouped by distance and ranked by time."""
+    by_distance: Dict[Any, List[Dict[str, Any]]] = {}
+    for effort in data if isinstance(data, list) else []:
+        if not isinstance(effort, dict):
+            continue
+        meters, seconds = effort.get("distance"), effort.get("time")
+        if not isinstance(meters, (int, float)) or not isinstance(seconds, (int, float)) or seconds <= 0:
+            continue
+        by_distance.setdefault(meters, []).append({
+            "duration_seconds": round(seconds, 1),
+            "duration": format_duration(seconds),
+            "avg_speed_mps": round(meters / seconds, 3),
+            "date": effort.get("activityDate"),
+            "activity_id": effort.get("activityId"),
+        })
+    bests = []
+    for meters in sorted(by_distance):
+        efforts = sorted(by_distance[meters], key=lambda e: e["duration_seconds"])
+        for rank, effort in enumerate(efforts, 1):
+            effort["rank"] = rank
+        bests.append({"distance": _SPLIT_NAMES.get(int(meters), f"{meters:g} m"),
+                      "distance_meters": meters, "efforts": efforts})
+    return bests
 
 
 def configure(client):
@@ -1640,5 +1671,39 @@ def register_tools(app):
             return json.dumps(curated, indent=2)
         except Exception as e:
             return f"Error retrieving activity types: {str(e)}"
+
+    @app.tool()
+    async def get_fastest_splits(
+        ctx: Context,
+        start_date: str,
+        end_date: str,
+        activity_type: str = "running",
+        number_of_bests: int = 3,
+    ) -> str:
+        """Your fastest 1K, mile, 5K (and longer, where run) in a date range (FORK).
+
+        Garmin's best efforts inside activities, ranked by time for each
+        distance: duration_seconds and duration (m:ss), the average pace and
+        speed in the account's units, the date and the activity_id (check it
+        with get_activity). Each best comes from the activity's recorded
+        distance, so a run whose distance was wrong gives a wrong best.
+
+        Args:
+            start_date: First day, YYYY-MM-DD.
+            end_date: Last day, YYYY-MM-DD.
+            activity_type: Garmin activity type (default running).
+            number_of_bests: How many bests per distance (default 3).
+        """
+        try:
+            client = get_client(ctx)
+            data = client.get_fastest_splits(start_date, end_date, activity_type, number_of_bests)
+            bests = _curate_fastest_splits(data)
+            if not bests:
+                return f"No {activity_type} bests between {start_date} and {end_date}."
+            result = {"start_date": start_date, "end_date": end_date,
+                      "activity_type": activity_type, "bests": bests}
+            return json.dumps(add_account_units(result, account_unit_system(client)), indent=2)
+        except Exception as e:
+            return f"Error retrieving fastest splits: {str(e)}"
 
     return app

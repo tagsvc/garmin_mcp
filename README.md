@@ -25,9 +25,9 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~180 tools** built on the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.20), plus Garmin Connect endpoints the library does not cover:
+This MCP server implements **~181 tools** built on the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.20), plus Garmin Connect endpoints the library does not cover:
 
-- ✅ Activity Management (23 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only). `get_activity` says where a run's distance came from (GPS, the watch, or a paired strap or foot pod) and flags a distance that disagrees with the GPS track
+- ✅ Activity Management (24 tools) - includes your fastest 1K/mile/5K over a date range, write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only). `get_activity` says where a run's distance came from (GPS, the watch, or a paired strap or foot pod) and flags a distance that disagrees with the GPS track
 - ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining
 - ✅ Health Snapshot & ECG (4 tools) - two-minute Health Snapshots (heart rate, respiration, stress, SpO2, HRV) with their per-second samples, and ECG recordings from the watch's ECG app
 - ✅ Training & Performance (18 tools) - includes CTL/ATL/TSB, HRV, VO2 max and respiration trends, heat/altitude acclimation, and running tolerance
@@ -197,7 +197,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~180 tools by default, which can be a lot of context for
+This server registers ~181 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 three optional environment variables:
 
