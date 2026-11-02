@@ -33,7 +33,7 @@ required checks must pass before it can merge.
    companions added beside metric fields (never replacing them), times as `*_gmt`/`*_local`
    with local from the record's own offset before the profile zone, no `VOLUME` in
    `Dockerfile.remote`, `$PORT` handling).
-3. Re-enumerate tool counts if registration changed (expect stdio 179 / remote 176).
+3. Re-enumerate tool counts if registration changed (expect stdio 180 / remote 177).
 4. A new read-only tool goes in `tests/integration/test_units_times_sweep.py`'s
    table; a units/times contract failure is fixed, not allowlisted without a reason.
 5. If a tool module changed, ask the user to run

@@ -164,6 +164,30 @@ def _label_profile(profile: Any, unit_system: Optional[str], zone: Optional[str]
     return profile
 
 
+def _curate_power_zones(entry: Dict[str, Any]) -> Dict[str, Any]:
+    """One sport's power zones: FTP and each zone's range in watts and % of FTP.
+
+    Garmin sends zone1Floor..zone7Floor in watts; a sport that uses five zones
+    sends 0 for the floors it does not use. A zone runs from its floor to the
+    next zone's floor; the last one has no ceiling.
+    """
+    ftp = entry.get("functionalThresholdPower")
+    floors = []
+    for number in range(1, 8):
+        floor = entry.get(f"zone{number}Floor")
+        if isinstance(floor, (int, float)) and (number == 1 or floor > 0):
+            floors.append((number, floor))
+    zones = []
+    for index, (number, floor) in enumerate(floors):
+        ceiling = floors[index + 1][1] if index + 1 < len(floors) else None
+        zone: Dict[str, Any] = {"zone": number, "from_watts": floor, "to_watts": ceiling}
+        if isinstance(ftp, (int, float)) and ftp > 0:
+            zone["from_percent_ftp"] = round(floor / ftp * 100)
+        zones.append(zone)
+    curated = {"sport": entry.get("sport"), "ftp_watts": ftp, "zones": zones}
+    return {k: v for k, v in curated.items() if v is not None}
+
+
 def configure(client):
     """Configure the module with the Garmin client instance"""
     global garmin_client
@@ -401,5 +425,32 @@ def register_tools(app):
             return f"Invalid heart-rate zone settings: {str(e)}"
         except Exception as e:
             return tracker.error(e)
+
+    @app.tool()
+    async def get_power_zones(ctx: Context, sport: Optional[str] = None) -> str:
+        """Get the user's power training zones (FORK), per sport.
+
+        Each sport gives its FTP (ftp_watts) and zones, each from_watts to
+        to_watts (the last zone has no ceiling) and from_percent_ftp. Running
+        uses five zones, cycling seven. Use it to place an activity's power
+        (avg_power_watts) in a zone.
+
+        Args:
+            sport: Optional sport (running, cycling, rowing,
+                   cross_country_skiing); every sport when omitted.
+        """
+        try:
+            data = get_client(ctx).get_power_zones()
+            entries = [e for e in data if isinstance(e, dict)] if isinstance(data, list) else []
+            if sport:
+                key = sport.strip().upper().replace(" ", "_")
+                entries = [e for e in entries if str(e.get("sport", "")).upper() == key]
+                if not entries:
+                    return f"No power zones found for {sport}."
+            if not entries:
+                return "No power zones found."
+            return json.dumps({"power_zones": [_curate_power_zones(e) for e in entries]}, indent=2)
+        except Exception as e:
+            return f"Error retrieving power zones: {str(e)}"
 
     return app
