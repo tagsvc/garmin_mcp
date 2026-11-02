@@ -5,6 +5,17 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Power zones — 2026-11-02
+
+`get_power_zones`, on garminconnect 0.3.20's `get_power_zones()`. For each sport
+it gives the FTP and each zone's range, in watts and as a percent of FTP, so an
+activity's power can be placed in a zone:
+- running uses five zones;
+- cycling uses seven;
+- floors of 0 above zone 1 are zones the sport does not use.
+
+Tool counts: stdio 180, remote 177.
+
 ## ECG tools curated from the live reply — 2026-11-02
 
 The first live ECG reply (a 30-second recording from a fenix 8, ECG app 1.1.4)

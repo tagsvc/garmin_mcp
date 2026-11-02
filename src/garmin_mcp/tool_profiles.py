@@ -178,6 +178,7 @@ WORKOUTS_TOOLS = CORE_TOOLS | frozenset(
 
 TRAINING_TOOLS = CORE_TOOLS | frozenset(
     {
+        "get_power_zones",
         # training
         "get_acclimation",
         "get_cycling_ftp",

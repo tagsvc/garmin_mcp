@@ -25,7 +25,7 @@ Garmin's API is accessed via the awesome [python-garminconnect](https://github.c
 
 ### Tool Coverage
 
-This MCP server implements **~179 tools** built on the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.20), plus Garmin Connect endpoints the library does not cover:
+This MCP server implements **~180 tools** built on the [python-garminconnect](https://github.com/cyberjunky/python-garminconnect) library (v0.3.20), plus Garmin Connect endpoints the library does not cover:
 
 - ✅ Activity Management (23 tools) - includes write tools for type, description, event type, perceived effort, feel, and exercise sets, plus a confirm-gated `delete_activity` (stdio only). `get_activity` says where a run's distance came from (GPS, the watch, or a paired strap or foot pod) and flags a distance that disagrees with the GPS track
 - ✅ Health & Wellness (35 tools) - includes custom lightweight summary tools, multi-day calorie/step totals, a composition-derived TDEE estimate, and recovery time remaining
@@ -40,7 +40,7 @@ This MCP server implements **~179 tools** built on the [python-garminconnect](ht
 - ✅ Data Management (3 tools) - bulk export helpers
 - ✅ Women's Health (3 tools)
 - ✅ Calendar (1 tool) - races and events from the Garmin calendar
-- ✅ User Profile (6 tools) - includes per-sport heart rate zone reads and writes
+- ✅ User Profile (7 tools) - includes per-sport heart rate zone reads and writes, and power zones
 - ✅ High-Level Workout Builders (6 tools) - create and schedule workouts without writing JSON, including repeat-based interval runs
 - ✅ Courses (5 tools) - list / get details / upload GPX as course (base64 or local path) / download GPX / delete course
 - ✅ Activity Analysis (3 tools) - FIT file parsing, paginated FIT messages, Power Duration Curve; requires power meter and/or Di2
@@ -197,7 +197,7 @@ The repo ships a `railway.json` pinned to `Dockerfile.remote`, so Railway deploy
 
 ## Tool Filtering
 
-This server registers ~179 tools by default, which can be a lot of context for
+This server registers ~180 tools by default, which can be a lot of context for
 an LLM to carry in every session. You can expose only the tools you need with
 three optional environment variables:
 

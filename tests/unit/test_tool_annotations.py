@@ -19,10 +19,10 @@ def test_annotation_registry_is_exhaustive_and_disjoint():
     tools = asyncio.run(app.list_tools())
     names = {tool.name for tool in tools}
 
-    # FORK: 157 upstream tools plus this fork's 22 (analytics, auth_tools, the
+    # FORK: 157 upstream tools plus this fork's 23 (analytics, auth_tools, the
     # Coach tools, sensors, gear activities, health status, inspect_garmin,
-    # Health Snapshot and ECG).
-    assert len(names) == 179
+    # Health Snapshot and ECG, power zones).
+    assert len(names) == 180
     assert tool_annotations.ALL_ANNOTATED_TOOLS == names
     assert not (
         tool_annotations.READ_ONLY_TOOLS

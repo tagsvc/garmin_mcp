@@ -22,7 +22,8 @@ from mcp.server.fastmcp import FastMCP
 
 import garmin_mcp
 from garmin_mcp import (
-    auth_cli, auth_tools, data_management, devices, health_snapshots, weight_management, workouts,
+    auth_cli, auth_tools, data_management, devices, health_snapshots, user_profile, weight_management,
+    workouts,
 )
 from garmin_mcp.client_resolver import set_global_client
 from tests.offline_garmin import TOKENS
@@ -400,6 +401,25 @@ async def test_sensors_come_from_the_librarys_request(offline_garmin, tmp_path):
 
     assert payload["sensors"][0]["battery_level"] == 80
     assert [c for c in offline_garmin.calls if c["path"] == "/device-service/sensors"][0]["params"] is None
+
+
+# ─── power zones: the library's request ───────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_power_zones_come_from_the_librarys_request(offline_garmin, tmp_path):
+    offline_garmin.routes["/biometric-service/powerZones/sports/all"] = [
+        {"sport": "RUNNING", "functionalThresholdPower": 300.0, "zone1Floor": 195.0, "zone2Floor": 240.0}]
+    garmin = _signed_in(tmp_path)
+    user_profile.configure(garmin)
+    set_global_client(garmin)
+    try:
+        payload = json.loads(await _call(user_profile.register_tools(FastMCP("zones")), "get_power_zones", {}))
+    finally:
+        set_global_client(None)
+
+    assert payload["power_zones"][0]["ftp_watts"] == 300.0
+    assert offline_garmin.to("/biometric-service/powerZones/sports/all")
 
 
 # ─── every request path in the source ─────────────────────────────────────

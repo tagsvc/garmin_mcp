@@ -480,6 +480,10 @@
       "description": "Get season-best Power Duration Curve across recent activities."
     },
     {
+      "name": "get_power_zones",
+      "description": "Get the user's power training zones (FORK), per sport."
+    },
+    {
       "name": "get_pregnancy_summary",
       "description": "Get pregnancy summary data"
     },
