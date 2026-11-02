@@ -171,7 +171,7 @@ ECG_SUMMARY = {
 ECG_RECORDING = {
     "summary": ECG_SUMMARY,
     "reading": {"sampleRate": 128.0, "rawSampleRate": 512.0, "durationInSeconds": 30,
-                "samples": [0.01] * 3840},
+                "leadType": "Lead I", "samples": [0.01] * 3840},
     "processingInfo": {"uploadTime": 1793573045000, "processingTime": 1793573045010,
                        "apiVersion": "1.0.0"},
 }
@@ -218,6 +218,7 @@ async def test_one_ecg_with_its_reading_and_no_waveform_by_default(app, client):
     assert ecg["rhythm"] == "SINUS_NORMAL"
     assert (ecg["sample_rate_hz"], ecg["raw_sample_rate_hz"], ecg["duration_seconds"]) == (128.0, 512.0, 30)
     assert ecg["sample_count"] == 3840
+    assert ecg["lead"] == "Lead I"
     assert ecg["uploaded_gmt"] == "2026-11-01T22:44:05Z"
     assert ecg["uploaded_local"] == "2026-11-01T17:44:05-05:00"
     assert "samples" not in ecg

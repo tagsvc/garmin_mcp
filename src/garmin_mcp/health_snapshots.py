@@ -282,8 +282,9 @@ def register_tools(app):
     async def get_ecg(ctx: Context, ecg_id: str, include_waveform: bool = False) -> str:
         """One ECG recording: its summary, the reading's sampling and, if asked, the waveform.
 
-        The summary is as in get_ecg_recordings. The reading gives the sample
-        rate (sample_rate_hz, and the watch's raw_sample_rate_hz), its length
+        The summary is as in get_ecg_recordings. The reading gives the lead
+        (e.g. "Lead I", the single lead a watch records), the sample rate
+        (sample_rate_hz, and the watch's raw_sample_rate_hz), its length
         (duration_seconds) and sample_count. With include_waveform the samples
         themselves are returned as Garmin sends them (a few thousand numbers).
         uploaded_gmt/_local and processed_gmt/_local say when Garmin received
@@ -305,6 +306,7 @@ def register_tools(app):
             reading = data.get("reading") if isinstance(data.get("reading"), dict) else {}
             samples = reading.get("samples") if isinstance(reading.get("samples"), list) else None
             ecg.update({k: v for k, v in {
+                "lead": reading.get("leadType"),
                 "sample_rate_hz": reading.get("sampleRate"),
                 "raw_sample_rate_hz": reading.get("rawSampleRate"),
                 "duration_seconds": reading.get("durationInSeconds"),
