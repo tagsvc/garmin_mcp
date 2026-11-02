@@ -42,12 +42,13 @@ coverage.
 | 429 fail-fast login client | `oauth_provider.py` (`_new_login_client`) | Excludes 429 from garth's retry `status_forcelist` so a rate-limited login isn't amplified. |
 | Coach plan curation fix | `workouts.py` (`_get_garmin_coach_workouts`) | Surfaces the `trainingPlanDetailsDTO` fields that exist — race goal, workouts per week, registration date. Upstream reads only `trainingType`, which adaptive plans do not have. |
 | Garmin Coach tools (3) | `workouts.py` | `get_coach_plans` (active + completed), `get_coach_plan_details`, `get_coach_plan_progress` (per-workout grades). All on `atp-api`, found by capturing Garmin Connect's own traffic. |
-| Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` — battery level and last-connected, which `get_devices` omits. |
+| Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` (garminconnect's `get_sensors()`) — battery level and last-connected, which `get_devices` omits. |
 | Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
 | Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. On a day the profile zone's clocks change, day-level payloads place each time by that zone and add `utcOffsetHoursAfterChange` and `clockChangeGmt` (`times.clock_change`). |
 | Distance source check | `distance_check.py`; used by `activity_management.get_activity` | For runs, walks and hikes, `distance_check`: which sensor supplied distance (FIT message 22, undocumented) and the recorded distance against the GPS track's own length; warns past 5%. Built after a paired HRM 600 set to supply pace and distance Always inflated six weeks of runs by 24–40%. |
 | Diagnostics (1 tool) | `diagnostics.py`, `payload_recording.py`, `field_coverage.py` | `inspect_garmin`: runs one read-only tool with its Garmin replies recorded and returns them, optionally with the fields its output leaves out; or GETs one Garmin Connect API path. `find`/`fields` narrow a reply; replies cap at ~20 KB. Registered in both servers. |
+| Health Snapshot & ECG (4 tools) | `health_snapshots.py` | Needs garminconnect 0.3.20. `get_health_snapshots` / `get_health_snapshot`: the watch's two-minute readings, curated (heart rate, respiration, stress, SpO2 as avg/min/max; HRV RMSSD and SDRR; HR zones; device), times from the record's own GMT/local pair, per-second samples on request as seconds from the start. `get_ecg_recordings` / `get_ecg`: Garmin's reply from `ghs.garmin.com` in its own layout with its time text zoned and waveforms left out unless asked; curate it once a live reply confirms the shape. |
 | Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
@@ -87,6 +88,12 @@ coverage.
       `Garmin.login` re-raises instead of wrapping, so `login_to_garmin` answers
       `mfa_required`;
     - saved token files load and sign requests, and dumped ones are owner-only.
+  - **Library methods or direct calls.** Upstream's direct `connectapi` calls stay
+    as upstream wrote them, even where garminconnect now has a method for the
+    same request: changing them only adds merge conflicts. The fork's own direct
+    calls move to a library method when it sends the identical request (path,
+    query, headers), checked by a real-client test. The fork keeps its own call
+    where the library is weaker, and says why.
 - **Allowlist is fail-closed.** An empty/unset `GARMIN_ALLOWED_EMAILS` rejects every login.
 - **Token import is fail-closed and secret-gated.** `GARMIN_IMPORT_SECRET` (constant-time
   compare) is required on both the login-page import and `POST /import-token`; unset disables import.
@@ -404,6 +411,14 @@ each divergence so a merge doesn't silently undo a deliberate decision.
   (more retries/backoff) was rejected because it amplifies the limit. _On merge:_
   keep 429 out of the client's retry `status_forcelist`.
 
+- **The remote login stays on garth.** Why: garminconnect (0.3.0 and later) calls
+  garth deprecated and offers its own resumable MFA login, but that login runs a
+  chain of strategies (up to about 11 credential POSTs) and has no setting to
+  stop at the first 429. From Railway's datacenter IP that deepens Garmin's
+  throttle, which the fail-fast client above exists to avoid. Token import is
+  the main remote path and needs neither. _Revisit_ if garth stops working with
+  Garmin's SSO, rebuilding fail-fast on garminconnect's single-strategy option.
+
 - **Token import (login-page paste + `POST /import-token`).** Why: Garmin
   rate-limits its OAuth token-mint endpoint from datacenter IPs, so the server
   often can't complete a login even with a correct MFA code. Minting on a
@@ -565,12 +580,12 @@ The report holds field names and counts only, never values, but it shows which
 of your data types have data, so it stays out of the repo (`.gitignore` covers
 `field_coverage*.txt`).
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 175 / remote 172.
+**Definition of done:** suite green, invariants intact, tool counts stdio 179 / remote 176.
 
 ## Expected state after a clean build
 
 - Full suite: `uv run pytest -m "not e2e"` → all pass (1683 at time of writing).
-- Tool counts: **stdio 175**, **remote 172** (`auth_tools` and `delete_activity` are stdio-only).
+- Tool counts: **stdio 179**, **remote 176** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.

@@ -565,7 +565,9 @@ async def test_gear_takes_brand_and_model_from_v2_not_the_legacy_placeholders(ap
         if path == "/gear-service/gear/v2/list":
             # Hyphenated, as v2 writes UUIDs; the model is the text typed for "Other".
             return [{"uuid": "aaaa1111-bbbb-2222-cccc-3333dddd4444", "status": "ACTIVE",
-                     "brand": "Brooks", "model": "Ghost AMP", "notes": "Sunday easy"}]
+                     "brand": "Brooks", "model": "Ghost AMP", "notes": "Sunday easy",
+                     "durationUsedSeconds": 26000, "daysUsed": 10, "usageType": "DISTANCE",
+                     "maxUsageDurationSeconds": 0}]
         if path == "/gear-service/gear/v2/eeee5555-ffff-6666-aaaa-7777bbbb8888":
             return {"uuid": "eeee5555-ffff-6666-aaaa-7777bbbb8888", "status": "RETIRED",
                     "brand": "ASICS", "model": "Gel-Cumulus 28", "notes": "Replaced"}
@@ -577,11 +579,40 @@ async def test_gear_takes_brand_and_model_from_v2_not_the_legacy_placeholders(ap
     active, retired, unknown = (await _call(app, "get_gear", {"include_stats": False}))["gear"]
 
     assert (active["make"], active["model"], active["notes"]) == ("Brooks", "Ghost AMP", "Sunday easy")
+    # Time on the shoe and days used, from the v2 record; a limit by distance
+    # has no duration limit to give.
+    assert (active["duration_used_seconds"], active["days_used"], active["limit_by"]) == (26000, 10, "distance")
+    assert "max_duration_seconds" not in active
     assert (retired["make"], retired["model"], retired["notes"]) == ("ASICS", "Gel-Cumulus 28", "Replaced")
     # Garmin has no record: no names rather than its placeholders.
     assert (unknown["make"], unknown["model"]) == (None, None)
     # Only gear the list left out is asked for by UUID.
     assert "/gear-service/gear/v2/aaaa1111-bbbb-2222-cccc-3333dddd4444" not in asked
+
+
+@pytest.mark.asyncio
+async def test_gear_stats_count_activities_by_type_from_the_v2_record(app, mock_garmin_client):
+    """The v2 list leaves the per-type counts out, even for active gear; the
+    gear's own v2 record has them."""
+    mock_garmin_client.get_device_last_used.return_value = {"userProfileNumber": 1}
+    mock_garmin_client.get_gear.return_value = [
+        {"uuid": "aaaa1111bbbb2222cccc3333dddd4444", "displayName": "Daily", "gearStatusName": "active"}]
+    mock_garmin_client.get_gear_defaults.return_value = []
+    mock_garmin_client.get_gear_stats.return_value = {"totalActivities": 14, "totalDistance": 47083.9}
+
+    def connectapi(path, **_):
+        if path == "/gear-service/gear/v2/list":
+            return [{"uuid": "aaaa1111-bbbb-2222-cccc-3333dddd4444", "status": "ACTIVE"}]
+        if path == "/gear-service/gear/v2/aaaa1111-bbbb-2222-cccc-3333dddd4444":
+            return {"uuid": "aaaa1111-bbbb-2222-cccc-3333dddd4444", "countsByActivityType": [
+                {"activityTypeKey": "running", "count": 10}, {"activityTypeKey": "walking", "count": 4}]}
+        raise RuntimeError("API call client error (404)")
+    mock_garmin_client.connectapi.side_effect = connectapi
+
+    item = (await _call(app, "get_gear", {}))["gear"][0]
+
+    assert item["stats"]["total_activities"] == 14
+    assert item["stats"]["activities_by_type"] == {"running": 10, "walking": 4}
 
 
 @pytest.mark.parametrize("uuid, expected", [

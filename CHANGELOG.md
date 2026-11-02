@@ -5,6 +5,54 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Library calls in place of the fork's own — 2026-11-02
+
+- **`get_sensors` and the distance check** read paired sensors through
+  garminconnect's `get_sensors()`, which sends the same request
+  (`/device-service/sensors`) the tools sent themselves. A real-client test
+  pins it.
+- **Left as they are:**
+  - **Upstream's direct calls** (activity event types, the gear v2 list,
+    workout rescheduling, courses, heart rate zones) and **upstream's goals
+    workaround**. Changing upstream code only adds merge conflicts. FORK.md now
+    states the rule.
+  - The goals workaround also sends the same request as 0.3.20's `get_goals`
+    but paginates more carefully: it stops on a short page or a repeated one.
+
+## Gear: time on it, days used, activities by type — 2026-11-02
+
+`get_gear` adds, from Garmin's v2 gear records:
+
+- `duration_used_seconds` and `days_used`: the time on each shoe and the days
+  it was worn;
+- `limit_by`: whether the replacement limit is a distance or a duration, with
+  `max_duration_seconds` when a duration limit is set;
+- `stats.activities_by_type`, such as `{"running": 10, "walking": 4}`. Only each
+  shoe's own v2 record has these counts; the v2 list leaves them out, even for
+  active gear. So with `include_stats` (the default), the tool makes one more
+  request per shoe.
+
+## Health Snapshot and ECG tools — 2026-11-02
+
+Four tools, in a new `health_snapshots` module, on garminconnect 0.3.20's
+methods:
+
+- **`get_health_snapshots`** lists the watch's Health Snapshots in a date range.
+  Each gives heart rate, respiration, stress and SpO2 (avg, min and max), HRV
+  as RMSSD and SDRR, seconds in each heart rate zone, and the device and its
+  firmware. Times come from the record's own GMT/local pair.
+- **`get_health_snapshot`** returns one snapshot. With `include_samples`, it
+  adds the per-second samples, timed in seconds from the start.
+- **`get_ecg_recordings`** and **`get_ecg`** return ECG recordings from the
+  watch's ECG app. Garmin serves them from `ghs.garmin.com`, and the library
+  sends the account's token there.
+  - The reply is returned in Garmin's own layout: its time text is zoned and
+    long waveform lists are left out unless asked for.
+  - It gets curated once a live reply shows its fields; no account with ECG
+    data has confirmed them yet.
+
+Tool counts: stdio 179, remote 176.
+
 ## garminconnect 0.3.20 — 2026-11-02
 
 `garminconnect==0.3.20`, up from 0.3.5. The lock changes only the

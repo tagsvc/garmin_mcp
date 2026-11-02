@@ -80,8 +80,6 @@ def _connectapi(url, params=None, headers=None, **_):
         return [day] if len(dates) == 2 else day
     if "usersummary-service/stats/daily" in url:
         return {"values": [{"calendarDate": D, "values": {"totalCalories": 2500, "totalSteps": 9000}}]}
-    if "device-service/sensors" in url:
-        return [{"deviceName": "HRM", "serialNumber": 1, "batteryLevel": 80}]
     if url.startswith("/course-service/course/"):
         return {"courseId": 7, "courseName": "Loop", "distanceInMeters": 5000.0,
                 "elevationGainInMeters": 30.0, "coursePoints": [{"name": "Water", "distance": 1609.0}]}
@@ -255,6 +253,20 @@ def _garmin_double():
     client.get_blood_pressure.return_value = {"measurementSummaries": []}
     client.get_lifestyle_logging_data.return_value = {"calendarDate": D, "dailyLogsReport": []}
     client.get_full_name.return_value = "Runner"
+    client.get_sensors.return_value = [{"deviceName": "HRM", "serialNumber": 1, "batteryLevel": 80}]
+    snapshot = {"activityUuid": {"uuid": "00000000-0000-4000-8000-000000000003"},
+                "calendarDate": D, "activityName": "Health Snapshot",
+                "startTimestampGMT": GMT, "startTimestampLocal": LOCAL,
+                "endTimestampGMT": "2026-10-27T18:39:26.0", "endTimestampLocal": "2026-10-27T14:39:26.0",
+                "summaryTypeDataList": [{"summaryType": "HEART_RATE", "avgValue": 65.0}]}
+    client.get_health_snapshots_range.return_value = [snapshot]
+    client.get_health_snapshot.return_value = snapshot
+    client.get_health_snapshot_epochs.return_value = {
+        "epochDescriptorDTOList": [{"index": 0, "key": "timestamp"}, {"index": 1, "key": "heartRate"}],
+        "epochArray": [[EPOCH_GMT, 65.0]]}
+    ecg = {"ecgId": "e1", "startTimeGmt": GMT, "startTimeLocal": LOCAL, "waveform": [0.0] * 300}
+    client.get_ecg_list.return_value = {"ecgs": [ecg]}
+    client.get_ecg.return_value = ecg
     # Tools label Garmin's payloads in place, and several share a payload
     # here: each call gets its own copy, so one tool's labels cannot cover
     # for another's.
@@ -338,6 +350,10 @@ ARGS = {
     "get_lagged_health_correlations": {"end_date": D, "days": 14},
     "get_weekly_health_review": {"end_date": D}, "run_custom_health_report": {"end_date": D, "days": 7},
     "list_health_report_metrics": {}, "list_saved_health_reports": {},
+    "get_health_snapshots": {"start_date": D},
+    "get_health_snapshot": {"snapshot_id": "00000000-0000-4000-8000-000000000003", "date": D,
+                            "include_samples": True},
+    "get_ecg_recordings": {"start_date": D}, "get_ecg": {"ecg_id": "e1"},
 }
 
 # Tools whose sweep payload carries the checked unit and time fields: these
@@ -364,6 +380,7 @@ MUST_RETURN_JSON = {
     "get_rhr_day", "get_weekly_stress", "get_weekly_intensity_minutes", "get_cycling_ftp",
     "get_race_predictions", "get_fitnessage_data", "get_all_day_events", "get_full_name",
     "get_sleep_summary_range",
+    "get_health_snapshots", "get_health_snapshot", "get_ecg_recordings", "get_ecg",
 }
 
 

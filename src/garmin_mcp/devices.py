@@ -444,7 +444,7 @@ def register_tools(app):
         zone, named by local_time_zone) label it.
         """
         try:
-            data = get_client(ctx).connectapi("/device-service/sensors")
+            data = get_client(ctx).get_sensors()
             if not isinstance(data, list):
                 return json.dumps(data, indent=2)
 

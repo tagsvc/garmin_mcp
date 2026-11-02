@@ -17,7 +17,8 @@ import urllib.parse
 
 import requests
 
-API_HOST = "connectapi.garmin.com"
+# Garmin Connect's API, and the host its ECG data is served from.
+API_HOSTS = ("connectapi.garmin.com", "ghs.garmin.com")
 PROFILE = {"displayName": "test-runner", "fullName": "Test Runner"}
 SETTINGS = {"userData": {"measurementSystem": "statute_us"}}
 
@@ -55,9 +56,9 @@ class GarminAPI:
 
     def __call__(self, method, url, **kwargs):
         parts = urllib.parse.urlsplit(url)
-        if parts.hostname != API_HOST:
+        if parts.hostname not in API_HOSTS:
             raise NetworkBlocked(f"offline: {method} {url}")
-        self.calls.append({"method": method, "url": url, "path": parts.path,
+        self.calls.append({"method": method, "url": url, "host": parts.hostname, "path": parts.path,
                            "params": kwargs.get("params"), "json": kwargs.get("json"),
                            "headers": kwargs.get("headers") or {}})
         response = requests.Response()

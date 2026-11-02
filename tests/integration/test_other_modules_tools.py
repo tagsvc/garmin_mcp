@@ -894,9 +894,13 @@ async def test_get_gear_tool(app_with_gear, mock_garmin_client):
     # Verify the chain of API calls
     mock_garmin_client.get_device_last_used.assert_called_once()
     mock_garmin_client.get_gear.assert_called_once_with(80653452)  # from MOCK_DEVICE_LAST_USED
-    mock_garmin_client.connectapi.assert_called_once_with(
-        "/gear-service/gear/v2/list"
-    )
+    # The v2 list, then each gear's v2 record for its activities by type.
+    asked = [call.args[0] for call in mock_garmin_client.connectapi.call_args_list]
+    assert asked[0] == "/gear-service/gear/v2/list"
+    assert sorted(asked[1:]) == [
+        "/gear-service/gear/v2/6f27ed27-3977-49ac-9f6f-450e039c2424",
+        "/gear-service/gear/v2/8abfc40d-71fb-4860-bce1-9072b6c79644",
+    ]
     mock_garmin_client.get_gear_defaults.assert_called_once_with(80653452)
 
 
