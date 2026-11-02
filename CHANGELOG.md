@@ -5,6 +5,27 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Health Snapshot and ECG tools — 2026-11-02
+
+Four tools, in a new `health_snapshots` module, on garminconnect 0.3.20's
+methods:
+
+- **`get_health_snapshots`** lists the watch's Health Snapshots in a date range.
+  Each gives heart rate, respiration, stress and SpO2 (avg, min and max), HRV
+  as RMSSD and SDRR, seconds in each heart rate zone, and the device and its
+  firmware. Times come from the record's own GMT/local pair.
+- **`get_health_snapshot`** returns one snapshot. With `include_samples`, it
+  adds the per-second samples, timed in seconds from the start.
+- **`get_ecg_recordings`** and **`get_ecg`** return ECG recordings from the
+  watch's ECG app. Garmin serves them from `ghs.garmin.com`, and the library
+  sends the account's token there.
+  - The reply is returned in Garmin's own layout: its time text is zoned and
+    long waveform lists are left out unless asked for.
+  - It gets curated once a live reply shows its fields; no account with ECG
+    data has confirmed them yet.
+
+Tool counts: stdio 179, remote 176.
+
 ## garminconnect 0.3.20 — 2026-11-02
 
 `garminconnect==0.3.20`, up from 0.3.5. The lock changes only the

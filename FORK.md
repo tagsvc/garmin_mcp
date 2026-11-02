@@ -48,6 +48,7 @@ coverage.
 | Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. On a day the profile zone's clocks change, day-level payloads place each time by that zone and add `utcOffsetHoursAfterChange` and `clockChangeGmt` (`times.clock_change`). |
 | Distance source check | `distance_check.py`; used by `activity_management.get_activity` | For runs, walks and hikes, `distance_check`: which sensor supplied distance (FIT message 22, undocumented) and the recorded distance against the GPS track's own length; warns past 5%. Built after a paired HRM 600 set to supply pace and distance Always inflated six weeks of runs by 24–40%. |
 | Diagnostics (1 tool) | `diagnostics.py`, `payload_recording.py`, `field_coverage.py` | `inspect_garmin`: runs one read-only tool with its Garmin replies recorded and returns them, optionally with the fields its output leaves out; or GETs one Garmin Connect API path. `find`/`fields` narrow a reply; replies cap at ~20 KB. Registered in both servers. |
+| Health Snapshot & ECG (4 tools) | `health_snapshots.py` | Needs garminconnect 0.3.20. `get_health_snapshots` / `get_health_snapshot`: the watch's two-minute readings, curated (heart rate, respiration, stress, SpO2 as avg/min/max; HRV RMSSD and SDRR; HR zones; device), times from the record's own GMT/local pair, per-second samples on request as seconds from the start. `get_ecg_recordings` / `get_ecg`: Garmin's reply from `ghs.garmin.com` in its own layout with its time text zoned and waveforms left out unless asked; curate it once a live reply confirms the shape. |
 | Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
@@ -565,12 +566,12 @@ The report holds field names and counts only, never values, but it shows which
 of your data types have data, so it stays out of the repo (`.gitignore` covers
 `field_coverage*.txt`).
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 175 / remote 172.
+**Definition of done:** suite green, invariants intact, tool counts stdio 179 / remote 176.
 
 ## Expected state after a clean build
 
 - Full suite: `uv run pytest -m "not e2e"` → all pass (1683 at time of writing).
-- Tool counts: **stdio 175**, **remote 172** (`auth_tools` and `delete_activity` are stdio-only).
+- Tool counts: **stdio 179**, **remote 176** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.

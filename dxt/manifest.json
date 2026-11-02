@@ -332,6 +332,14 @@
       "description": "Get earned badges for user"
     },
     {
+      "name": "get_ecg",
+      "description": "One ECG recording: Garmin's result for it and, if asked, the waveform."
+    },
+    {
+      "name": "get_ecg_recordings",
+      "description": "List your ECG recordings (the watch's ECG app) in a date range."
+    },
+    {
       "name": "get_endurance_score",
       "description": "Get endurance score data between dates"
     },
@@ -370,6 +378,14 @@
     {
       "name": "get_health_baselines",
       "description": "Compare current health metrics against personal rolling baselines."
+    },
+    {
+      "name": "get_health_snapshot",
+      "description": "One Health Snapshot, optionally with its per-second samples."
+    },
+    {
+      "name": "get_health_snapshots",
+      "description": "List your Health Snapshots: two-minute readings the watch takes on request."
     },
     {
       "name": "get_health_status",

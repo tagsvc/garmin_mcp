@@ -21,7 +21,9 @@ from garminconnect import Garmin, GarminConnectTooManyRequestsError
 from mcp.server.fastmcp import FastMCP
 
 import garmin_mcp
-from garmin_mcp import auth_cli, auth_tools, data_management, weight_management, workouts
+from garmin_mcp import (
+    auth_cli, auth_tools, data_management, health_snapshots, weight_management, workouts,
+)
 from garmin_mcp.client_resolver import set_global_client
 from tests.offline_garmin import TOKENS
 
@@ -331,6 +333,54 @@ async def test_blood_pressure_with_no_time_is_logged_at_the_profile_zones_now(wr
     local, gmt = _ts(sent["measurementTimestampLocal"]), _ts(sent["measurementTimestampGMT"])
     assert before - datetime.timedelta(seconds=1) <= local <= after
     assert gmt - local == -NEW_YORK.utcoffset(local)
+
+
+# ─── Health Snapshot and ECG: the library's requests ─────────────────────
+
+SNAPSHOT_UUID = "00000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture
+def snapshots(offline_garmin, tmp_path):
+    base = "/wellnessactivity-service/activity"
+    offline_garmin.routes.update({
+        f"{base}/summary/range/2026-10-01/2026-11-01": [{"activityUuid": {"uuid": SNAPSHOT_UUID},
+                                                         "calendarDate": "2026-11-01"}],
+        f"{base}/summary/2026-11-01/{SNAPSHOT_UUID}": {"activityUuid": {"uuid": SNAPSHOT_UUID}},
+        f"{base}/epoch/{SNAPSHOT_UUID}": {"epochDescriptorDTOList": [], "epochArray": []},
+        "/ghs/ecg/v1/ecg/list": {"ecgs": []},
+    })
+    garmin = _signed_in(tmp_path)
+    health_snapshots.configure(garmin)
+    set_global_client(garmin)
+    yield health_snapshots.register_tools(FastMCP("snapshots"))
+    set_global_client(None)
+
+
+@pytest.mark.asyncio
+async def test_health_snapshot_tools_send_the_librarys_requests(snapshots, offline_garmin):
+    listed = json.loads(await _call(snapshots, "get_health_snapshots",
+                                    {"start_date": "2026-10-01", "end_date": "2026-11-01"}))
+    await _call(snapshots, "get_health_snapshot",
+                {"snapshot_id": SNAPSHOT_UUID, "date": "2026-11-01", "include_samples": True})
+
+    assert listed["snapshots"][0]["snapshot_id"] == SNAPSHOT_UUID
+    paths = [call["path"] for call in offline_garmin.calls if "wellnessactivity" in call["path"]]
+    assert paths == [
+        "/wellnessactivity-service/activity/summary/range/2026-10-01/2026-11-01",
+        f"/wellnessactivity-service/activity/summary/2026-11-01/{SNAPSHOT_UUID}",
+        f"/wellnessactivity-service/activity/epoch/{SNAPSHOT_UUID}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ecg_requests_go_to_garmins_ecg_host_signed_in(snapshots, offline_garmin):
+    await _call(snapshots, "get_ecg_recordings", {"start_date": "2026-10-01", "end_date": "2026-11-01"})
+
+    call = next(c for c in offline_garmin.calls if c["path"] == "/ghs/ecg/v1/ecg/list")
+    assert call["host"] == "ghs.garmin.com"
+    assert call["params"]["firstDay"] == "2026-10-01" and call["params"]["lastDay"] == "2026-11-01"
+    assert call["headers"]["Authorization"] == f"Bearer {TOKENS['di_token']}"
 
 
 # ─── every request path in the source ─────────────────────────────────────

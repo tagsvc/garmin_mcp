@@ -41,6 +41,7 @@ from garmin_mcp import analytics
 from garmin_mcp import auth_tools
 from garmin_mcp import calendar_events
 from garmin_mcp import diagnostics
+from garmin_mcp import health_snapshots
 from garmin_mcp.client_resolver import set_global_client
 from garmin_mcp.tool_annotations import annotations_for
 from garmin_mcp.tool_profiles import resolve_tool_profile
@@ -846,6 +847,7 @@ def main():
     analytics.configure(garmin_client)
     calendar_events.configure(garmin_client)
     diagnostics.configure(garmin_client)
+    health_snapshots.configure(garmin_client)
     # auth_tools activates the live client after a successful runtime login;
     # wrap it the same way so runtime-login clients get friendly error messages.
     auth_tools.configure(lambda c: set_global_client(_GarminProxy(c)))
@@ -892,6 +894,7 @@ def main():
     app = analytics.register_tools(app)
     app = calendar_events.register_tools(app)
     app = diagnostics.register_tools(app)
+    app = health_snapshots.register_tools(app)
     app = auth_tools.register_tools(app)
 
     # Register resources (workout templates)
