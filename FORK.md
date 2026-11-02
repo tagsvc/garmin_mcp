@@ -62,7 +62,7 @@ coverage.
 - **`mcp` stays capped `<2`.** mcp 2.x renames `mcp.server.fastmcp` -> `mcp.server.mcpserver`
   (`FastMCP` -> `MCPServer`); the server is not ported. Don't remove the upper bound
   until that port is done.
-- **`garminconnect==0.3.5` stays pinned exactly** (`pyproject.toml` and `uv.lock`;
+- **`garminconnect==0.3.20` stays pinned exactly** (`pyproject.toml` and `uv.lock`;
   `tests/unit/test_project_dependencies.py` checks both). Do **not** downgrade to
   0.2.x, and do not go below 0.3.5 (CVE-2026-54447: ≤0.3.4 writes the token store
   world-readable). Each version change is its own PR.
@@ -252,6 +252,14 @@ coverage.
   database. _On merge:_ keep the `_gmt`/`_local` names and do not reintroduce
   a bare time key or a server-clock "today". Pinned by `test_times.py` and
   `test_explicit_times_tools.py`.
+- **Timed writes are placed in the profile zone by garminconnect.** For a
+  weigh-in, blood pressure, body composition and hydration, garminconnect
+  reads a naive time as the profile's zone (its `personal-information`
+  `timeZone`, one request per client) and fills "now" from it. The tools pass
+  plain local wall-clock times and never convert them first, or the time
+  shifts twice. Pinned by the timed-write tests in
+  `tests/integration/test_garminconnect_client.py`, which run with the server
+  clock in UTC.
 - **The units/times contract is CI-enforced.** `tests/units_times_contract.py`
   holds the rules' checker and their one exceptions list, each with its reason.
   Three tests keep the audit's findings from coming back:
@@ -360,13 +368,14 @@ coverage.
 Read this before reconciling an upstream merge — it explains the *intent* behind
 each divergence so a merge doesn't silently undo a deliberate decision.
 
-- **Pin `garminconnect==0.3.5`.** Why: the stored-token format and session restore
+- **Pin `garminconnect==0.3.20`.** Why: the stored-token format and session restore
   (`session_manager`, token import) depend on the 0.3.x client API
-  (`garmin.client.dumps/loads/dump`, di-token fields). PR #121 used 0.2.38, which
-  is incompatible. 0.3.5 is the security floor: ≤0.3.4 writes `garmin_tokens.json`
-  world-readable (CVE-2026-54447); `session_manager` also chmods the token dir
-  itself as defence in depth. _On merge:_ if upstream bumps it, re-verify token
-  import + session restore before accepting; don't take the bump blindly.
+  (`garmin.client.dumps/loads/dump`, di-token fields); 0.2.x is incompatible.
+  0.3.5 is the security floor: ≤0.3.4 writes `garmin_tokens.json` world-readable
+  (CVE-2026-54447); `session_manager` also chmods the token dir itself as
+  defence in depth. _On merge:_ upstream pins its own version; keep this one
+  unless the change runs `tests/integration/test_garminconnect_client.py` and
+  re-verifies token import and session restore.
 
 - **`auth_tools` is stdio-only.** Why: in remote mode, authentication happens
   through the OAuth login page; `login_to_garmin` exists so the *stdio* server can
@@ -511,7 +520,7 @@ taken whole.
 
 **Watch items during conflict resolution:**
 
-- `pyproject.toml` — keep `garminconnect==0.3.5` (0.3.5 minimum; CVE-2026-54447)
+- `pyproject.toml` — keep `garminconnect==0.3.20` (0.3.5 minimum; CVE-2026-54447)
   unless you re-verify token import.
 - `__init__.py` / `remote.py` — ensure `analytics` stays registered in both,
   `auth_tools` stays registered in `__init__.py` **only**, and the `/import-token`

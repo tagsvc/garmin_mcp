@@ -5,6 +5,53 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## garminconnect 0.3.20 — 2026-11-02
+
+`garminconnect==0.3.20`, up from 0.3.5. The lock changes only the
+garminconnect entry; no new packages. The token format is unchanged: token
+files written by 0.3.5 load in 0.3.20, and the reverse, so the sessions on the
+Railway volume carry over and a rollback needs no volume change.
+
+**What changes in your data:**
+
+- **Timed writes use the profile's time zone, not the server's clock.** On the
+  remote server, whose clock is UTC:
+  - blood pressure logged without a time was stamped with UTC as local time,
+    so an evening reading in New York landed on the next day;
+  - a body composition entry for a date was set at UTC midnight (8 PM the
+    evening before, in New York);
+  - a weigh-in given only a local time got that same time as its GMT time.
+
+  0.3.20 reads the profile's zone (one extra request per client, the first
+  time) and stamps these correctly. Weigh-ins logged with no time were already
+  right, and hydration is unaffected: the tool always passes a date and time.
+- `get_spo2_data`'s `last_7_days_avg_spo2` is a number, no longer text.
+- A rejected upload says why (`"Duplicate Activity."`) instead of a dict.
+
+**Behaviour to know about:**
+
+- **A token path that runs through a symlink is refused**, unless root owns
+  the link, so a planted link cannot redirect the tokens. The server's message
+  now names the link and the real directory to point `GARMINTOKENS` at. The
+  Railway volume path has no symlinks (checked in the built image).
+- Badge challenge lists need `start` 1 or more (the tools default to 1), and a
+  malformed gear id fails before reaching Garmin.
+
+**Checked before this PR:**
+
+- The full suite on Python 3.12 and 3.13, including the real-client tests,
+  which now also cover the timed writes, with the server clock in UTC.
+- **The Railway image, built from `Dockerfile.remote`, with the volume at
+  `/data` and running as `appuser`:**
+  - the token path is accepted;
+  - an imported session is written owner-only and restored by a fresh session
+    manager;
+  - the server starts healthy (`/mcp` answers 401, OAuth discovery 200).
+- **Token files across versions, offline:**
+  - a 0.3.5-written token folder loads, restores and imports (raw JSON and
+    base64) under 0.3.20;
+  - a 0.3.20-written one loads under 0.3.5.
+
 ## Ready for a newer garminconnect, still on 0.3.5 — 2026-11-01
 
 Fixes found while assessing garminconnect 0.3.20. Each works on 0.3.5 and on

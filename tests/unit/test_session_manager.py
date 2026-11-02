@@ -2,7 +2,7 @@
 Unit tests for SessionManager token persistence.
 
 Regression coverage for the garth -> garminconnect token-format bridge: the
-login flow yields garth OAuth2 tokens, but garminconnect 0.3.2 (used to restore
+login flow yields garth OAuth2 tokens, but garminconnect (used to restore
 sessions and make API calls) persists/loads a single ``garmin_tokens.json`` with
 a DI bearer token. Writing garth's two-file format here would make every
 restore fail with a generic "session expired" error.
@@ -33,7 +33,7 @@ def test_persists_in_garminconnect_native_format(tmp_path):
     token_dir = os.path.join(str(tmp_path), "user-1")
     files = os.listdir(token_dir)
 
-    # garminconnect 0.3.2 restores from garmin_tokens.json, NOT the
+    # garminconnect restores from garmin_tokens.json, NOT the
     # garth oauth1_token.json / oauth2_token.json pair.
     assert files == ["garmin_tokens.json"]
     assert "oauth1_token.json" not in files

@@ -58,7 +58,8 @@ class GarminAPI:
         if parts.hostname != API_HOST:
             raise NetworkBlocked(f"offline: {method} {url}")
         self.calls.append({"method": method, "url": url, "path": parts.path,
-                           "params": kwargs.get("params"), "headers": kwargs.get("headers") or {}})
+                           "params": kwargs.get("params"), "json": kwargs.get("json"),
+                           "headers": kwargs.get("headers") or {}})
         response = requests.Response()
         response.url = url
         response.headers["Content-Type"] = "application/json"

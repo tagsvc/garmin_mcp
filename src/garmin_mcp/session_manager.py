@@ -130,7 +130,7 @@ class SessionManager:
         """Persist an SSO login as a garminconnect-native session.
 
         The login flow obtains tokens via garth SSO (OAuth1/OAuth2), but
-        garminconnect 0.3.2 — which makes the actual API calls when we restore
+        garminconnect — which makes the actual API calls when we restore
         a session in :meth:`get_client` — does not use garth. It authenticates
         with a DI bearer token persisted as a single ``garmin_tokens.json``
         (keys: ``di_token`` / ``di_refresh_token`` / ``di_client_id``).
@@ -145,7 +145,7 @@ class SessionManager:
         Args:
             user_id: The user identifier.
             oauth1_token: garth OAuth1Token from SSO login (unused; kept for the
-                call signature — garminconnect 0.3.2 does not use OAuth1).
+                call signature — garminconnect does not use OAuth1).
             oauth2_token: garth OAuth2Token from SSO login; its ``access_token``
                 is the DI bearer and ``refresh_token`` the DI refresh token.
         """
