@@ -80,6 +80,7 @@ UPSTREAM_TEXT = {
     },
     "src/garmin_mcp/workouts.py": {
         "# previously dropped entirely -- strokeType/equipmentType/drillType are real",
+        "Adapted from PR #295. Parsing is optional: a successful POST with no JSON",
         "devices. As of July 31, 2026, no supported or known Garmin Connect",
     },
     "tests/e2e/test_nested_workout_target_values_live.py": {
@@ -96,6 +97,9 @@ UPSTREAM_TEXT = {
     },
     "tests/integration/test_nutrition_tools.py": {
         "# Field names follow the reporter's settings payload in issue #294.",
+    },
+    "tests/integration/test_schedule_response_ids.py": {
+        "Extracted from the scheduling support in PR #295. Transport is mocked; these",
     },
     "tests/integration/test_workouts_tools.py": {
         "# Cycling power target tests (Issue #155)",
