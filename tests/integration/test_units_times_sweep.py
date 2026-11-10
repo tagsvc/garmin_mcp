@@ -261,9 +261,9 @@ def _garmin_double():
                                             "zone1Floor": 200.0, "zone2Floor": 240.0, "zone3Floor": 270.0,
                                             "zone4Floor": 300.0, "zone5Floor": 345.0, "zone6Floor": 0.0,
                                             "zone7Floor": 0.0, "userLocalTime": None}]
-    client.get_running_economy.return_value = {"calendarDate": D, "score": 230,
+    client.get_running_economy.return_value = {"calendarDate": D, "score": 220,
                                                "classification": "INTERMEDIATE"}
-    client.get_running_economy_range.return_value = [{"calendarDate": D, "score": 230,
+    client.get_running_economy_range.return_value = [{"calendarDate": D, "score": 220,
                                                       "classification": "INTERMEDIATE"}]
     snapshot = {"activityUuid": {"uuid": "00000000-0000-4000-8000-000000000003"},
                 "calendarDate": D, "activityName": "Health Snapshot",

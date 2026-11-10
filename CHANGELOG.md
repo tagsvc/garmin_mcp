@@ -5,6 +5,22 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Running economy bands — 2026-11-10
+
+- **`get_running_economy` gives the score's band and the next one up**, from the
+  table in Garmin Connect's Running Economy help: Elite 184 and below,
+  Superior 185–189, Expert 190–194, Well-Trained 195–204, Trained 205–214,
+  Intermediate 215–224, Recreational 225 and above. `band` has the name and its
+  low/high scores; `next_band` has the better band's name, the score it starts
+  at (`at_or_below`) and `points_to_go`. Lower is better. The band is worked out
+  from the score, so it does not depend on how Garmin spells its
+  classification.
+- **The docstring says the score has no unit**, as Garmin Connect shows it, and
+  that Garmin describes running economy as oxygen per kilogram per kilometre.
+- **`get_running_economy_history` says its weekly periods are seven-day spans
+  from `start_date`**, not calendar weeks: Garmin counts them from the requested
+  start, so a range starting on a Monday gives Monday-to-Sunday weeks.
+
 ## Two fields the coverage report showed missing — 2026-11-10
 
 From a `scripts/field_coverage.py` run against a live account after the day's

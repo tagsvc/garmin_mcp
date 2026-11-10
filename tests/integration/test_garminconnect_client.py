@@ -451,7 +451,7 @@ async def test_fastest_splits_come_from_the_librarys_request(offline_garmin, tmp
 @pytest.mark.asyncio
 async def test_running_economy_comes_from_the_librarys_requests(offline_garmin, tmp_path):
     offline_garmin.routes["/metrics-service/metrics/runningeconomy/latest/2026-10-05"] = {
-        "calendarDate": "2026-10-03", "score": 230, "classification": "INTERMEDIATE"}
+        "calendarDate": "2026-10-03", "score": 220, "classification": "INTERMEDIATE"}
     offline_garmin.routes["/metrics-service/metrics/runningeconomy/weekly"] = [
         {"startDate": "2026-10-03", "endDate": "2026-10-09", "score": 231, "classification": "INTERMEDIATE"}]
     garmin = _signed_in(tmp_path)
@@ -466,7 +466,7 @@ async def test_running_economy_comes_from_the_librarys_requests(offline_garmin, 
     finally:
         set_global_client(None)
 
-    assert latest["score"] == 230
+    assert latest["score"] == 220
     assert weekly["scores"][0]["week_start"] == "2026-10-03"
     call = offline_garmin.to("/metrics-service/metrics/runningeconomy/weekly")[0]
     assert call["params"] == {"startDate": "2026-10-03", "endDate": "2026-10-09"}

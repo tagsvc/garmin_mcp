@@ -588,6 +588,46 @@ def _curate_running_economy(entry: Dict[str, Any], period_keys) -> Dict[str, Any
     return curated
 
 
+# Garmin Connect's Running Economy help lists these bands. Lower is better;
+# each band is given by its highest score, the last has no ceiling.
+_ECONOMY_BANDS = (
+    ("Elite", 184),
+    ("Superior", 189),
+    ("Expert", 194),
+    ("Well-Trained", 204),
+    ("Trained", 214),
+    ("Intermediate", 224),
+    ("Recreational", None),
+)
+
+
+def _running_economy_band(score: Any) -> Dict[str, Any]:
+    """The band a score falls in, and the next better band with the points to it.
+
+    Worked out from the score, so it stands beside Garmin's classification
+    rather than depending on how Garmin spells it.
+    """
+    if not isinstance(score, (int, float)) or isinstance(score, bool):
+        return {}
+    for index, (name, highest) in enumerate(_ECONOMY_BANDS):
+        if highest is None or score <= highest:
+            break
+    band: Dict[str, Any] = {"name": name}
+    if index > 0:
+        band["low"] = _ECONOMY_BANDS[index - 1][1] + 1
+    if highest is not None:
+        band["high"] = highest
+    result: Dict[str, Any] = {"band": band}
+    if index > 0:
+        better_name, better_highest = _ECONOMY_BANDS[index - 1]
+        result["next_band"] = {
+            "name": better_name,
+            "at_or_below": better_highest,
+            "points_to_go": round(score - better_highest, 1),
+        }
+    return result
+
+
 def _one_year_after(day: datetime.date) -> datetime.date:
     """The same date a year later; Feb 29 maps to Feb 28."""
     try:
@@ -2164,12 +2204,21 @@ def register_tools(app):
 
         Garmin's running economy score and its rating (classification, such as
         INTERMEDIATE), from the most recent day Garmin computed one on or
-        before the date. Garmin's manual describes running economy as the
-        oxygen used per kilogram of body weight per kilometre, where lower
-        means less energy used; the score is returned as Garmin sends it.
-        Garmin computes it only after several outdoor runs with a strap that
-        measures step speed loss, such as the HRM 600. Each run's step speed
-        loss is in get_activity.
+        before the date. Garmin Connect shows the score with no unit and
+        describes running economy as the oxygen used per kilogram of body
+        weight per kilometre: lower means less energy used. The score is
+        returned as Garmin sends it.
+
+        band is the score's band in Garmin Connect's table (name, low, high),
+        and next_band the better one above it: its name, the score it starts
+        at (at_or_below) and points_to_go from the current score. The bands:
+        Elite 184 and below, Superior 185-189, Expert 190-194, Well-Trained
+        195-204, Trained 205-214, Intermediate 215-224, Recreational 225 and
+        above.
+
+        Garmin computes a score only after several outdoor runs with a strap
+        that measures step speed loss, such as the HRM 600. Each run's step
+        speed loss is in get_activity.
 
         Args:
             date: Date in YYYY-MM-DD format; today when omitted.
@@ -2191,7 +2240,11 @@ def register_tools(app):
                 "after several outdoor runs with a strap that measures step speed "
                 "loss, such as the HRM 600."
             )
-        result = {"as_of": as_of, **_curate_running_economy(data, _ECONOMY_DAY_KEYS)}
+        result = {
+            "as_of": as_of,
+            **_curate_running_economy(data, _ECONOMY_DAY_KEYS),
+            **_running_economy_band(data.get("score")),
+        }
         return json.dumps(result, indent=2)
 
     @app.tool()
@@ -2204,8 +2257,10 @@ def register_tools(app):
         """Get Running Economy scores (FORK) over a date range, by day or week.
 
         Each period Garmin scored: its date (daily) or week_start/week_end
-        (weekly), score and classification. Periods without a score are left
-        out; periods_requested and periods_with_score say how many there were.
+        (weekly), score and classification. Weekly periods are seven-day spans
+        counted from start_date, not calendar weeks: start on a Monday for
+        Monday-to-Sunday weeks. Periods without a score are left out;
+        periods_requested and periods_with_score say how many there were.
         With two or more scores, change is the latest score minus the first
         (negative means less energy used, by Garmin's description). See
         get_running_economy for what the score means.
