@@ -5,6 +5,25 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## FIT messages small enough for claude.ai (upstream #488) — 2026-11-10
+
+Cherry-picked from Taxuspt/garmin_mcp#488 while still open there, both commits
+under their upstream author.
+
+- **`get_activity_fit_messages` takes `fields`:** only the named fields (plus
+  the timestamp) are returned; `unknown_NNN` names work.
+- **`output_format`:** `"compact"` (`{name: value}`, no nulls, units listed
+  once per message type) or `"columnar"` (one array per field per message
+  type). `"verbose"` stays the default.
+- **Every reply stays under 1,000,000 characters.** A page that would exceed it
+  ends early with `pagination.truncated_by_size` and `next_offset`. A verbose
+  record costs about 7 KB, so a large page used to close the claude.ai
+  connection ("message from the server was too large").
+- **Record field 108 is decoded** as `enhanced_respiration_rate` (breaths/min),
+  from the current FIT SDK profile that fitparse 1.2.0 predates.
+- A lap's `message_index` field stays out of the columnar position column.
+- FIT `date_time` values still end in Z (UTC) in every format.
+
 ## Eleven open upstream PRs taken ahead of upstream — 2026-11-10
 
 Cherry-picked from Taxuspt/garmin_mcp while still open there, each under its

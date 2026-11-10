@@ -513,6 +513,7 @@ what the last column says, and check the PR's tests still pass.
 | #496, #497, #500, #501, #503 | FIT summary: heart-rate drift, grade buckets, climbs and temperature weighted by recorded time; climbs end at the first flat sample | as-is | — |
 | #505 | Energy balance excludes the partial current day and future days | as-is, conflict resolved | today from `local_today(get_client())` (the profile's time zone), not the server's date; the docstring says so |
 | #507 | Scheduling returns the calendar entry's `scheduled_workout_id` | as-is, conflict resolved | the fork's Garmin Coach constants beside `_schedule_response_id`; its "PR #295" lines are in `UPSTREAM_TEXT` |
+| #488 | `get_activity_fit_messages`: `fields` selection, `compact`/`columnar` output, every reply under 1,000,000 characters (`truncated_by_size`, `next_offset`), record field 108 decoded as `enhanced_respiration_rate` | as-is (both commits), conflict resolved | both docstring paragraphs: the fork's note on FIT times (UTC values end in Z) and upstream's on the formats |
 | #511 | Nutrition summary's daily goals | **adapted** | the fork's flat `*_goal` fields, not upstream's nested `goals` object; #511's addition is `adjusted_carbs_goal`, `adjusted_protein_goal`, `adjusted_fat_goal` |
 
 **Manual procedure:**
@@ -646,7 +647,7 @@ upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
 fixes; the first sync to route remote registration through `_ToolFilter`), and
 on 2026-10-27 (33 upstream commits: 2 new tools, tool bodies moved off the event
 loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). On
-2026-11-10, 11 upstream PRs were taken while still open upstream (see "Upstream
+2026-11-10, 12 upstream PRs were taken while still open upstream (see "Upstream
 PRs taken before upstream merged them"). See `CHANGELOG.md` for a
 categorized list of every change relative to upstream, and `README.md` (Remote
 Mode, Security, Token import / refresh) for operational detail.
