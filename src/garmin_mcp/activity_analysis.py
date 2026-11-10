@@ -989,12 +989,25 @@ def _summarize_fit_devices(
             if values.get(name) is not None:
                 row[name].append(values[name])
 
+    # FORK: device_info timestamps are UTC. Each sensor's first and last
+    # sighting goes out as *_gmt, and as *_local at the watch's own offset,
+    # which the activity message carries as timestamp and local_timestamp.
+    activity = next(
+        (
+            _fit_message_values(message)
+            for message in fit_messages
+            if str(getattr(message, "name", None) or "") == "activity"
+        ),
+        {},
+    )
+    offset = offset_from_pair(activity.get("timestamp"), activity.get("local_timestamp"))
+
     sensors = []
     for row in rows.values():
         timestamps = row.pop("timestamps")
         connects = [t for t in timestamps if t != end_timestamp]
-        row["first_seen"] = _json_safe_fit_value(timestamps[0])
-        row["last_seen"] = _json_safe_fit_value(timestamps[-1])
+        put_times(row, "first_seen", timestamps[0], offset=offset)
+        put_times(row, "last_seen", timestamps[-1], offset=offset)
         row["connects"] = _count_fit_connects(connects)
         row["reconnects"] = max(row["connects"] - 1, 0)
         if end_timestamp is not None:
