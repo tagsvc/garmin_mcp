@@ -303,6 +303,8 @@ _GOALS = (
     ("calories", "calorie_goal"), ("adjustedCalories", "adjusted_calorie_goal"),
     ("carbs", "carbs_goal"), ("protein", "protein_goal"), ("fat", "fat_goal"),
     ("fiber", "fiber_goal"),
+    ("adjustedCarbs", "adjusted_carbs_goal"), ("adjustedProtein", "adjusted_protein_goal"),
+    ("adjustedFat", "adjusted_fat_goal"),
 )
 
 
@@ -336,8 +338,8 @@ def register_tools(app):
         fat, item_count, then fiber, sugar, added_sugars, saturated, mono- and
         polyunsaturated and trans fat, cholesterol, sodium, potassium, calcium,
         iron and vitamins A, C and D where logged, and the day's goals:
-        calorie_goal, adjusted_calorie_goal, carbs/protein/fat/fiber_goal)
-        instead of the full per-item food log that
+        calorie_goal, adjusted_calorie_goal, carbs/protein/fat/fiber_goal and
+        adjusted_carbs/protein/fat_goal) instead of the full per-item food log that
         get_nutrition_daily_food_log returns for a single date. Use this for
         multi-day intake analysis (e.g. mean intake for a TDEE estimate)
         instead of calling get_nutrition_daily_food_log once per day.
@@ -348,6 +350,14 @@ def register_tools(app):
         only). Both cases read as low intake in the totals alone -- exclude
         low-item_count days explicitly before averaging intake or deriving
         TDEE; don't infer "unlogged" from a low calorie total.
+
+        Each day also carries that day's nutrition goals, when Garmin
+        returns them (it does even for unlogged days). calorie_goal /
+        carbs_goal / protein_goal / fat_goal / fiber_goal are the base goals
+        from the nutrition settings, and they change when the settings
+        change, so read them per day. The adjusted_*_goal values are Garmin's
+        activity-adjusted targets for that day: the figures the Connect app
+        compares intake against.
 
         Maximum range: 61 days per call (Garmin's own limit for this endpoint).
 

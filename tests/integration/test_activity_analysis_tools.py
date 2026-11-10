@@ -1422,6 +1422,53 @@ def test_temperature_stats_include_zero_power_and_skip_missing_samples():
     assert stats["avg_hr_hottest_third_bpm"] == 150
 
 
+def test_temperature_stats_weight_uneven_recording_by_time():
+    start = datetime.datetime(2026, 1, 1)
+    records = [{"timestamp": start, "temperature_c": 10, "heart_rate_bpm": 100, "power_w": 0}]
+    records += [{"timestamp": start + datetime.timedelta(seconds=i), "temperature_c": 30,
+                 "heart_rate_bpm": 150, "power_w": 300} for i in range(10, 20)]
+
+    stats = _compute_temperature_stats(records)
+
+    assert stats["avg_temp_c"] == 20
+    assert stats["avg_hr_coolest_third_bpm"] == 100
+    assert stats["avg_hr_hottest_third_bpm"] == 150
+    assert stats["avg_power_coolest_third_w"] == 0
+    assert stats["avg_power_hottest_third_w"] == 300
+
+
+def test_temperature_ties_at_boundaries_do_not_depend_on_record_order():
+    records = [{"temperature_c": 20, "heart_rate_bpm": hr, "power_w": power}
+               for hr, power in ((100, 0), (150, 300), (0, None))]
+    stats = _compute_temperature_stats(records)
+
+    assert stats == _compute_temperature_stats(list(reversed(records)))
+    assert stats["avg_hr_coolest_third_bpm"] == 125
+    assert stats["avg_hr_hottest_third_bpm"] == 125
+    assert stats["avg_power_coolest_third_w"] == 150
+    assert stats["avg_power_hottest_third_w"] == 150
+
+
+def test_temperature_third_can_cross_temperature_groups():
+    start = datetime.datetime(2026, 1, 1)
+    records = [{"timestamp": start, "temperature_c": 10, "heart_rate_bpm": 100}]
+    records += [{"timestamp": start + datetime.timedelta(seconds=i), "temperature_c": 30,
+                 "heart_rate_bpm": 150} for i in range(2, 9)]
+
+    stats = _compute_temperature_stats(records)
+
+    assert stats["avg_hr_coolest_third_bpm"] == 116.7
+    assert stats["avg_hr_hottest_third_bpm"] == 150
+
+
+def test_temperature_stats_zero_duration_samples_fall_back_to_equal_weights():
+    when = datetime.datetime(2026, 1, 1)
+    records = [{"timestamp": when, "temperature_c": 10},
+               {"timestamp": when, "temperature_c": 30}]
+    stats = _compute_temperature_stats(records)
+    assert stats["avg_temp_c"] == 20
+
+
 # ---------------------------------------------------------------------------
 # Grade analysis (unit tests)
 # ---------------------------------------------------------------------------
@@ -1508,6 +1555,34 @@ def test_detect_climbs_flat_tolerance_is_in_seconds():
     assert [c["duration_s"] for c in climbs] == [600, 600]
 
 
+def test_detect_climbs_ends_before_flat_with_missing_grade_samples():
+    climbing = [{"grade_pct": 5, "altitude_m": 100 + 10 * i} for i in range(12)]
+    flat = [{"grade_pct": grade, "altitude_m": 210} for grade in (0, None, 0, None, 0, None, 0)]
+    records = _records_every(10, climbing + flat)
+
+    climbs = _detect_climbs(records)
+
+    assert len(climbs) == 1
+    assert climbs[0]["end_time"] == records[11]["timestamp"]
+    assert climbs[0]["duration_s"] == 120
+    assert climbs[0]["elevation_gain_m"] == 110
+    assert climbs[0]["vam_m_per_hr"] == 3300
+
+
+def test_detect_climbs_resets_flat_boundary_after_short_dip():
+    climbing = [{"grade_pct": 5, "altitude_m": 100 + 10 * i} for i in range(12)]
+    dip = [{"grade_pct": 0, "altitude_m": 210}] * 2
+    resumed = [{"grade_pct": 5, "altitude_m": 220}]
+    flat = [{"grade_pct": 0, "altitude_m": 220}] * 4
+    records = _records_every(10, climbing + dip + resumed + flat)
+
+    climbs = _detect_climbs(records)
+
+    assert len(climbs) == 1
+    assert climbs[0]["end_time"] == records[14]["timestamp"]
+    assert climbs[0]["duration_s"] == 150
+
+
 def test_detect_climbs_speed_distance_uses_record_spacing():
     """Without an odometer, each speed sample covers its 3 s interval."""
     climbing = [
@@ -1516,6 +1591,43 @@ def test_detect_climbs_speed_distance_uses_record_spacing():
     ]
     climbs = _detect_climbs(_records_every(3, climbing))
     assert climbs[0]["distance_m"] == 6000
+
+
+def test_climb_averages_weight_uneven_samples_by_time():
+    from garmin_mcp.activity_analysis import _record_seconds, _summarize_climb
+
+    first = _records_every(10, [{"grade_pct": 4, "power_w": 100, "cadence_rpm": 60, "heart_rate_bpm": 100}])
+    later = _records_every(1, [{"grade_pct": 8, "power_w": 300, "cadence_rpm": 100, "heart_rate_bpm": 160}] * 10,
+                           start=_RIDE_START + datetime.timedelta(seconds=10))
+    records = first + later
+    climb = _summarize_climb(records, 0, len(records) - 1, _record_seconds(records))
+
+    assert climb["duration_s"] == 20
+    assert climb["avg_grade_pct"] == 6.0
+    assert climb["max_grade_pct"] == 8
+    assert climb["avg_power_w"] == 200
+    assert climb["avg_cadence_rpm"] == 80
+    assert climb["avg_hr_bpm"] == 130
+
+
+def test_climb_averages_handle_missing_zero_and_paused_samples():
+    from garmin_mcp.activity_analysis import _record_seconds, _summarize_climb
+
+    records = [
+        {"timestamp": _RIDE_START, "grade_pct": 4, "power_w": 0, "cadence_rpm": None},
+        {"timestamp": _RIDE_START + datetime.timedelta(seconds=10), "grade_pct": None, "power_w": None, "cadence_rpm": 90},
+        {"timestamp": _RIDE_START + datetime.timedelta(seconds=40), "grade_pct": 10, "power_w": 200, "cadence_rpm": 0},
+        {"timestamp": _RIDE_START + datetime.timedelta(seconds=40), "grade_pct": 20, "power_w": 1000, "cadence_rpm": 100},
+        {"timestamp": _RIDE_START + datetime.timedelta(seconds=41), "grade_pct": 10, "power_w": 200, "cadence_rpm": 0},
+    ]
+    climb = _summarize_climb(records, 0, len(records) - 1, _record_seconds(records))
+
+    assert climb["duration_s"] == 13
+    assert climb["avg_grade_pct"] == 5.8
+    assert climb["max_grade_pct"] == 20
+    assert climb["avg_power_w"] == 100
+    assert climb["avg_cadence_rpm"] == 63
+    assert "avg_hr_bpm" not in climb
 
 
 def test_hr_drift_requires_60_minutes_not_3600_records():
@@ -1527,6 +1639,53 @@ def test_hr_drift_requires_60_minutes_not_3600_records():
     assert _compute_hr_drift(_records_every(3, [row] * 1000)) is None
 
 
+def test_hr_drift_weights_uneven_recording_by_time():
+    first = _records_every(9, [{"power_w": 200, "heart_rate_bpm": 100}] * 400)
+    second = _records_every(
+        1, [{"power_w": 200, "heart_rate_bpm": 120}] * 3600,
+        start=_RIDE_START + datetime.timedelta(hours=1),
+    )
+    drift = _compute_hr_drift(first + second)
+    assert drift["hr_drift_pct"] == -16.7
+    assert drift["interpretation"] == "significant_decoupling"
+
+
+def test_hr_drift_splits_sample_crossing_midpoint():
+    first = _records_every(3, [{"power_w": 200, "heart_rate_bpm": 100}] * 599)
+    crossing = _records_every(
+        10, [{"power_w": 200, "heart_rate_bpm": 100}],
+        start=_RIDE_START + datetime.timedelta(seconds=1797),
+    )
+    second = _records_every(
+        1, [{"power_w": 200, "heart_rate_bpm": 120}] * 1793,
+        start=_RIDE_START + datetime.timedelta(seconds=1807),
+    )
+    drift = _compute_hr_drift(first + crossing + second)
+    # Three seconds of the 10-second sample are in the first half, seven in
+    # the second, which consequently averages 119.922 bpm.
+    assert drift["first_half_power_hr_ratio"] == 2.0
+    assert drift["second_half_power_hr_ratio"] == 1.668
+    assert drift["hr_drift_pct"] == -16.6
+
+
+def test_hr_drift_excludes_missing_samples_and_pause_time():
+    first = _records_every(1, [{"power_w": 200, "heart_rate_bpm": 100}] * 1800)
+    missing = _records_every(
+        1, [{"heart_rate_bpm": 200}] * 200,
+        start=_RIDE_START + datetime.timedelta(seconds=2100),
+    )
+    second = _records_every(
+        1, [{"power_w": 200, "heart_rate_bpm": 120}] * 1800,
+        start=_RIDE_START + datetime.timedelta(seconds=2300),
+    )
+    drift = _compute_hr_drift(first + missing + second)
+    assert drift["hr_drift_pct"] == -16.7
+    assert drift["first_half_power_hr_ratio"] == 2.0
+    assert drift["second_half_power_hr_ratio"] == 1.667
+    # A long pause and invalid samples do not help reach the minimum duration.
+    assert _compute_hr_drift(first + missing) is None
+
+
 def test_grade_analysis_time_uses_record_spacing():
     """time_s per grade bin is elapsed seconds, not a record count."""
     records = _records_every(
@@ -1535,6 +1694,53 @@ def test_grade_analysis_time_uses_record_spacing():
     result = _grade_analysis(records)
     assert result["flat"]["time_s"] == 300
     assert result["gentle"]["time_s"] == 150
+
+
+def test_grade_analysis_averages_are_time_weighted():
+    """Uneven recording intervals do not bias a terrain bin's averages."""
+    records = [
+        {
+            "timestamp": _RIDE_START + datetime.timedelta(seconds=t),
+            "grade_pct": 0.5,
+            "power_w": 100 if t < 10 else 300,
+            "cadence_rpm": 60 if t < 10 else 100,
+            "heart_rate_bpm": 100 if t < 10 else 160,
+        }
+        for t in [0, *range(10, 20)]
+    ]
+    assert _grade_analysis(records)["flat"] == {
+        "time_s": 20,
+        "avg_power_w": 200,
+        "avg_cadence_rpm": 80,
+        "avg_hr_bpm": 130,
+    }
+
+
+def test_grade_analysis_averages_handle_missing_zero_and_pauses():
+    """Each metric has its own duration, pauses are capped, and zero counts."""
+    rows = [
+        (0, 999, 999, 999),  # Duplicate timestamp: no time attributed here.
+        (0, 0, None, 100),
+        (10, 100, 0, None),  # A 20 s gap is a pause, so holds for 1 s.
+        (30, None, 100, 200),
+        (31, 200, 100, 200),
+    ]
+    records = [
+        {
+            "timestamp": _RIDE_START + datetime.timedelta(seconds=t),
+            "grade_pct": 0.5,
+            "power_w": power,
+            "cadence_rpm": cadence,
+            "heart_rate_bpm": hr,
+        }
+        for t, power, cadence, hr in rows
+    ]
+    assert _grade_analysis(records)["flat"] == {
+        "time_s": 13,
+        "avg_power_w": 25,
+        "avg_cadence_rpm": 67,
+        "avg_hr_bpm": 117,
+    }
 
 
 @pytest.mark.asyncio

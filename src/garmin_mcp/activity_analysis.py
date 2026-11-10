@@ -870,7 +870,7 @@ def _detect_climbs(
     climbs = []
     in_climb = False
     climb_start_idx = 0
-    flat_count = 0
+    flat_start_idx = None
     flat_s = 0
     FLAT_TOLERANCE_S = 30
     held_s = _record_seconds(records)
@@ -884,24 +884,25 @@ def _detect_climbs(
             if grade >= min_avg_grade_pct:
                 in_climb = True
                 climb_start_idx = i
-                flat_count = 0
+                flat_start_idx = None
                 flat_s = 0
         else:
             if grade < min_avg_grade_pct:
-                flat_count += 1
+                if flat_start_idx is None:
+                    flat_start_idx = i
                 flat_s += held_s[i]
                 if flat_s > FLAT_TOLERANCE_S:
                     # End the climb at where the flat started
-                    end_idx = i - flat_count
+                    end_idx = flat_start_idx - 1
                     climb = _summarize_climb(records, climb_start_idx, end_idx, held_s)
                     if (climb.get("elevation_gain_m", 0) >= min_elevation_gain_m and
                             climb.get("duration_s", 0) >= min_duration_s):
                         climbs.append(climb)
                     in_climb = False
-                    flat_count = 0
+                    flat_start_idx = None
                     flat_s = 0
             else:
-                flat_count = 0
+                flat_start_idx = None
                 flat_s = 0
 
     # Close any open climb at end of ride
@@ -931,9 +932,6 @@ def _summarize_climb(
     end_alt = segment[-1].get("altitude_m")
     elevation_gain = (end_alt - start_alt) if (start_alt is not None and end_alt is not None) else None
 
-    powers = [r["power_w"] for r in segment if r.get("power_w") is not None]
-    cadences = [r["cadence_rpm"] for r in segment if r.get("cadence_rpm") is not None]
-    hrs = [r["heart_rate_bpm"] for r in segment if r.get("heart_rate_bpm") is not None]
     grades = [r["grade_pct"] for r in segment if r.get("grade_pct") is not None]
     speeds = [
         (r["speed_mps"], held) for r, held in zip(segment, segment_held_s)
@@ -959,18 +957,21 @@ def _summarize_climb(
         total_dist = sum(s * held for s, held in speeds)  # m/s * s = m per record
         result["distance_m"] = round(total_dist)
 
+    for field, output, digits in (
+        ("grade_pct", "avg_grade_pct", 1),
+        ("power_w", "avg_power_w", 0),
+        ("cadence_rpm", "avg_cadence_rpm", 0),
+        ("heart_rate_bpm", "avg_hr_bpm", 0),
+    ):
+        samples = [(r[field], held) for r, held in zip(segment, segment_held_s)
+                   if r.get(field) is not None and held > 0]
+        duration = sum(held for _, held in samples)
+        if duration:
+            average = sum(value * held for value, held in samples) / duration
+            result[output] = round(average, digits) if digits else round(average)
+
     if grades:
-        result["avg_grade_pct"] = round(_safe_avg(grades), 1)
         result["max_grade_pct"] = round(max(grades), 1)
-
-    if powers:
-        result["avg_power_w"] = round(_safe_avg(powers))
-
-    if cadences:
-        result["avg_cadence_rpm"] = round(_safe_avg(cadences))
-
-    if hrs:
-        result["avg_hr_bpm"] = round(_safe_avg(hrs))
 
     return result
 
@@ -1005,7 +1006,7 @@ def _grade_analysis(records: List[Dict]) -> Optional[Dict]:
             bucket = "moderate"
         else:
             bucket = "steep"
-        bins[bucket]["records"].append(rec)
+        bins[bucket]["records"].append((rec, held))
         bins[bucket]["time_s"] += held
 
     if not has_grade:
@@ -1017,15 +1018,15 @@ def _grade_analysis(records: List[Dict]) -> Optional[Dict]:
         if not recs:
             continue
         entry: Dict[str, Any] = {"time_s": data["time_s"]}
-        powers = [r["power_w"] for r in recs if r.get("power_w") is not None]
-        cadences = [r["cadence_rpm"] for r in recs if r.get("cadence_rpm") is not None]
-        hrs = [r["heart_rate_bpm"] for r in recs if r.get("heart_rate_bpm") is not None]
-        if powers:
-            entry["avg_power_w"] = round(_safe_avg(powers))
-        if cadences:
-            entry["avg_cadence_rpm"] = round(_safe_avg(cadences))
-        if hrs:
-            entry["avg_hr_bpm"] = round(_safe_avg(hrs))
+        for field, output in (
+            ("power_w", "avg_power_w"),
+            ("cadence_rpm", "avg_cadence_rpm"),
+            ("heart_rate_bpm", "avg_hr_bpm"),
+        ):
+            samples = [(r[field], held) for r, held in recs if r.get(field) is not None and held > 0]
+            duration = sum(held for _, held in samples)
+            if duration:
+                entry[output] = round(sum(value * held for value, held in samples) / duration)
         result[key] = entry
 
     return result if result else None
@@ -1038,8 +1039,9 @@ def _grade_analysis(records: List[Dict]) -> Optional[Dict]:
 def _compute_hr_drift(records: List[Dict]) -> Optional[Dict]:
     """Compute aerobic decoupling (HR drift vs. power over the ride).
 
-    Splits the ride into first and second halves by record count.
-    Computes power:HR ratio for each half.
+    Splits the valid recorded time into equal halves and weights power and HR
+    by the duration each sample covers. Missing samples and paused time do not
+    count towards either half.
     Drift % = change in ratio from first to second half.
     Negative drift = HR increased relative to power (decoupling = less efficient).
     """
@@ -1050,25 +1052,27 @@ def _compute_hr_drift(records: List[Dict]) -> Optional[Dict]:
     for r, held in zip(records, _record_seconds(records)):
         if (r.get("power_w") is not None and r.get("heart_rate_bpm") is not None
                 and r["heart_rate_bpm"] > 0):
-            filtered.append(r)
+            filtered.append((r, held))
             filtered_s += held
 
     if filtered_s < MIN_DURATION_S:
         return None
 
-    mid = len(filtered) // 2
-    first_half = filtered[:mid]
-    second_half = filtered[mid:]
+    midpoint = filtered_s / 2
+    elapsed = 0
+    # The duration factors cancel in the ratio of the two weighted averages.
+    totals = [[0.0, 0.0], [0.0, 0.0]]
+    for record, held in filtered:
+        first_s = max(0, min(held, midpoint - elapsed))
+        for total, duration in zip(totals, (first_s, held - first_s)):
+            total[0] += record["power_w"] * duration
+            total[1] += record["heart_rate_bpm"] * duration
+        elapsed += held
 
-    def power_hr_ratio(recs):
-        avg_p = _safe_avg([r["power_w"] for r in recs])
-        avg_hr = _safe_avg([r["heart_rate_bpm"] for r in recs])
-        if avg_p is None or avg_hr is None or avg_hr == 0:
-            return None
-        return avg_p / avg_hr
+    def power_hr_ratio(total):
+        return total[0] / total[1] if total[1] else None
 
-    r1 = power_hr_ratio(first_half)
-    r2 = power_hr_ratio(second_half)
+    r1, r2 = (power_hr_ratio(total) for total in totals)
 
     if r1 is None or r2 is None or r1 == 0:
         return None
@@ -1108,23 +1112,44 @@ def _compute_temperature_stats(records: List[Dict]) -> Optional[Dict]:
     if not temps:
         return None
 
-    avg_temp = _safe_avg(temps)
+    samples = [(r, held) for r, held in zip(records, _record_seconds(records))
+               if r.get("temperature_c") is not None and held > 0]
+    if not samples:
+        # Identical timestamps provide no durations; retain the sample-based
+        # fallback instead of dividing by zero or discarding the summary.
+        samples = [(r, 1) for r in records if r.get("temperature_c") is not None]
+    total_s = sum(held for _, held in samples)
+    avg_temp = sum(r["temperature_c"] * held for r, held in samples) / total_s
     temp_min = min(temps)
     temp_max = max(temps)
 
-    # Compare HR and power in coolest vs hottest third of records
-    sorted_by_temp = sorted(
-        [r for r in records if r.get("temperature_c") is not None],
-        key=lambda r: r["temperature_c"]
-    )
-    third = max(1, len(sorted_by_temp) // 3)
-    coolest = sorted_by_temp[:third]
-    hottest = sorted_by_temp[-third:]
+    # Select equal-duration thirds, sharing a boundary proportionally across
+    # equal temperatures so their original record order cannot bias a result.
+    groups: Dict[Any, list] = {}
+    for record, held in samples:
+        groups.setdefault(record["temperature_c"], []).append((record, held))
 
-    cool_hr = _safe_round(_safe_avg([r["heart_rate_bpm"] for r in coolest if r.get("heart_rate_bpm")]))
-    hot_hr = _safe_round(_safe_avg([r["heart_rate_bpm"] for r in hottest if r.get("heart_rate_bpm")]))
-    cool_power = _safe_round(_safe_avg([r["power_w"] for r in coolest if r.get("power_w") is not None]))
-    hot_power = _safe_round(_safe_avg([r["power_w"] for r in hottest if r.get("power_w") is not None]))
+    def third_averages(start: float, end: float) -> tuple:
+        weighted = {"heart_rate_bpm": [0.0, 0.0], "power_w": [0.0, 0.0]}
+        position = 0.0
+        for temperature in sorted(groups):
+            group = groups[temperature]
+            group_s = sum(held for _, held in group)
+            overlap = max(0.0, min(position + group_s, end) - max(position, start))
+            fraction = overlap / group_s
+            for record, held in group:
+                duration = held * fraction
+                for field, (value_sum, seconds) in weighted.items():
+                    value = record.get(field)
+                    if value is not None and (field != "heart_rate_bpm" or value):
+                        weighted[field] = [value_sum + value * duration, seconds + duration]
+            position += group_s
+        return tuple(_safe_round(value_sum / seconds) if seconds else None
+                     for value_sum, seconds in weighted.values())
+
+    third = total_s / 3
+    cool_hr, cool_power = third_averages(0, third)
+    hot_hr, hot_power = third_averages(total_s - third, total_s)
 
     result: Dict[str, Any] = {
         "avg_temp_c": _safe_round(avg_temp),

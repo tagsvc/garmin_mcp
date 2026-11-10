@@ -5,6 +5,33 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Eleven open upstream PRs taken ahead of upstream — 2026-11-10
+
+Cherry-picked from Taxuspt/garmin_mcp while still open there, each under its
+upstream author. FORK.md ("Upstream PRs taken before upstream merged them")
+says what to keep when upstream merges them.
+
+- **FIT summary accuracy (#496, #497, #500, #501, #503):** heart-rate drift,
+  grade-bucket averages, climb averages and temperature summaries are weighted
+  by recorded time rather than by sample count, and a climb ends at the first
+  flat sample.
+- **Heart-rate summaries (#482):** null samples are ignored.
+- **Course details (#483):** an explicit zero distance or elevation is kept,
+  not replaced by the fallback field.
+- **Activities (#484):** a negative pagination offset is refused.
+- **Energy balance (#505):** the partial current day and future days are left
+  out of both means and counted (`days_excluded_partial`,
+  `days_excluded_future`). The current day is the athlete's, in the profile's
+  time zone, as elsewhere in the fork.
+- **Scheduling (#507):** `schedule_workout` and `schedule_workouts` return the
+  calendar entry's `scheduled_workout_id` when Garmin's reply carries one, so a
+  scheduled workout can be moved or removed without looking it up.
+- **Nutrition goals (#511, adapted):** `get_nutrition_summary_between_dates`
+  adds Garmin's activity-adjusted carbs, protein and fat targets
+  (`adjusted_carbs_goal`, `adjusted_protein_goal`, `adjusted_fat_goal`) beside
+  the goals it already returned. The fork keeps its flat `*_goal` fields rather
+  than upstream's nested `goals` object.
+
 ## Running economy tools — 2026-11-10
 
 - **`get_running_economy`:** Garmin's latest running economy score and
