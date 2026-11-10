@@ -146,6 +146,16 @@ coverage.
   the pages collect Garmin credentials). Use `_html_escape`, not raw f-string interpolation.
 - **Access/refresh tokens are stored hashed at rest** (SHA-256 in SQLite); lookups
   hash the incoming token. Don't revert to storing/looking-up plaintext.
+- **Access tokens last a day, refresh tokens 30 days** (`ACCESS_TOKEN_TTL`,
+  `REFRESH_TOKEN_TTL` in `oauth_provider.py`). claude.ai renews with the refresh
+  token, and a renewal it misses leaves the connector refused until the user signs
+  in again, so renewals are kept to about one a day. `tests/unit/test_token_lifetime.py`.
+- **The protected-resource metadata names the MCP endpoint.** `resource` is the
+  server URL plus the MCP path (`https://<domain>/mcp`), served at
+  `/.well-known/oauth-protected-resource` (where the 401 challenge points) and at
+  `/.well-known/oauth-protected-resource/mcp` (the location RFC 9728 derives from
+  the resource). RFC 9728 has a client, claude.ai among them, discard metadata
+  whose `resource` is not the URL it requested. `tests/integration/test_remote_end_to_end.py`.
 - **Per-user token dirs are owner-only.** `secure_token_dir()` runs after every
   token dump *and* `SessionManager` sweeps existing dirs at startup, so tokens on
   the volume are never left world-readable (CVE-2026-54447 residual).

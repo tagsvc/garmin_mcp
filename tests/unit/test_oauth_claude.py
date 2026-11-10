@@ -36,17 +36,34 @@ def test_resource_metadata_url_strips_trailing_slash():
 
 
 def test_protected_resource_metadata_minimum_fields():
-    data = oauth_claude.protected_resource_metadata(SERVER_URL)
-    assert data["resource"] == SERVER_URL
+    data = oauth_claude.protected_resource_metadata(SERVER_URL, "/mcp")
+    assert data["resource"] == SERVER_URL + "/mcp"
     assert data["authorization_servers"] == [SERVER_URL]
 
 
 def test_protected_resource_metadata_includes_scopes():
-    data = oauth_claude.protected_resource_metadata(SERVER_URL + "/", ["garmin"])
-    assert data["resource"] == SERVER_URL  # trailing slash normalized
+    data = oauth_claude.protected_resource_metadata(SERVER_URL + "/", "/mcp", ["garmin"])
+    assert data["resource"] == SERVER_URL + "/mcp"  # trailing slash normalized
     assert data["authorization_servers"] == [SERVER_URL]
     assert data["scopes_supported"] == ["garmin"]
     assert data["bearer_methods_supported"] == ["header"]
+
+
+@pytest.mark.parametrize("path", ["/mcp", "mcp", "/mcp/", "mcp/"])
+def test_resource_is_the_mcp_endpoint_url_however_the_path_is_written(path):
+    """RFC 9728: a client discards metadata whose resource is not the URL it
+    requested, and claude.ai requests the connector URL, path included."""
+    assert oauth_claude.mcp_resource_url(SERVER_URL + "/", path) == SERVER_URL + "/mcp"
+    assert oauth_claude.path_resource_metadata_path(path) == (
+        "/.well-known/oauth-protected-resource/mcp"
+    )
+
+
+def test_an_endpoint_at_the_root_is_the_server_url():
+    assert oauth_claude.mcp_resource_url(SERVER_URL, "/") == SERVER_URL
+    assert oauth_claude.path_resource_metadata_path("/") == (
+        "/.well-known/oauth-protected-resource"
+    )
 
 
 # ─── (3) token_endpoint_auth_methods_supported += "none" ───────────────────

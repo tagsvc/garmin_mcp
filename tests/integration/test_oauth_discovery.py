@@ -58,11 +58,16 @@ def remote_app(tmp_path):
         streamable_http_path=MCP_PATH,
     )
 
-    @app.custom_route(
-        oauth_claude.WELL_KNOWN_PROTECTED_RESOURCE, methods=["GET", "OPTIONS"]
-    )
     async def protected_resource_metadata(request):
-        return oauth_claude.protected_resource_response(request, SERVER_URL, [SCOPE])
+        return oauth_claude.protected_resource_response(
+            request, SERVER_URL, MCP_PATH, [SCOPE]
+        )
+
+    for path in (
+        oauth_claude.WELL_KNOWN_PROTECTED_RESOURCE,
+        oauth_claude.path_resource_metadata_path(MCP_PATH),
+    ):
+        app.custom_route(path, methods=["GET", "OPTIONS"])(protected_resource_metadata)
 
     return app, provider
 
@@ -78,12 +83,20 @@ def client(remote_app):
 
 
 @pytest.mark.asyncio
-async def test_protected_resource_metadata_endpoint(client):
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource/mcp",
+    ],
+)
+async def test_protected_resource_metadata_endpoint(client, path):
     async with client:
-        resp = await client.get(oauth_claude.WELL_KNOWN_PROTECTED_RESOURCE)
+        resp = await client.get(path)
     assert resp.status_code == 200
     data = resp.json()
-    assert data["resource"] == SERVER_URL
+    # The MCP endpoint's URL, path included: the URL claude.ai requests.
+    assert data["resource"] == SERVER_URL + MCP_PATH
     assert data["authorization_servers"] == [SERVER_URL]
     # CORS so browser-side discovery works.
     assert resp.headers["access-control-allow-origin"] == "*"

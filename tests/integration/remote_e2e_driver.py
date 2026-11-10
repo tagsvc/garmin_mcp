@@ -91,6 +91,11 @@ async def main():
                                      base_url="https://e2e.example.invalid") as client:
             no_token = await client.post("/mcp", headers=HEADERS, json={})
             as_meta = await client.get("/.well-known/oauth-authorization-server")
+            resource_meta = {
+                path: (await client.get(path)).json().get("resource")
+                for path in ("/.well-known/oauth-protected-resource",
+                             "/.well-known/oauth-protected-resource/mcp")
+            }
             results = await asyncio.gather(*(
                 _session(client, t) for t in ["tok-alice", "tok-bob", "tok-alice", "tok-bob"]
             ))
@@ -98,6 +103,7 @@ async def main():
         "no_token_status": no_token.status_code,
         "no_token_challenge": no_token.headers.get("www-authenticate"),
         "token_auth_methods": as_meta.json().get("token_endpoint_auth_methods_supported"),
+        "resource_by_metadata_path": resource_meta,
         "sessions": results,
     }))
 

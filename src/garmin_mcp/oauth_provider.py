@@ -48,6 +48,15 @@ from html import escape as _html_escape  # noqa: E402
 # TTL for pending MFA state (seconds)
 _MFA_TTL = 300  # 5 minutes
 
+# Lifetimes of the tokens issued to an MCP client (seconds). The client renews
+# its access token with the refresh token, and a renewal it misses leaves the
+# connector refused until the user signs in again. A one-day access token keeps
+# renewals to about one a day instead of one an hour of use. It adds little
+# exposure: the client also holds the 30-day refresh token, which can mint new
+# access tokens, and both are stored hashed and can be revoked.
+ACCESS_TOKEN_TTL = 86400  # 1 day
+REFRESH_TOKEN_TTL = 86400 * 30  # 30 days
+
 # One message for every "we will not log you in" outcome on the browser path, so
 # the response cannot be differenced to reveal allowlist membership.
 _GENERIC_LOGIN_ERROR = "Invalid email or password."
@@ -582,8 +591,8 @@ class GarminOAuthProvider(
 
             access_token_str = secrets.token_urlsafe(48)
             refresh_token_str = secrets.token_urlsafe(48)
-            access_expires = time.time() + 3600  # 1 hour
-            refresh_expires = time.time() + 86400 * 30  # 30 days
+            access_expires = time.time() + ACCESS_TOKEN_TTL
+            refresh_expires = time.time() + REFRESH_TOKEN_TTL
 
             conn.execute(
                 """INSERT INTO access_tokens (token, client_id, user_id, scopes, expires_at)
@@ -617,7 +626,7 @@ class GarminOAuthProvider(
         return OAuthToken(
             access_token=access_token_str,
             token_type="Bearer",
-            expires_in=3600,
+            expires_in=ACCESS_TOKEN_TTL,
             refresh_token=refresh_token_str,
             scope=" ".join(authorization_code.scopes),
         )
@@ -686,8 +695,8 @@ class GarminOAuthProvider(
 
             new_access = secrets.token_urlsafe(48)
             new_refresh = secrets.token_urlsafe(48)
-            access_expires = time.time() + 3600
-            refresh_expires = time.time() + 86400 * 30
+            access_expires = time.time() + ACCESS_TOKEN_TTL
+            refresh_expires = time.time() + REFRESH_TOKEN_TTL
 
             use_scopes = scopes or refresh_token.scopes
             scopes_str = ",".join(use_scopes)
@@ -712,7 +721,7 @@ class GarminOAuthProvider(
         return OAuthToken(
             access_token=new_access,
             token_type="Bearer",
-            expires_in=3600,
+            expires_in=ACCESS_TOKEN_TTL,
             refresh_token=new_refresh,
             scope=" ".join(use_scopes),
         )
