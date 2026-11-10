@@ -258,6 +258,7 @@ ACTIVITY = {
         "avgRespirationRate": 32.5, "minRespirationRate": 18.0, "maxRespirationRate": 44.0,
         "waterEstimated": 591.47,
         "verticalRatio": 8.1, "groundContactBalanceLeft": 49.6, "stepSpeedLossPercent": 4.2,
+        "stepSpeedLoss": 0.125,
         "avgGradeAdjustedSpeed": 3.05, "minPower": 120,
         "averageTemperature": 12.0, "minTemperature": 10.0, "maxTemperature": 15.0,
     },
@@ -281,6 +282,7 @@ async def test_activity_gives_stamina_breathing_sweat_and_where_it_was(app, mock
     assert run["anaerobic_training_effect_message"] == "NO_ANAEROBIC_BENEFIT_0"
     assert (run["avg_vertical_ratio_percent"], run["avg_ground_contact_balance_left_percent"],
             run["step_speed_loss_percent"]) == (8.1, 49.6, 4.2)
+    assert run["step_speed_loss_mps"] == 0.125
     assert run["min_power_watts"] == 120
     assert run["location_name"] == "Brooklyn"
     assert run["time_zone"] == "America/New_York"
@@ -376,6 +378,7 @@ async def test_laps_give_running_dynamics_power_breathing_and_temperature(app, m
         "maxRunCadence": 182, "maxPower": 390, "minPower": 140, "normalizedPower": 262,
         "groundContactTime": 248.0, "groundContactBalanceLeft": 49.7, "strideLength": 107.0,
         "verticalOscillation": 8.6, "verticalRatio": 8.0, "stepSpeedLossPercent": 4.1,
+        "stepSpeedLoss": 0.122,
         "avgRespirationRate": 31.0, "maxRespirationRate": 40.0,
         "averageTemperature": 12.0, "minTemperature": 11.0, "maxTemperature": 13.0,
         "maxElevation": 30.0, "minElevation": 12.0,
@@ -388,7 +391,7 @@ async def test_laps_give_running_dynamics_power_breathing_and_temperature(app, m
     assert (lap["avg_ground_contact_time_ms"], lap["avg_ground_contact_balance_left_percent"]) == (248.0, 49.7)
     assert (lap["avg_stride_length_cm"], lap["avg_stride_length_in"]) == (107.0, 42.1)
     assert (lap["avg_vertical_oscillation_cm"], lap["avg_vertical_ratio_percent"]) == (8.6, 8.0)
-    assert lap["step_speed_loss_percent"] == 4.1
+    assert (lap["step_speed_loss_percent"], lap["step_speed_loss_mps"]) == (4.1, 0.122)
     assert (lap["avg_respiration_brpm"], lap["max_respiration_brpm"]) == (31.0, 40.0)
     assert (lap["min_temperature_c"], lap["max_temperature_f"]) == (11.0, 55.4)
     assert (lap["max_elevation_feet"], lap["min_elevation_feet"]) == (98, 39)
@@ -481,7 +484,9 @@ async def test_nutrition_summary_gives_the_rest_of_each_days_totals_and_goals(ap
                                   "transFat": 0, "cholesterol": 310, "sodium": 2300,
                                   "potassium": 3400, "vitaminC": 95, "iron": None},
         "dailyNutritionGoals": {"calories": 2200, "adjustedCalories": 2650, "protein": 140,
-                                "carbs": 250, "fat": 73, "fiber": 30},
+                                "carbs": 250, "fat": 73, "fiber": 30, "addedSugars": 36,
+                                "saturatedFat": 24, "calcium": 1000, "iron": 8,
+                                "vitaminA": 900, "vitaminD": 15},
         "mealDetails": [{"loggedFoods": [{}, {}]}],
     }]}
 
@@ -494,6 +499,9 @@ async def test_nutrition_summary_gives_the_rest_of_each_days_totals_and_goals(ap
     assert "iron" not in day  # Garmin had none
     assert (day["calorie_goal"], day["adjusted_calorie_goal"]) == (2200, 2650)
     assert (day["protein_goal"], day["carbs_goal"], day["fat_goal"], day["fiber_goal"]) == (140, 250, 73, 30)
+    assert (day["added_sugars_goal"], day["saturated_fat_goal"]) == (36, 24)
+    assert (day["calcium_goal"], day["iron_goal"], day["vitamin_a_goal"],
+            day["vitamin_d_goal"]) == (1000, 8, 900, 15)
     assert day["item_count"] == 2
 
 

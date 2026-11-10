@@ -559,7 +559,8 @@ def register_tools(app):
         (avg/min/max_respiration_brpm), sweat_loss_ml (and sweat_loss_fl_oz for
         a US account), impact_load, Garmin's training effect messages,
         temperature at the watch, running dynamics (vertical ratio, ground
-        contact balance, step speed loss), location_name and personal_record.
+        contact balance, step speed loss as step_speed_loss_percent and
+        step_speed_loss_mps), location_name and personal_record.
 
         For a run, walk or hike, distance_check says where the distance came
         from and whether it matches the GPS track: distance_source ("gps",
@@ -672,6 +673,9 @@ def register_tools(app):
                 "avg_vertical_ratio_percent": summary.get('verticalRatio'),
                 "avg_ground_contact_balance_left_percent": summary.get('groundContactBalanceLeft'),
                 "step_speed_loss_percent": summary.get('stepSpeedLossPercent'),
+                # The speed lost on each step's ground contact, in m/s as Garmin
+                # sends it; the percent is the same loss against running speed.
+                "step_speed_loss_mps": summary.get('stepSpeedLoss'),
                 "avg_grade_adjusted_speed_mps": summary.get('avgGradeAdjustedSpeed'),
                 "min_power_watts": summary.get('minPower'),
                 # Temperature at the watch
@@ -1016,6 +1020,7 @@ def register_tools(app):
                     "avg_vertical_oscillation_cm": lap.get('verticalOscillation'),
                     "avg_vertical_ratio_percent": lap.get('verticalRatio'),
                     "step_speed_loss_percent": lap.get('stepSpeedLossPercent'),
+                    "step_speed_loss_mps": lap.get('stepSpeedLoss'),
                     "avg_respiration_brpm": lap.get('avgRespirationRate'),
                     "max_respiration_brpm": lap.get('maxRespirationRate'),
                     "avg_temperature_c": lap.get('averageTemperature'),
