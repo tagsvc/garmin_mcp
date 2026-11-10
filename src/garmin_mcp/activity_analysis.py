@@ -183,29 +183,303 @@ def _fit_field_definition_number(field: Any) -> Optional[int]:
 
 # Garmin FIT SDK profile fields that fitparse 1.2.0's bundled profile predates,
 # keyed by (message name, field definition number): (name, scale, units).
+# Checked against the garmin-fit-sdk 21.218 profile.
 _FIT_PROFILE_ADDITIONS = {
     ("record", 108): ("enhanced_respiration_rate", 100, "Breaths/min"),
+    ("device_info", 32): ("battery_level", 1, "%"),
+    ("session", 38): ("end_position_lat", 1, "semicircles"),
+    ("session", 39): ("end_position_long", 1, "semicircles"),
+    ("session", 110): ("sport_profile_name", 1, None),
+    ("session", 168): ("training_load_peak", 65536, None),
+    ("session", 169): ("enhanced_avg_respiration_rate", 100, "Breaths/min"),
+    ("session", 170): ("enhanced_max_respiration_rate", 100, "Breaths/min"),
+    ("session", 180): ("enhanced_min_respiration_rate", 100, "Breaths/min"),
+    ("session", 192): ("workout_feel", 1, None),
+    ("session", 193): ("workout_rpe", 1, None),
+    ("session", 196): ("metabolic_calories", 1, "kcal"),
+    ("session", 211): ("avg_grade_adjusted_speed", 1000, "m/s"),
 }
 
 
-def _fit_profile_addition(field: Any, message: Any) -> Optional[tuple]:
-    """Return the newer-profile definition for a field fitparse left unknown."""
+# Undocumented Garmin fields identified by comparing live activities with
+# Garmin Connect, keyed like _FIT_PROFILE_ADDITIONS. Garmin can move
+# undocumented fields between firmware versions, so each mapping records the
+# creator devices (garmin_product, firmware) it was checked on. "confirmed"
+# mappings match a Garmin Connect value; "likely" ones rest on how the field
+# behaves. Both rename the field. "candidate" mappings keep unknown_<n> and
+# are only reported as a candidate_name.
+_FENIX_8_FW_24_13 = {"garmin_product": 4536, "software_version": 24.13}
+_FENIX_8_FW_24_14 = {"garmin_product": 4536, "software_version": 24.14}  # beta
+_FENIX_8_BOTH = [_FENIX_8_FW_24_13, _FENIX_8_FW_24_14]
+
+def _details_match(
+    name: str,
+    key: str,
+    units: Optional[str],
+    activities: str,
+    scale: int = 1,
+    confirmed_on: Optional[List[dict]] = None,
+) -> dict:
+    """Spec for a record field equal to a Connect activity details series."""
+    spec = {
+        "name": name,
+        "confidence": "confirmed",
+        "evidence": (
+            f"Equals Connect activity details {key} at every timestamp on "
+            f"{activities}."
+        ),
+        "confirmed_on": confirmed_on or [_FENIX_8_FW_24_13],
+    }
+    if units is not None:
+        spec["units"] = units
+    if scale != 1:
+        spec["scale"] = scale
+    return spec
+
+
+# Activities the timestamp-aligned checks ran on (get_activity_details).
+_ALL_FOUR = "four activities (2026-10-26, 10-28, 10-30, 10-31)"
+_OUTDOOR_THREE = "three outdoor runs (2026-10-28, 10-30, 10-31)"
+_THREE_WITH_STEP_SPEED_LOSS = "three runs (2026-10-26, 10-30, 10-31)"
+_ALL_FOUR_AND_TREADMILL = (
+    _ALL_FOUR + " on fw 24.13 and a treadmill run on fw 24.14 (2026-11-01)"
+)
+_ALL_FOUR_AND_ALL_THREE = (
+    _ALL_FOUR + " on fw 24.13 and three activities on fw 24.14 (2026-11-01)"
+)
+
+
+_FIT_OBSERVED_FIELDS = {
+    ("record", 90): _details_match(
+        "performance_condition",
+        "directPerformanceCondition",
+        None,
+        _OUTDOOR_THREE,
+    ),
+    ("record", 137): _details_match(
+        "potential_stamina",
+        "directPotentialStamina",
+        "percent",
+        _ALL_FOUR_AND_TREADMILL,
+        confirmed_on=_FENIX_8_BOTH,
+    ),
+    ("record", 138): _details_match(
+        "available_stamina",
+        "directAvailableStamina",
+        "percent",
+        _ALL_FOUR_AND_TREADMILL,
+        confirmed_on=_FENIX_8_BOTH,
+    ),
+    ("record", 140): _details_match(
+        "grade_adjusted_speed",
+        "directGradeAdjustedSpeed",
+        "m/s",
+        _OUTDOOR_THREE,
+        scale=1000,
+    ),
+    ("record", 143): _details_match(
+        "body_battery",
+        "directBodyBattery",
+        "percent",
+        _ALL_FOUR_AND_ALL_THREE,
+        confirmed_on=_FENIX_8_BOTH,
+    ),
+    ("record", 146): _details_match(
+        "step_speed_loss",
+        "directStepSpeedLoss",
+        "m/s",
+        _THREE_WITH_STEP_SPEED_LOSS,
+        scale=10000,
+    ),
+    ("record", 147): _details_match(
+        "step_speed_loss_percent",
+        "directStepSpeedLossPercent",
+        "percent",
+        _THREE_WITH_STEP_SPEED_LOSS,
+        scale=100,
+    ),
+    ("record", 136): {
+        "name": "wrist_heart_rate",
+        "units": "bpm",
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals heart_rate on every sample recorded without a strap "
+            "(3,121 on 2026-10-28, 597 on 10-26, 305 on an 11-01 test with "
+            "no strap nearby), is absent on an 11-01 test with wrist heart "
+            "rate turned off, and differs from strap heart_rate while both "
+            "are on."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("record", 144): {
+        "name": "strap_heart_rate",
+        "units": "bpm",
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals heart_rate on every sample of an 11-01 test with wrist "
+            "heart rate turned off and an HRM 600 (fw 5.2) on, and on 99% "
+            "of samples with both on. Stops when the strap drops while "
+            "wrist_heart_rate continues (2026-10-26) and is absent without "
+            "a strap (10-28, 11-01)."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    # Message 140 is not in the FIT SDK; a Garmin forum post describes it as
+    # Firstbeat post-activity metrics. Matched against the Connect summary
+    # on five activities on fw 24.13 (2026-10-22 to 10-31) and three on fw
+    # 24.14 (11-01).
+    ("unknown_140", 37): {
+        "name": "training_load",
+        "scale": 65536,
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals Connect activityTrainingLoad on eight activities "
+            "(2026-10-22 to 11-01, 0.13 to 220.5)."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("unknown_140", 3): {
+        "name": "aerobic_training_load",
+        "scale": 65536,
+        "confidence": "likely",
+        "evidence": (
+            "Adds with unknown_38 to training_load on eight activities; "
+            "equals it when anaerobic training effect is 0. Connect has no "
+            "per-activity split to confirm it."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("unknown_140", 38): {
+        "name": "anaerobic_training_load",
+        "scale": 65536,
+        "confidence": "likely",
+        "evidence": (
+            "Adds with unknown_3 to training_load; nonzero (32.2) only on "
+            "2026-10-28, the one run with anaerobic training effect."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("unknown_140", 4): {
+        "name": "aerobic_training_effect",
+        "scale": 10,
+        "confidence": "confirmed",
+        "evidence": "Equals Connect trainingEffect on eight activities.",
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("unknown_140", 17): {
+        "name": "final_performance_condition",
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals the last record performance_condition on four outdoor "
+            "runs; 0 on a treadmill run without one."
+        ),
+        "confirmed_on": [_FENIX_8_FW_24_13],
+    },
+    ("unknown_140", 20): {
+        "name": "anaerobic_training_effect",
+        "scale": 10,
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals Connect anaerobicTrainingEffect on eight activities, "
+            "including 2.1 on 2026-10-28."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("unknown_140", 7): {
+        "name": "vo2max",
+        "confidence": "candidate",
+        "evidence": (
+            "Raw x 3.5 / 65536 tracks Connect vo2MaxPreciseValue (40.2 to "
+            "40.8) but runs 0.25 to 0.35 low on four runs."
+        ),
+        "confirmed_on": [_FENIX_8_FW_24_13],
+    },
+    ("session", 205): {
+        "name": "begin_potential_stamina",
+        "units": "percent",
+        "confidence": "confirmed",
+        "evidence": "Equals Connect beginPotentialStamina on seven activities.",
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("session", 206): {
+        "name": "end_potential_stamina",
+        "units": "percent",
+        "confidence": "confirmed",
+        "evidence": "Equals Connect endPotentialStamina on seven activities.",
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("session", 207): {
+        "name": "min_available_stamina",
+        "units": "percent",
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals Connect minAvailableStamina on seven activities, "
+            "including 2026-10-28 where it (67) differs from end potential "
+            "(77)."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("session", 215): {
+        "name": "begin_body_battery",
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals the first record body_battery; end minus begin equals "
+            "Connect differenceBodyBattery on seven activities."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+    ("session", 216): {
+        "name": "end_body_battery",
+        "confidence": "confirmed",
+        "evidence": (
+            "Equals the last record body_battery; end minus begin equals "
+            "Connect differenceBodyBattery on seven activities."
+        ),
+        "confirmed_on": _FENIX_8_BOTH,
+    },
+}
+
+
+def _fit_field_spec(field: Any, message: Any) -> Optional[Dict[str, Any]]:
+    """Return the newer-profile or observed definition of an unknown field."""
     if message is None:
         return None
     name = getattr(field, "name", None)
     if name and not str(name).startswith("unknown"):
         return None
-    message_name = str(getattr(message, "name", None) or "").lower()
-    return _FIT_PROFILE_ADDITIONS.get(
-        (message_name, _fit_field_definition_number(field))
-    )
+    return _fit_field_spec_for_key((
+        str(getattr(message, "name", None) or "").lower(),
+        _fit_field_definition_number(field),
+    ))
+
+
+def _fit_field_spec_for_key(key: tuple) -> Optional[Dict[str, Any]]:
+    """Return the definition for a (message name, definition number) key."""
+    if key in _FIT_PROFILE_ADDITIONS:
+        name, scale, units = _FIT_PROFILE_ADDITIONS[key]
+        return {
+            "name": name,
+            "scale": scale,
+            "units": units,
+            "confidence": "fit_sdk",
+            "evidence": "Garmin FIT SDK profile.",
+        }
+    return _FIT_OBSERVED_FIELDS.get(key)
+
+
+def _fit_field_alias(field: Any, message: Any) -> Optional[Dict[str, Any]]:
+    """Return the spec of a field that is renamed rather than a candidate."""
+    spec = _fit_field_spec(field, message)
+    if spec is None or spec["confidence"] == "candidate":
+        return None
+    return spec
 
 
 def _fit_field_name(field: Any, message: Any = None) -> str:
     """Return a field's FIT name, naming newer-profile and unknown fields."""
-    addition = _fit_profile_addition(field, message)
-    if addition is not None:
-        return addition[0]
+    alias = _fit_field_alias(field, message)
+    if alias is not None:
+        return alias["name"]
     name = getattr(field, "name", None)
     if name:
         return str(name)
@@ -356,17 +630,30 @@ def _serialize_fit_field(field: Any, message: Any = None) -> Dict[str, Any]:
     definition_number = _fit_field_definition_number(field)
     value = getattr(field, "value", None)
     units = getattr(field, "units", None)
-    addition = _fit_profile_addition(field, message)
-    if addition is not None:
-        _, scale, units = addition
+    spec = _fit_field_spec(field, message)
+    alias = _fit_field_alias(field, message)
+    if alias is not None:
+        units = alias.get("units", units)
+        scale = alias.get("scale", 1)
         # fitparse leaves unknown fields unscaled.
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (
+            scale != 1
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+        ):
             value = value / scale
 
     serialized: Dict[str, Any] = {
         "name": _fit_field_name(field, message),
         "value": _json_safe_fit_value(value),
     }
+    if spec is not None and definition_number is not None:
+        raw_name = f"unknown_{definition_number}"
+        if alias is not None:
+            serialized["raw_name"] = raw_name
+            serialized["alias_confidence"] = alias["confidence"]
+        else:
+            serialized["candidate_name"] = spec["name"]
 
     if units is not None:
         serialized["units"] = str(units)
@@ -439,7 +726,7 @@ def _fit_global_message_number(message: Any) -> Optional[int]:
 # a large page cannot exceed what MCP clients accept in one tool result.
 FIT_MESSAGES_MAX_RESPONSE_CHARS = 1_000_000
 
-FitMessagesFormat = Literal["verbose", "compact", "columnar"]
+FitMessagesFormat = Literal["verbose", "compact", "columnar", "device_summary"]
 
 
 def _dump_fit_messages_result(
@@ -508,6 +795,270 @@ def _columnar_fit_messages(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     return columns
 
 
+def _fit_creator_device(fit_messages: List[Any]) -> Optional[Dict[str, Any]]:
+    """Return the recording device's product and firmware from device_info."""
+    for message in fit_messages:
+        if str(getattr(message, "name", None) or "") != "device_info":
+            continue
+        values = {
+            getattr(field, "name", None): getattr(field, "value", None)
+            for field in getattr(message, "fields", [])
+        }
+        if values.get("device_index") in ("creator", 0):
+            return {
+                "garmin_product": values.get("garmin_product"),
+                "software_version": values.get("software_version"),
+            }
+    return None
+
+
+def _describe_fit_field_alias(
+    spec: Dict[str, Any],
+    raw_name: str,
+    creator: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Describe one alias or candidate for the response's field_aliases."""
+    description: Dict[str, Any] = {
+        "raw": raw_name,
+        "confidence": spec["confidence"],
+        "evidence": spec["evidence"],
+    }
+    if spec["confidence"] == "candidate":
+        description["candidate_name"] = spec["name"]
+    if "confirmed_on" in spec:
+        description["confirmed_on"] = spec["confirmed_on"]
+        description["unconfirmed_firmware"] = creator not in spec["confirmed_on"]
+    return description
+
+
+# Garmin products seen on the account this summary was built against; others
+# are reported by number only.
+_GARMIN_PRODUCT_NAMES = {1570: "tempe", 4536: "fenix 8", 4607: "HRM 600"}
+
+# With wrist heart rate off, a fenix 8 rewrote the strap's device_info every
+# 1 to 3 seconds; announcements this close together are one connection.
+_FIT_SENSOR_STREAM_GAP_S = 3
+
+
+def _fit_sensor_serial(values: Dict[str, Any]) -> Any:
+    """Return a device_info serial number, or None if it is a placeholder.
+
+    The same per-second stream gave the strap serials with only the top
+    three bits set (0x20000000 to 0xE0000000) between real ones.
+    """
+    serial = values.get("serial_number")
+    if isinstance(serial, int) and serial & 0x1FFFFFFF == 0:
+        return None
+    return serial
+
+
+def _count_fit_connects(timestamps: List[Any]) -> int:
+    """Count runs of announcements more than a stream gap apart."""
+    connects = 0
+    previous = None
+    for timestamp in timestamps:
+        if (
+            previous is None
+            or not isinstance(timestamp, datetime.datetime)
+            or not isinstance(previous, datetime.datetime)
+            or (timestamp - previous).total_seconds() > _FIT_SENSOR_STREAM_GAP_S
+        ):
+            connects += 1
+        previous = timestamp
+    return connects
+
+
+def _fit_message_values(message: Any) -> Dict[str, Any]:
+    """Map a message's field names (aliases included) to their first value."""
+    values: Dict[str, Any] = {}
+    for field in getattr(message, "fields", []):
+        values.setdefault(
+            _fit_field_name(field, message), getattr(field, "value", None)
+        )
+    return values
+
+
+def _summarize_fit_heart_rate(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Count heart_rate and strap-only HR samples across the record stream."""
+    start = next(
+        (r["timestamp"] for r in records if r.get("timestamp") is not None),
+        None,
+    )
+    strap = [r for r in records if r.get("strap_heart_rate") is not None]
+    summary: Dict[str, Any] = {
+        "records": len(records),
+        "heart_rate_samples": sum(
+            r.get("heart_rate") is not None for r in records
+        ),
+        "strap_heart_rate_samples": len(strap),
+    }
+    if strap:
+        summary["strap_matches_heart_rate"] = sum(
+            r["strap_heart_rate"] == r.get("heart_rate") for r in strap
+        )
+        if start is not None and isinstance(start, datetime.datetime):
+            elapsed = [
+                int((r["timestamp"] - start).total_seconds())
+                for r in strap
+                if isinstance(r.get("timestamp"), datetime.datetime)
+            ]
+            if elapsed:
+                summary["strap_first_elapsed_s"] = elapsed[0]
+                summary["strap_last_elapsed_s"] = elapsed[-1]
+    return summary
+
+
+def _summarize_fit_devices(
+    fit_messages: List[Any], creator: Optional[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Summarize external sensors from device_info, one row per channel.
+
+    A row is one serial number on one source (ANT+, BLE) as one sensor type.
+    The watch writes device_info for every sensor at the start and end of an
+    activity and again whenever a sensor connects, so a sensor's connects are
+    its distinct device_info timestamps outside the closing burst, with
+    announcements a few seconds apart counted once. Rows are
+    not merged: a strap that reports over several channels or serials shows
+    as several rows, with a note.
+    """
+    device_infos = [
+        _fit_message_values(message)
+        for message in fit_messages
+        if str(getattr(message, "name", None) or "") == "device_info"
+    ]
+    creator_timestamps = [
+        values.get("timestamp")
+        for values in device_infos
+        if values.get("device_index") in ("creator", 0)
+    ]
+    # Only a second creator burst marks the end of the activity.
+    end_timestamp = creator_timestamps[-1] if len(creator_timestamps) > 1 else None
+
+    def sensor_type(values: Dict[str, Any]) -> Any:
+        for name in ("antplus_device_type", "ble_device_type", "device_type"):
+            if values.get(name) is not None:
+                return values[name]
+        return None
+
+    external = [
+        values for values in device_infos
+        if values.get("source_type") not in (None, "local")
+    ]
+    # Some ANT+ announcements omit the serial; take it from the same channel.
+    serial_by_channel: Dict[tuple, Any] = {}
+    for values in external:
+        channel = (
+            values.get("device_index"),
+            values.get("source_type"),
+            sensor_type(values),
+        )
+        if _fit_sensor_serial(values) is not None:
+            serial_by_channel.setdefault(channel, _fit_sensor_serial(values))
+
+    rows: Dict[tuple, Dict[str, Any]] = {}
+    for values in external:
+        kind = sensor_type(values)
+        source = values.get("source_type")
+        serial = _fit_sensor_serial(values)
+        if serial is None:
+            serial = serial_by_channel.get(
+                (values.get("device_index"), source, kind)
+            )
+        row = rows.setdefault((serial, source, kind), {
+            "serial_number": serial,
+            "source_type": source,
+            "sensor_type": kind,
+            "device_indexes": [],
+            "timestamps": [],
+            "battery_status": [],
+            "battery_level": [],
+        })
+        product = values.get("garmin_product") or values.get("product")
+        if product is not None:
+            row["product"] = product
+            if product in _GARMIN_PRODUCT_NAMES:
+                row["product_name"] = _GARMIN_PRODUCT_NAMES[product]
+        for name in ("manufacturer", "software_version"):
+            if values.get(name) is not None:
+                row[name] = values[name]
+        if values.get("device_index") not in row["device_indexes"]:
+            row["device_indexes"].append(values.get("device_index"))
+        if values.get("timestamp") not in row["timestamps"]:
+            row["timestamps"].append(values.get("timestamp"))
+        for name in ("battery_status", "battery_level"):
+            if values.get(name) is not None:
+                row[name].append(values[name])
+
+    sensors = []
+    for row in rows.values():
+        timestamps = row.pop("timestamps")
+        connects = [t for t in timestamps if t != end_timestamp]
+        row["first_seen"] = _json_safe_fit_value(timestamps[0])
+        row["last_seen"] = _json_safe_fit_value(timestamps[-1])
+        row["connects"] = _count_fit_connects(connects)
+        row["reconnects"] = max(row["connects"] - 1, 0)
+        if end_timestamp is not None:
+            row["present_at_end"] = end_timestamp in timestamps
+        for name in ("battery_status", "battery_level"):
+            readings = row.pop(name)
+            if readings:
+                row[f"{name}_first"] = readings[0]
+                row[f"{name}_last"] = readings[-1]
+        sensors.append(row)
+
+    notes = []
+    sources_by_serial: Dict[Any, set] = {}
+    serials_by_product: Dict[Any, set] = {}
+    for row in sensors:
+        if row["serial_number"] is None:
+            continue
+        sources_by_serial.setdefault(row["serial_number"], set()).add(
+            f"{row['source_type']}/{row['sensor_type']}"
+        )
+        if "product" in row:
+            serials_by_product.setdefault(row["product"], set()).add(
+                row["serial_number"]
+            )
+    for serial, sources in sources_by_serial.items():
+        if len(sources) > 1:
+            notes.append(
+                f"Serial {serial} reports on {len(sources)} channels: "
+                f"{', '.join(sorted(sources))}."
+            )
+    for product, serials in serials_by_product.items():
+        if len(serials) > 1:
+            name = _GARMIN_PRODUCT_NAMES.get(product, f"product {product}")
+            notes.append(
+                f"{name} reports {len(serials)} serial numbers "
+                f"({', '.join(str(s) for s in sorted(serials))}); one physical "
+                "device can announce more than one."
+            )
+
+    summary: Dict[str, Any] = {"sensors": sensors}
+    if creator is not None:
+        summary["creator"] = {
+            **creator,
+            "product_name": _GARMIN_PRODUCT_NAMES.get(creator["garmin_product"]),
+        }
+    records = [
+        _fit_message_values(message)
+        for message in fit_messages
+        if str(getattr(message, "name", None) or "") == "record"
+    ]
+    if records:
+        summary["heart_rate"] = _summarize_fit_heart_rate(records)
+    if notes:
+        summary["notes"] = notes
+    field_aliases = {}
+    for message_name, definition_number in (("device_info", 32), ("record", 144)):
+        spec = _fit_field_spec_for_key((message_name, definition_number))
+        field_aliases[f"{message_name}.{spec['name']}"] = _describe_fit_field_alias(
+            spec, f"unknown_{definition_number}", creator
+        )
+    summary["field_aliases"] = field_aliases
+    return summary
+
+
 def _parse_fit_messages(
     raw: bytes,
     *,
@@ -518,6 +1069,7 @@ def _parse_fit_messages(
     fields: Optional[List[str]] = None,
     output_format: FitMessagesFormat = "verbose",
     max_response_chars: int = FIT_MESSAGES_MAX_RESPONSE_CHARS,
+    every_n: int = 1,
 ) -> Dict[str, Any]:
     """Parse all FIT messages/fields with safe high-frequency pagination.
 
@@ -532,14 +1084,20 @@ def _parse_fit_messages(
     fields keeps only the named fields (plus timestamp) in each message.
     "compact" returns each message's fields as {name: value} without nulls or
     decoder metadata; "columnar" also pivots them into per-type arrays.
+
+    every_n keeps every nth record message (the first, then every nth after
+    it); other message types are never downsampled.
     """
     if message_offset < 0:
         raise ValueError("message_offset must be at least 0")
     if not 1 <= message_limit <= 5000:
         raise ValueError("message_limit must be between 1 and 5000")
-    if output_format not in ("verbose", "compact", "columnar"):
+    if not 1 <= every_n <= 3600:
+        raise ValueError("every_n must be between 1 and 3600")
+    if output_format not in ("verbose", "compact", "columnar", "device_summary"):
         raise ValueError(
-            'output_format must be "verbose", "compact", or "columnar"'
+            'output_format must be "verbose", "compact", "columnar", '
+            'or "device_summary"'
         )
 
     selected_fields = None
@@ -573,12 +1131,22 @@ def _parse_fit_messages(
     fitfile = fitparse.FitFile(io.BytesIO(fit_bytes))
     fit_messages = list(fitfile.get_messages())
     message_counts: Dict[str, int] = {}
+    creator = _fit_creator_device(fit_messages)
+    field_aliases: Dict[str, Dict[str, Any]] = {}
 
     # Inventory without constructing JSON-shaped copies. Only the requested
     # page is serialized below.
     for message in fit_messages:
         message_type = str(getattr(message, "name", None) or "unknown")
         message_counts[message_type] = message_counts.get(message_type, 0) + 1
+
+    if output_format == "device_summary":
+        return {
+            "fit_size_bytes": len(fit_bytes),
+            "message_counts": message_counts,
+            "format": output_format,
+            **_summarize_fit_devices(fit_messages, creator),
+        }
 
     # An unfiltered request should be useful as an inventory without returning
     # thousands of vendor-specific samples whose semantics are not yet known.
@@ -601,8 +1169,16 @@ def _parse_fit_messages(
             return False
         return message_type not in omitted_high_frequency_types
 
+    def eligible_count(message_type: str, count: int) -> int:
+        if message_type.lower() == "record":
+            return -(-count // every_n)
+        return count
+
+    def is_strided_out(message_type: str, type_index: int) -> bool:
+        return message_type.lower() == "record" and type_index % every_n != 0
+
     total_eligible_count = sum(
-        count
+        eligible_count(message_type, count)
         for message_type, count in message_counts.items()
         if message_type_is_eligible(message_type)
     )
@@ -619,15 +1195,32 @@ def _parse_fit_messages(
         message_type = str(getattr(message, "name", None) or "unknown")
         type_index = seen_type_counts.get(message_type, 0)
         seen_type_counts[message_type] = type_index + 1
-        if not message_type_is_eligible(message_type):
+        if not message_type_is_eligible(message_type) or is_strided_out(
+            message_type, type_index
+        ):
             continue
 
         if message_offset <= eligible_index < page_end:
-            serialized_fields = [
-                _serialize_fit_field(field, message)
+            selected_message_fields = [
+                field
                 for field in getattr(message, "fields", [])
                 if field_is_selected(field, message)
             ]
+            serialized_fields = [
+                _serialize_fit_field(field, message)
+                for field in selected_message_fields
+            ]
+            for field, serialized_field in zip(
+                selected_message_fields, serialized_fields
+            ):
+                raw_name = serialized_field.get("raw_name")
+                if raw_name is None and "candidate_name" in serialized_field:
+                    raw_name = serialized_field["name"]
+                alias_key = f"{message_type}.{serialized_field['name']}"
+                if raw_name and alias_key not in field_aliases:
+                    field_aliases[alias_key] = _describe_fit_field_alias(
+                        _fit_field_spec(field, message), raw_name, creator
+                    )
             serialized_message: Dict[str, Any] = {
                 "message_index": message_index,
                 "type_index": type_index,
@@ -685,6 +1278,8 @@ def _parse_fit_messages(
         "total_count": record_count,
         "returned_count": returned_record_count,
     }
+    if every_n > 1:
+        record_stream["every_n"] = every_n
     if not include_records and records_selected and record_count:
         record_stream["hint"] = (
             "Set include_records=true and use message pagination to retrieve records."
@@ -725,6 +1320,8 @@ def _parse_fit_messages(
         result["columns"] = _columnar_fit_messages(messages)
     else:
         result["messages"] = messages
+    if field_aliases:
+        result["field_aliases"] = field_aliases
     if omitted_high_frequency_types:
         result["omitted_high_frequency_message_types"] = {
             message_type: {
@@ -2067,6 +2664,7 @@ def register_tools(app):
         message_limit: int = 1000,
         fields: Optional[List[str]] = None,
         output_format: FitMessagesFormat = "verbose",
+        every_n: int = 1,
     ) -> str:
         """Retrieve and generically parse an activity's original FIT file.
 
@@ -2105,6 +2703,39 @@ def register_tools(app):
         fitparse's profile appear as unknown_<definition number>; record field
         108 is decoded as enhanced_respiration_rate (breaths/min).
 
+        Newer FIT SDK fields are named too (device_info battery_level, session
+        respiration and grade-adjusted speed, and others). Some undocumented
+        Garmin fields are renamed from live comparison with Garmin Connect.
+        Record: performance_condition (unknown_90), potential_stamina (137),
+        available_stamina (138), grade_adjusted_speed (140), body_battery
+        (143), step_speed_loss (146), step_speed_loss_percent (147),
+        wrist_heart_rate (136), and strap_heart_rate (144, HR from a chest
+        strap only). Session: begin/end_body_battery,
+        begin/end_potential_stamina and min_available_stamina. Message
+        unknown_140 (Firstbeat metrics): training_load, its likely
+        aerobic/anaerobic_training_load split, aerobic_training_effect,
+        anaerobic_training_effect, and final_performance_condition.
+        field_aliases
+        lists each renamed or candidate field in the response with its raw name, confidence (fit_sdk,
+        confirmed, likely, candidate), evidence, and the devices it was
+        checked on; unconfirmed_firmware=true means the file came from other
+        firmware, where Garmin may have moved the field. Candidates keep their
+        unknown_<n> name. fields accepts aliases and unknown_<n> names.
+
+        every_n downsamples the record stream to every nth record, e.g.
+        every_n=10 on a 1-second run keeps one sample per 10 records. Other
+        message types are never downsampled; pagination counts the
+        downsampled stream.
+
+        output_format="device_summary" replaces the messages with a sensor
+        health check built from device_info and the record stream: one row
+        per sensor serial, source (ANT+ or BLE), and sensor type, with
+        product, firmware, battery, connects/reconnects (announcements a
+        few seconds apart count once), and whether it was
+        still connected at the end, plus heart_rate vs strap_heart_rate
+        coverage. Rows are not merged; notes call out one serial on several
+        channels or one product under several serials.
+
         Every response stays under about 1,000,000 characters. A page that
         would exceed it ends early with pagination.truncated_by_size=true and
         next_offset.
@@ -2121,7 +2752,10 @@ def register_tools(app):
             output_format: "verbose" (default; every field with decoder
                            metadata), "compact" ({name: value}, nulls dropped,
                            units listed once), or "columnar" (compact values
-                           as per-type arrays under "columns").
+                           as per-type arrays under "columns"), or
+                           "device_summary" (sensor health; ignores
+                           message_types, fields, and pagination).
+            every_n: Keep every nth record message, 1-3600 (default 1, all).
         """
         if not FITPARSE_AVAILABLE:
             return (
@@ -2153,6 +2787,7 @@ def register_tools(app):
                         fields=fields,
                         output_format=output_format,
                         max_response_chars=size_budget,
+                        every_n=every_n,
                     )
                     result = {
                         "activity_id": activity_id,
@@ -2164,6 +2799,7 @@ def register_tools(app):
                     # dumped response fits or only one message remains.
                     if (
                         len(text) <= FIT_MESSAGES_MAX_RESPONSE_CHARS
+                        or "pagination" not in parsed
                         or parsed["pagination"]["returned_count"] <= 1
                     ):
                         return text

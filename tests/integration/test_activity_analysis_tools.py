@@ -398,9 +398,277 @@ async def test_get_activity_fit_messages_names_record_respiration_field(
     assert respiration["name"] == "enhanced_respiration_rate"
     assert respiration["value"] == 34.12
     assert respiration["units"] == "Breaths/min"
-    assert next(f for f in fields if f["definition_number"] == 144)["name"] == (
-        "unknown_144"
+    assert respiration["raw_name"] == "unknown_108"
+    assert respiration["alias_confidence"] == "fit_sdk"
+    strap = next(f for f in fields if f["definition_number"] == 144)
+    assert strap["name"] == "strap_heart_rate"
+    assert strap["raw_name"] == "unknown_144"
+    assert strap["alias_confidence"] == "confirmed"
+    assert strap["units"] == "bpm"
+
+
+def _make_creator_device_info(garmin_product=4536, software_version=24.13, ts=None):
+    fields = [
+        (0, "device_index", "creator", None),
+        (4, "garmin_product", garmin_product, None),
+        (5, "software_version", software_version, None),
+    ]
+    if ts is not None:
+        fields.append((253, "timestamp", datetime.datetime.fromisoformat(ts), None))
+    return _make_generic_fit_message("device_info", fields)
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_describes_field_aliases(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Aliases list their raw name, confidence, and the firmware checked."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    record = _make_generic_fit_message(
+        "record",
+        [
+            (144, "unknown_144", 151, None),
+            (143, "unknown_143", 87, None),
+            (90, "unknown_90", -3, None),
+            (134, "unknown_134", 100, None),
+        ],
     )
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        [_make_creator_device_info(), record],
+        {
+            "message_types": ["record"],
+            "include_records": True,
+            "output_format": "compact",
+        },
+    )
+
+    data = json.loads(text)
+    # Unmapped fields stay unknown_<n>.
+    assert data["messages"][0]["fields"] == {
+        "strap_heart_rate": 151,
+        "body_battery": 87,
+        "performance_condition": -3,
+        "unknown_134": 100,
+    }
+    aliases = data["field_aliases"]
+    assert set(aliases) == {
+        "record.strap_heart_rate",
+        "record.body_battery",
+        "record.performance_condition",
+    }
+    assert aliases["record.strap_heart_rate"]["raw"] == "unknown_144"
+    assert aliases["record.strap_heart_rate"]["confidence"] == "confirmed"
+    assert aliases["record.strap_heart_rate"]["confirmed_on"] == [
+        {"garmin_product": 4536, "software_version": 24.13},
+        {"garmin_product": 4536, "software_version": 24.14},
+    ]
+    assert aliases["record.strap_heart_rate"]["unconfirmed_firmware"] is False
+    assert aliases["record.performance_condition"]["raw"] == "unknown_90"
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_keeps_raw_name_for_candidates(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """A candidate mapping is reported but does not rename the field."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    candidate = {
+        "name": "mystery",
+        "confidence": "candidate",
+        "evidence": "Test.",
+        "confirmed_on": [{"garmin_product": 4536, "software_version": 24.13}],
+    }
+    record = _make_generic_fit_message("record", [(134, "unknown_134", 100, None)])
+
+    with patch.dict(
+        activity_analysis._FIT_OBSERVED_FIELDS, {("record", 134): candidate}
+    ):
+        text = await _call_fit_messages(
+            app_with_activity_analysis,
+            [_make_creator_device_info(), record],
+            {"message_types": ["record"], "include_records": True},
+        )
+
+    data = json.loads(text)
+    field = data["messages"][0]["fields"][0]
+    assert field["name"] == "unknown_134"
+    assert field["candidate_name"] == "mystery"
+    assert "raw_name" not in field
+    assert data["field_aliases"]["record.unknown_134"]["candidate_name"] == "mystery"
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_names_stamina_fields(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Potential and available stamina, from a run where they diverge (10-28)."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    messages = [
+        _make_generic_fit_message(
+            "record", [(137, "unknown_137", 77, None), (138, "unknown_138", 67, None)]
+        ),
+        _make_generic_fit_message(
+            "session",
+            [
+                (205, "unknown_205", 100, None),
+                (206, "unknown_206", 77, None),
+                (207, "unknown_207", 67, None),
+            ],
+        ),
+    ]
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        messages,
+        {
+            "message_types": ["record", "session"],
+            "include_records": True,
+            "output_format": "compact",
+        },
+    )
+
+    assert [m["fields"] for m in json.loads(text)["messages"]] == [
+        {"potential_stamina": 77, "available_stamina": 67},
+        {
+            "begin_potential_stamina": 100,
+            "end_potential_stamina": 77,
+            "min_available_stamina": 67,
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_scales_observed_and_sdk_fields(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Raw values from 2026-10-30 decode to Connect's activity-details units."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    messages = [
+        _make_generic_fit_message(
+            "record",
+            [
+                (140, "unknown_140", 2441, None),
+                (146, "unknown_146", 2358, None),
+                (147, "unknown_147", 966, None),
+            ],
+        ),
+        _make_generic_fit_message(
+            "session",
+            [
+                (169, "unknown_169", 3493, None),
+                (211, "unknown_211", 2381, None),
+            ],
+        ),
+    ]
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        messages,
+        {
+            "message_types": ["record", "session"],
+            "include_records": True,
+            "output_format": "compact",
+        },
+    )
+
+    data = json.loads(text)
+    assert [m["fields"] for m in data["messages"]] == [
+        {
+            "grade_adjusted_speed": 2.441,
+            "step_speed_loss": 0.2358,
+            "step_speed_loss_percent": 9.66,
+        },
+        {"enhanced_avg_respiration_rate": 34.93, "avg_grade_adjusted_speed": 2.381},
+    ]
+    assert data["units"]["record"]["grade_adjusted_speed"] == "m/s"
+    assert data["field_aliases"]["session.avg_grade_adjusted_speed"]["confidence"] == (
+        "fit_sdk"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_names_firstbeat_message_fields(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Message 140 raw values from 2026-10-28 decode to the Connect summary."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    message = _make_generic_fit_message(
+        "unknown_140",
+        [
+            (3, "unknown_3", 5519413, None),
+            (4, "unknown_4", 31, None),
+            (7, "unknown_7", 763102, None),
+            (17, "unknown_17", -4, None),
+            (20, "unknown_20", 21, None),
+            (37, "unknown_37", 7630707, None),
+            (38, "unknown_38", 2111294, None),
+        ],
+    )
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        [message],
+        {"message_types": ["unknown_140"], "output_format": "compact"},
+    )
+
+    data = json.loads(text)
+    fields = data["messages"][0]["fields"]
+    assert fields == {
+        "aerobic_training_load": pytest.approx(84.2196, abs=1e-4),
+        "aerobic_training_effect": 3.1,
+        "unknown_7": 763102,
+        "final_performance_condition": -4,
+        "anaerobic_training_effect": 2.1,
+        "training_load": pytest.approx(116.4353, abs=1e-4),
+        "anaerobic_training_load": pytest.approx(32.2158, abs=1e-4),
+    }
+    assert data["field_aliases"]["unknown_140.unknown_7"]["candidate_name"] == "vo2max"
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_flags_aliases_on_unconfirmed_firmware(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """A file from firmware the mapping was not checked on is flagged."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        [_make_creator_device_info(software_version=25.01)] + _make_run_records(),
+        {"message_types": ["record"], "include_records": True},
+    )
+
+    aliases = json.loads(text)["field_aliases"]
+    assert aliases["record.strap_heart_rate"]["unconfirmed_firmware"] is True
+    # FIT SDK profile fields do not depend on firmware.
+    assert aliases["record.enhanced_respiration_rate"]["confidence"] == "fit_sdk"
+    assert "unconfirmed_firmware" not in aliases["record.enhanced_respiration_rate"]
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_selects_fields_by_alias(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """fields accepts either the alias or the raw unknown_<n> name."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+
+    for selector in ("strap_heart_rate", "unknown_144"):
+        text = await _call_fit_messages(
+            app_with_activity_analysis,
+            _make_run_records()[:1],
+            {
+                "message_types": ["record"],
+                "include_records": True,
+                "fields": [selector],
+                "output_format": "compact",
+            },
+        )
+        assert json.loads(text)["messages"][0]["fields"] == {
+            "timestamp": "2026-10-26T13:41:50",
+            "strap_heart_rate": 151,
+        }
 
 
 @pytest.mark.asyncio
@@ -425,20 +693,24 @@ async def test_get_activity_fit_messages_compact_selected_fields(
     data = json.loads(text)
     assert data["format"] == "compact"
     assert data["units"] == {
-        "record": {"heart_rate": "bpm", "enhanced_respiration_rate": "Breaths/min"}
+        "record": {
+            "heart_rate": "bpm",
+            "enhanced_respiration_rate": "Breaths/min",
+            "strap_heart_rate": "bpm",
+        }
     }
     assert [m["fields"] for m in data["messages"]] == [
         {
             "timestamp": "2026-10-26T13:41:50",
             "heart_rate": 151,
             "enhanced_respiration_rate": 34.12,
-            "unknown_144": 151,
+            "strap_heart_rate": 151,
         },
         {
             "timestamp": "2026-10-26T13:41:51",
             "heart_rate": 152,
             "enhanced_respiration_rate": 33.98,
-            "unknown_144": 152,
+            "strap_heart_rate": 152,
         },
         {"timestamp": "2026-10-26T13:41:52", "heart_rate": 152},
     ]
@@ -473,7 +745,7 @@ async def test_get_activity_fit_messages_columnar_pads_missing_values(
             ],
             "heart_rate": [151, 152, 152],
             "enhanced_respiration_rate": [34.12, 33.98, None],
-            "unknown_144": [151, 152, None],
+            "strap_heart_rate": [151, 152, None],
             "vertical_oscillation": [0.0, None, None],
         }
     }
@@ -601,6 +873,177 @@ async def test_get_activity_fit_messages_rejects_unknown_output_format(
             {"activity_id": ACTIVITY_ID, "output_format": "csv"},
         )
     mock_garmin_client.download_activity.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_every_n_downsamples_records_only(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """every_n keeps every nth record; other message types are untouched."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    messages = [
+        _make_generic_fit_message("record", [(3, "heart_rate", 100 + i, "bpm")])
+        for i in range(7)
+    ]
+    messages.insert(3, _make_generic_fit_message("lap", [(7, "total_elapsed_time", 60.0, "s")]))
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        messages,
+        {
+            "message_types": ["record", "lap"],
+            "include_records": True,
+            "every_n": 3,
+            "message_limit": 2,
+            "output_format": "columnar",
+        },
+    )
+
+    data = json.loads(text)
+    # Records 0, 3 and 6 survive the stride, plus the lap: four eligible.
+    assert data["pagination"]["total_eligible_count"] == 4
+    assert data["pagination"]["next_offset"] == 2
+    assert data["columns"]["record"]["heart_rate"] == [100]
+    assert data["columns"]["lap"]["message_index"] == [3]  # file position
+    assert data["record_stream"]["every_n"] == 3
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis,
+        messages,
+        {
+            "message_types": ["record"],
+            "include_records": True,
+            "every_n": 3,
+            "message_offset": 1,
+            "output_format": "columnar",
+        },
+    )
+    assert json.loads(text)["columns"]["record"]["heart_rate"] == [103, 106]
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_rejects_out_of_range_every_n(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """every_n must be at least 1."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis, _make_run_records(), {"every_n": 0}
+    )
+
+    assert json.loads(text)["error"] == "every_n must be between 1 and 3600"
+
+
+def _make_sensor_device_info(ts, index, source, serial, kind=None, battery=None):
+    """device_info shaped like the HRM 600 announcements on 2026-10-26."""
+    fields = [
+        (253, "timestamp", datetime.datetime.fromisoformat(ts), None),
+        (0, "device_index", index, None),
+        (25, "source_type", source, None),
+        (3, "serial_number", serial, None),
+    ]
+    if source == "antplus":
+        fields.append((21, "antplus_device_type", kind, None))
+    else:
+        fields += [
+            (1, "device_type", 1, None),
+            (4, "garmin_product", 4607, None),
+            (5, "software_version", 5.2, None),
+            (11, "battery_status", "good", None),
+            (32, "unknown_32", battery, None),
+        ]
+    return _make_generic_fit_message("device_info", fields)
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_device_summary_counts_reconnects(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """One row per serial/source/type, reconnects counted, duplicates noted."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    messages = [
+        _make_creator_device_info(ts="2026-10-26T13:11:43"),
+        _make_sensor_device_info("2026-10-26T13:11:43", 2, "antplus", 83951642, "heart_rate"),
+        _make_sensor_device_info("2026-10-26T13:12:02", 2, "bluetooth_low_energy", 3611680303, battery=59),
+        _make_sensor_device_info("2026-10-26T13:12:03", 9, "bluetooth_low_energy", 83951642, battery=59),
+        _make_sensor_device_info("2026-10-26T13:27:23", 2, "antplus", None, "heart_rate"),
+        _make_sensor_device_info("2026-10-26T13:27:28", 2, "bluetooth_low_energy", 3611680303, battery=58),
+        *_make_run_records(),
+        _make_creator_device_info(ts="2026-10-26T13:50:50"),
+        _make_sensor_device_info("2026-10-26T13:50:50", 9, "bluetooth_low_energy", 83951642, battery=58),
+    ]
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis, messages, {"output_format": "device_summary"}
+    )
+
+    data = json.loads(text)
+    assert "messages" not in data and "pagination" not in data
+    sensors = {
+        (s["serial_number"], s["source_type"]): s for s in data["sensors"]
+    }
+    assert set(sensors) == {
+        (83951642, "antplus"),
+        (3611680303, "bluetooth_low_energy"),
+        (83951642, "bluetooth_low_energy"),
+    }
+    ant = sensors[(83951642, "antplus")]
+    # The serial-less announcement inherits the channel's serial.
+    assert ant["connects"] == 2 and ant["reconnects"] == 1
+    assert ant["present_at_end"] is False
+    strap = sensors[(3611680303, "bluetooth_low_energy")]
+    assert strap["product_name"] == "HRM 600"
+    assert strap["reconnects"] == 1
+    assert strap["battery_level_first"] == 59
+    assert strap["battery_level_last"] == 58
+    # The closing burst is not a connect.
+    secondary = sensors[(83951642, "bluetooth_low_energy")]
+    assert secondary["connects"] == 1 and secondary["present_at_end"] is True
+    assert data["creator"]["product_name"] == "fenix 8"
+    assert data["heart_rate"] == {
+        "records": 3,
+        "heart_rate_samples": 3,
+        "strap_heart_rate_samples": 2,
+        "strap_matches_heart_rate": 2,
+        "strap_first_elapsed_s": 0,
+        "strap_last_elapsed_s": 1,
+    }
+    assert any("Serial 83951642 reports on 2 channels" in n for n in data["notes"])
+    assert any("HRM 600 reports 2 serial numbers" in n for n in data["notes"])
+    assert data["field_aliases"]["device_info.battery_level"]["confidence"] == "fit_sdk"
+
+
+@pytest.mark.asyncio
+async def test_get_activity_fit_messages_device_summary_merges_sensor_streams(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """Per-second announcements are one connect; placeholder serials inherit."""
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    # Shaped like 2026-11-01 with wrist heart rate off (fenix 8 fw 24.14).
+    messages = [
+        _make_creator_device_info(software_version=24.14, ts="2026-11-01T17:23:58"),
+        _make_sensor_device_info("2026-11-01T17:23:58", 4, "bluetooth_low_energy", 3611680303, battery=79),
+        _make_sensor_device_info("2026-11-01T17:23:59", 4, "bluetooth_low_energy", 3611680303, battery=79),
+        _make_sensor_device_info("2026-11-01T17:24:02", 4, "bluetooth_low_energy", 0x40000000, battery=79),
+        _make_sensor_device_info("2026-11-01T17:24:03", 4, "bluetooth_low_energy", 3611680303, battery=79),
+        _make_sensor_device_info("2026-11-01T17:26:00", 4, "bluetooth_low_energy", 0xE0000000, battery=79),
+        _make_creator_device_info(software_version=24.14, ts="2026-11-01T17:28:59"),
+        _make_sensor_device_info("2026-11-01T17:28:59", 4, "bluetooth_low_energy", 3611680303, battery=79),
+    ]
+
+    text = await _call_fit_messages(
+        app_with_activity_analysis, messages, {"output_format": "device_summary"}
+    )
+
+    data = json.loads(text)
+    assert len(data["sensors"]) == 1
+    strap = data["sensors"][0]
+    assert strap["serial_number"] == 3611680303
+    # 17:23:58 to 17:24:03 is one stream; 17:26:00 is a second connect.
+    assert strap["connects"] == 2 and strap["reconnects"] == 1
+    assert strap["present_at_end"] is True
+    assert "notes" not in data
 
 
 @pytest.mark.asyncio
