@@ -566,6 +566,36 @@ def _map_contributor(
     return result
 
 
+# FORK: running economy. Garmin's reply keys, in the order they are shown; any
+# other key Garmin adds is passed through under its own name, so a new field
+# is visible rather than dropped.
+_ECONOMY_DAY_KEYS = (("date", "calendarDate"),)
+_ECONOMY_WEEK_KEYS = (("week_start", "startDate"), ("week_end", "endDate"))
+_ECONOMY_VALUE_KEYS = (("score", "score"), ("classification", "classification"))
+
+
+def _curate_running_economy(entry: Dict[str, Any], period_keys) -> Dict[str, Any]:
+    """One running economy reading: its date (or week), score and rating."""
+    curated: Dict[str, Any] = {}
+    known = set()
+    for out_key, in_key in (*period_keys, *_ECONOMY_VALUE_KEYS):
+        known.add(in_key)
+        if entry.get(in_key) is not None:
+            curated[out_key] = entry[in_key]
+    for key, value in entry.items():
+        if key not in known and value is not None:
+            curated[key] = value
+    return curated
+
+
+def _one_year_after(day: datetime.date) -> datetime.date:
+    """The same date a year later; Feb 29 maps to Feb 28."""
+    try:
+        return day.replace(year=day.year + 1)
+    except ValueError:
+        return day.replace(year=day.year + 1, day=28)
+
+
 def register_tools(app):
     """Register all training-related tools with the MCP server app"""
 
@@ -2127,5 +2157,110 @@ def register_tools(app):
             result["heat_acclimation_change"] = round(heat - prev, 1)
 
         return json.dumps(add_account_units(result, account_unit_system(garmin_client)), indent=2)
+
+    @app.tool()
+    async def get_running_economy(ctx: Context, date: Optional[str] = None) -> str:
+        """Get the latest Running Economy score (FORK) as of a date.
+
+        Garmin's running economy score and its rating (classification, such as
+        INTERMEDIATE), from the most recent day Garmin computed one on or
+        before the date. Garmin's manual describes running economy as the
+        oxygen used per kilogram of body weight per kilometre, where lower
+        means less energy used; the score is returned as Garmin sends it.
+        Garmin computes it only after several outdoor runs with a strap that
+        measures step speed loss, such as the HRM 600. Each run's step speed
+        loss is in get_activity.
+
+        Args:
+            date: Date in YYYY-MM-DD format; today when omitted.
+        """
+        if date is not None:
+            try:
+                datetime.date.fromisoformat(date)
+            except ValueError as e:
+                return f"Invalid date format: {e}. Use YYYY-MM-DD."
+        as_of = date or datetime.date.today().isoformat()
+        try:
+            data = get_client(ctx).get_running_economy(as_of)
+        except Exception as e:
+            return f"Error retrieving running economy: {str(e)}"
+
+        if not isinstance(data, dict) or data.get("score") is None:
+            return (
+                f"No running economy score as of {as_of}. Garmin computes one only "
+                "after several outdoor runs with a strap that measures step speed "
+                "loss, such as the HRM 600."
+            )
+        result = {"as_of": as_of, **_curate_running_economy(data, _ECONOMY_DAY_KEYS)}
+        return json.dumps(result, indent=2)
+
+    @app.tool()
+    async def get_running_economy_history(
+        ctx: Context,
+        start_date: str,
+        end_date: str,
+        aggregation: Literal["daily", "weekly"] = "daily",
+    ) -> str:
+        """Get Running Economy scores (FORK) over a date range, by day or week.
+
+        Each period Garmin scored: its date (daily) or week_start/week_end
+        (weekly), score and classification. Periods without a score are left
+        out; periods_requested and periods_with_score say how many there were.
+        With two or more scores, change is the latest score minus the first
+        (negative means less energy used, by Garmin's description). See
+        get_running_economy for what the score means.
+
+        Up to one year per call (Garmin's limit).
+
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            aggregation: "daily" (default) or "weekly"
+        """
+        try:
+            start = datetime.date.fromisoformat(start_date)
+            end = datetime.date.fromisoformat(end_date)
+        except ValueError as e:
+            return f"Invalid date format: {e}. Use YYYY-MM-DD."
+        if end < start:
+            return "end_date must be on or after start_date."
+        if end > _one_year_after(start):
+            return "Date range too large. Garmin returns at most one year per call."
+        if aggregation not in ("daily", "weekly"):
+            return 'aggregation must be "daily" or "weekly".'
+
+        try:
+            data = get_client(ctx).get_running_economy_range(
+                start_date, end_date, aggregation
+            )
+        except Exception as e:
+            return f"Error retrieving running economy history: {str(e)}"
+
+        periods = [p for p in data if isinstance(p, dict)] if isinstance(data, list) else []
+        period_keys = _ECONOMY_DAY_KEYS if aggregation == "daily" else _ECONOMY_WEEK_KEYS
+        scores = [
+            _curate_running_economy(p, period_keys)
+            for p in periods
+            if p.get("score") is not None
+        ]
+        if not scores:
+            return (
+                f"No running economy scores between {start_date} and {end_date}. "
+                "Garmin computes one only after several outdoor runs with a strap "
+                "that measures step speed loss, such as the HRM 600."
+            )
+
+        result: Dict[str, Any] = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "aggregation": aggregation,
+            "periods_requested": len(periods),
+            "periods_with_score": len(scores),
+            "scores": scores,
+        }
+        first, latest = scores[0].get("score"), scores[-1].get("score")
+        if len(scores) > 1 and isinstance(first, (int, float)) and isinstance(latest, (int, float)):
+            result["change"] = round(latest - first, 1)
+        return json.dumps(result, indent=2)
 
     return app

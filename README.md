@@ -33,7 +33,7 @@ says how to report a vulnerability. Garmin's API is reached through
 
 ## What it can do
 
-This MCP server implements **~181 tools** on python-garminconnect 0.3.20, plus
+This MCP server implements **~183 tools** on python-garminconnect 0.3.20, plus
 Garmin Connect endpoints the library does not cover. The remote server offers
 all of them except the three stdio-only tools (see [Security](#security)).
 Items marked *fork* exist only in this fork.
@@ -58,7 +58,7 @@ Items marked *fork* exist only in this fork.
 
 **Training and workouts**
 
-- ✅ Training & Performance (18 tools) - training status, load and load balance, CTL/ATL/TSB, HRV, VO2 max and respiration trends, training effect, FTP, lactate threshold, endurance and hill scores, fitness age, heat and altitude acclimation, running tolerance, progress summaries
+- ✅ Training & Performance (20 tools) - training status, load and load balance, CTL/ATL/TSB, HRV, VO2 max and respiration trends, running economy, training effect, FTP, lactate threshold, endurance and hill scores, fitness age, heat and altitude acclimation, running tolerance, progress summaries
 - ✅ Challenges & Badges (9 tools) - badges, challenges, goals, personal records, race predictions
 - ✅ User Profile (7 tools) - name, profile, settings, unit system, per-sport heart rate zones (read and write), and power zones (`get_power_zones`, *fork*)
 - ✅ Workouts (18 tools) - the workout library: upload, download, schedule, unschedule, move to another date, delete. Garmin Coach: plan workouts, and (*fork*) plans with their status, plan detail (race goal, confidence, training week) and per-workout grades
@@ -600,7 +600,7 @@ must match the activity's recorded active sets.
 
 ## Tool profiles and filtering
 
-By default `garmin-mcp` registers ~181 tools, a lot of context for a model to
+By default `garmin-mcp` registers ~183 tools, a lot of context for a model to
 carry in every session. Three optional variables narrow that. They apply to
 `garmin-mcp` (stdio and its HTTP transports) only; the remote server always
 serves its full set.
@@ -621,7 +621,7 @@ list of known profiles.
 | `health` | 69 | Every health_wellness tool, Health Status included; Health Snapshot and ECG; weight, body composition, blood pressure, hydration; women's health; fitness age, HRV and respiration trends; the historical analytics and saved health reports |
 | `activities` | 45 | Activity list, detail, splits and edits; FIT analysis, power curve and file downloads; gear and its activities; courses |
 | `workouts` | 33 | Workout library, upload, schedule, reschedule and delete; sending a workout to the watch; the Garmin Coach plan and its workouts; the high-level builders; the calendar |
-| `training` | 42 | Training status, load, effect, VO2 max, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, heart rate zones (read and write), power zones, personal records, race predictions, goals, badges |
+| `training` | 44 | Training status, load, effect, VO2 max, running economy, FTP, lactate threshold, endurance and hill scores, readiness, recovery time, heart rate zones (read and write), power zones, personal records, race predictions, goals, badges |
 | `nutrition` | 25 | Food log, custom foods, daily nutrition settings, hydration, energy balance |
 | `devices` | 15 | Devices, their settings, alarms, solar data and last sync; paired sensors; the primary training device; sending a workout to the watch |
 

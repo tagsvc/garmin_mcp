@@ -22,8 +22,8 @@ from mcp.server.fastmcp import FastMCP
 
 import garmin_mcp
 from garmin_mcp import (
-    activity_management, auth_cli, auth_tools, data_management, devices, health_snapshots, user_profile, weight_management,
-    workouts,
+    activity_management, auth_cli, auth_tools, data_management, devices, health_snapshots, training, user_profile,
+    weight_management, workouts,
 )
 from garmin_mcp.client_resolver import set_global_client
 from tests.offline_garmin import TOKENS
@@ -443,6 +443,33 @@ async def test_fastest_splits_come_from_the_librarys_request(offline_garmin, tmp
     call = offline_garmin.to("/activitylist-service/activities/fastest-splits")[0]
     assert call["params"] == {"numberOfBests": 3, "startDate": "2026-10-01", "endDate": "2026-10-31",
                               "activityType": "running"}
+
+
+# ─── running economy: the library's requests ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_running_economy_comes_from_the_librarys_requests(offline_garmin, tmp_path):
+    offline_garmin.routes["/metrics-service/metrics/runningeconomy/latest/2026-10-05"] = {
+        "calendarDate": "2026-10-03", "score": 230, "classification": "INTERMEDIATE"}
+    offline_garmin.routes["/metrics-service/metrics/runningeconomy/weekly"] = [
+        {"startDate": "2026-10-03", "endDate": "2026-10-09", "score": 231, "classification": "INTERMEDIATE"}]
+    garmin = _signed_in(tmp_path)
+    training.configure(garmin)
+    set_global_client(garmin)
+    try:
+        app = training.register_tools(FastMCP("economy"))
+        latest = json.loads(await _call(app, "get_running_economy", {"date": "2026-10-05"}))
+        weekly = json.loads(await _call(app, "get_running_economy_history",
+                                        {"start_date": "2026-10-03", "end_date": "2026-10-09",
+                                         "aggregation": "weekly"}))
+    finally:
+        set_global_client(None)
+
+    assert latest["score"] == 230
+    assert weekly["scores"][0]["week_start"] == "2026-10-03"
+    call = offline_garmin.to("/metrics-service/metrics/runningeconomy/weekly")[0]
+    assert call["params"] == {"startDate": "2026-10-03", "endDate": "2026-10-09"}
 
 
 # ─── every request path in the source ─────────────────────────────────────

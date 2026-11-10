@@ -229,6 +229,8 @@ _FORK_READ_ONLY_TOOLS = frozenset(
         "get_health_status_range",
         "get_lagged_health_correlations",
         "get_power_zones",
+        "get_running_economy",
+        "get_running_economy_history",
         "get_sensors",
         "get_weekly_health_review",
         "get_wellness_anomalies",

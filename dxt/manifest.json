@@ -524,6 +524,14 @@
       "description": "Get resting heart rate data"
     },
     {
+      "name": "get_running_economy",
+      "description": "Get the latest Running Economy score (FORK) as of a date."
+    },
+    {
+      "name": "get_running_economy_history",
+      "description": "Get Running Economy scores (FORK) over a date range, by day or week."
+    },
+    {
       "name": "get_running_tolerance",
       "description": "Get Running Tolerance for a single day."
     },

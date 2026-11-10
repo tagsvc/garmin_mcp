@@ -51,6 +51,7 @@ coverage.
 | Health Snapshot & ECG (4 tools) | `health_snapshots.py` | Needs garminconnect 0.3.20. `get_health_snapshots` / `get_health_snapshot`: the watch's two-minute readings, curated (heart rate, respiration, stress, SpO2 as avg/min/max; HRV RMSSD and SDRR; HR zones; device), times from the record's own GMT/local pair, per-second samples on request as seconds from the start. `get_ecg_recordings` / `get_ecg`: from `ghs.garmin.com`, curated from the live reply (rhythm, average heart rate, HRV RMSSD, wrist, symptoms, app version, device, and for one recording its lead and sampling); time from the GMT `startTime` epoch with the recording's own `timeZoneOffsetInSeconds`; the 128 Hz waveform only with `include_waveform`. |
 | Power zones (1 tool) | `user_profile.py` (`get_power_zones`) | garminconnect 0.3.20's `get_power_zones()`: per sport, FTP and each zone from/to in watts and % of FTP; a floor of 0 above zone 1 is a zone the sport does not use. |
 | Fastest splits (1 tool) | `activity_management.py` (`get_fastest_splits`) | garminconnect 0.3.20's `get_fastest_splits()`: Garmin's best 1K, mile, 5K (and longer) efforts in a date range, ranked per distance, with pace in the account's units and the activity_id. Bests come from each activity's recorded distance, as the description says; no distance check runs. |
+| Running economy (2 tools) | `training.py` (`get_running_economy`, `get_running_economy_history`) | garminconnect 0.3.20's `get_running_economy()` / `get_running_economy_range()`: Garmin's score and classification, the latest as of a date, or each scored day or week over up to a year (Garmin's limit). Unscored periods are counted, not listed; keys Garmin adds pass through by name. The score is returned as Garmin sends it: Garmin's manual calls running economy oxygen per kg per km, lower being less energy, but does not say the score is in that unit, so it has no account-unit companion. |
 | Tool profiles cover every tool | `tool_profiles.py` | Each fork tool, and each upstream tool upstream left in no profile, is in its area's `GARMIN_TOOL_PROFILE`. A `devices` profile is added. The auth tools are in every profile, so a profile never stops a local server signing in again. `inspect_garmin` alone is in `NO_PROFILE_TOOLS`. `test_tool_profiles.py` fails on a tool in no profile, and `test_documented_counts.py` on a stale README profile table. Profiles apply to stdio only. |
 | History check | `tests/unit/test_no_history_in_code.py` | Fails on a PR or issue number, a month and year, a date beside a verb of change, or a phrase about the code's past in any comment or docstring under `src/`, `scripts/` and `tests/`. Upstream's own lines that trip it are listed in `UPSTREAM_TEXT`, word for word; a listed line that has gone fails too. |
 | Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
@@ -606,12 +607,12 @@ The report holds field names and counts only, never values, but it shows which
 of your data types have data, so it stays out of the repo (`.gitignore` covers
 `field_coverage*.txt`).
 
-**Definition of done:** suite green, invariants intact, tool counts stdio 181 / remote 178.
+**Definition of done:** suite green, invariants intact, tool counts stdio 183 / remote 180.
 
 ## Expected state after a clean build
 
 - Full suite: `uv run pytest -m "not e2e"` → all pass (1683 at time of writing).
-- Tool counts: **stdio 181**, **remote 178** (`auth_tools` and `delete_activity` are stdio-only).
+- Tool counts: **stdio 183**, **remote 180** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
   actually registered, so these figures cannot silently rot again.
