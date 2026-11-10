@@ -61,7 +61,9 @@ async def test_latest_score_and_rating_as_of_the_date(app, client):
         "classification": "INTERMEDIATE",
         "band": {"name": "Intermediate", "low": 215, "high": 224},
         "next_band": {"name": "Trained", "at_or_below": 214, "points_to_go": 6},
+        "feedback": training._ECONOMY_FEEDBACK["INTERMEDIATE"],
     }
+    assert payload["feedback"].startswith("Your running economy shows you have experience")
     client.get_running_economy.assert_called_once_with("2026-10-05")
 
 
@@ -82,7 +84,9 @@ async def test_no_score_yet_says_what_garmin_needs(app, client):
     text = await _call(app, "get_running_economy", {"date": "2026-09-01"})
 
     assert text.startswith("No running economy score as of 2026-09-01.")
-    assert "step speed loss" in text
+    for condition in ("VO2 max and lactate threshold", "5-7 outdoor runs of at least 30 minutes",
+                      "step speed loss"):
+        assert condition in text
 
 
 @pytest.mark.asyncio
@@ -203,3 +207,25 @@ def test_each_score_falls_in_garmins_band(score, band, next_band):
 
 def test_no_score_has_no_band():
     assert training._running_economy_band(None) == {}
+
+
+# ─── Garmin Connect's coaching phrase ─────────────────────────────────────
+
+
+def test_every_classification_garmin_names_has_its_phrase():
+    """The classifications in Garmin Connect's translations, one phrase each."""
+    assert set(training._ECONOMY_FEEDBACK) == {
+        "ELITE", "SUPERIOR", "EXPERT", "WELL_TRAINED", "TRAINED", "INTERMEDIATE", "RECREATIONAL",
+    }
+    assert all(phrase.endswith(".") for phrase in training._ECONOMY_FEEDBACK.values())
+
+
+@pytest.mark.asyncio
+async def test_a_classification_without_a_phrase_gets_none(app, client):
+    client.get_running_economy.return_value = {**LATEST, "classification": "NEW_LEVEL"}
+
+    payload = json.loads(await _call(app, "get_running_economy", {"date": "2026-10-05"}))
+
+    assert payload["classification"] == "NEW_LEVEL"
+    assert "feedback" not in payload
+    assert payload["band"]["name"] == "Intermediate"  # the band comes from the score

@@ -5,6 +5,20 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Running economy: Garmin's coaching phrase — 2026-11-10
+
+- **`get_running_economy` gives `feedback`:** Garmin Connect's coaching phrase
+  for the classification, the text the website shows under the score. Garmin's
+  reply carries only the classification; the website takes the phrase from its
+  own translations (`reportswidget.properties`, `re_feedback_<CLASS>`), from
+  which the seven phrases are copied word for word. A classification without a
+  phrase gets none, and the band still comes from the score.
+- **The no-score message gives Garmin's conditions:** running VO2 max and
+  lactate threshold estimates already in place, 5–7 outdoor runs of 30 minutes
+  or more with the Run or Track Run profile and GPS, an accessory that measures
+  step speed loss, steady easy-to-moderate runs on fairly flat ground, and a
+  current height and weight. The history tool's no-score message says the same.
+
 ## Running economy bands — 2026-11-10
 
 - **`get_running_economy` gives the score's band and the next one up**, from the

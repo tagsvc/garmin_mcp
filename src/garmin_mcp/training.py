@@ -601,6 +601,69 @@ _ECONOMY_BANDS = (
 )
 
 
+# Garmin Connect's coaching phrase for each classification, word for word from
+# the website's translations (reportswidget.properties, re_feedback_<CLASS>).
+# Garmin's reply carries only the classification; the website adds the phrase.
+_ECONOMY_FEEDBACK = {
+    "ELITE": (
+        "Your running economy is at an optimal level, matching the range of the most "
+        "elite runners. At this point, you can expect improvements to come minimally "
+        "and slowly. Marginal progress can be made over time, however, with "
+        "consistent, thoughtful training. Those small improvements could be the "
+        "difference between a good race and a championship result."
+    ),
+    "SUPERIOR": (
+        "You’re an extremely economical runner whose running economy matches that of "
+        "many elite athletes. At this level, focusing on specific and targeted training "
+        "tailored to the type of runner you are will be the best way to see "
+        "improvements in both your running economy and overall performance."
+    ),
+    "EXPERT": (
+        "Your excellent running economy reflects the hard work and training you’ve "
+        "done. Improving your running economy at this level will take time and require "
+        "long-term consistency and targeted workouts. Specificity in your training and "
+        "laser-focusing your running goals may particularly help with increasing your "
+        "running economy and overall performance."
+    ),
+    "WELL_TRAINED": (
+        "Your running economy is at a great level. To see improvement, consider "
+        "increasing your running volume or starting a planned, periodized training "
+        "program that incorporates strength or plyometric exercises. At this level, "
+        "small improvements in running economy can be the difference between a good "
+        "race and a personal best."
+    ),
+    "TRAINED": (
+        "Your running economy is at a good level with room to improve. To see "
+        "progress, you’ll likely need to make gradual increases to your running "
+        "intensity and volume, which should also lead to noticeable running "
+        "performance gains. Improvement in running economy may come slower at this "
+        "level, but stay committed and the effort will be worth it."
+    ),
+    "INTERMEDIATE": (
+        "Your running economy shows you have experience, but there’s also plenty of "
+        "untapped potential at this level. To see improvement, continue to train "
+        "consistently, and you can even consider safely bumping up your running "
+        "volume where possible."
+    ),
+    "RECREATIONAL": (
+        "There’s plenty of room to improve your running economy at this level. "
+        "Gradual and safe increases in training volume along with consistent, regular "
+        "running, will be the most effective ways to see improvement."
+    ),
+}
+
+# Garmin's conditions for an estimate, from the same help: running VO2 max and
+# lactate threshold estimates first, then steady runs recorded this way.
+_ECONOMY_NO_SCORE = (
+    "Garmin computes one only with running VO2 max and lactate threshold estimates "
+    "already in place, and after 5-7 outdoor runs of at least 30 minutes recorded "
+    "with the Run or Track Run profile and GPS, wearing an accessory that measures "
+    "step speed loss, such as the HRM 600. Easy to moderate runs at a steady pace on "
+    "fairly flat ground give it the most to work with, and a current height and "
+    "weight in the profile help its accuracy."
+)
+
+
 def _running_economy_band(score: Any) -> Dict[str, Any]:
     """The band a score falls in, and the next better band with the points to it.
 
@@ -2216,9 +2279,14 @@ def register_tools(app):
         195-204, Trained 205-214, Intermediate 215-224, Recreational 225 and
         above.
 
-        Garmin computes a score only after several outdoor runs with a strap
-        that measures step speed loss, such as the HRM 600. Each run's step
-        speed loss is in get_activity.
+        feedback is Garmin Connect's coaching phrase for the classification, as
+        the website shows it beside the score; Garmin's reply carries only the
+        classification, so the phrase comes from the website's own text.
+
+        Garmin computes a score only with running VO2 max and lactate threshold
+        estimates in place, after 5-7 outdoor runs of 30 minutes or more with an
+        accessory that measures step speed loss, such as the HRM 600. Each run's
+        step speed loss is in get_activity.
 
         Args:
             date: Date in YYYY-MM-DD format; today when omitted.
@@ -2235,16 +2303,15 @@ def register_tools(app):
             return f"Error retrieving running economy: {str(e)}"
 
         if not isinstance(data, dict) or data.get("score") is None:
-            return (
-                f"No running economy score as of {as_of}. Garmin computes one only "
-                "after several outdoor runs with a strap that measures step speed "
-                "loss, such as the HRM 600."
-            )
+            return f"No running economy score as of {as_of}. {_ECONOMY_NO_SCORE}"
         result = {
             "as_of": as_of,
             **_curate_running_economy(data, _ECONOMY_DAY_KEYS),
             **_running_economy_band(data.get("score")),
         }
+        feedback = _ECONOMY_FEEDBACK.get(str(data.get("classification") or "").upper())
+        if feedback:
+            result["feedback"] = feedback
         return json.dumps(result, indent=2)
 
     @app.tool()
@@ -2301,8 +2368,7 @@ def register_tools(app):
         if not scores:
             return (
                 f"No running economy scores between {start_date} and {end_date}. "
-                "Garmin computes one only after several outdoor runs with a strap "
-                "that measures step speed loss, such as the HRM 600."
+                f"{_ECONOMY_NO_SCORE}"
             )
 
         result: Dict[str, Any] = {
