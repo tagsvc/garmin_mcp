@@ -305,6 +305,9 @@ _GOALS = (
     ("fiber", "fiber_goal"),
     ("adjustedCarbs", "adjusted_carbs_goal"), ("adjustedProtein", "adjusted_protein_goal"),
     ("adjustedFat", "adjusted_fat_goal"),
+    ("addedSugars", "added_sugars_goal"), ("saturatedFat", "saturated_fat_goal"),
+    ("calcium", "calcium_goal"), ("iron", "iron_goal"),
+    ("vitaminA", "vitamin_a_goal"), ("vitaminD", "vitamin_d_goal"),
 )
 
 
@@ -338,8 +341,10 @@ def register_tools(app):
         fat, item_count, then fiber, sugar, added_sugars, saturated, mono- and
         polyunsaturated and trans fat, cholesterol, sodium, potassium, calcium,
         iron and vitamins A, C and D where logged, and the day's goals:
-        calorie_goal, adjusted_calorie_goal, carbs/protein/fat/fiber_goal and
-        adjusted_carbs/protein/fat_goal) instead of the full per-item food log that
+        calorie_goal, adjusted_calorie_goal, carbs/protein/fat/fiber_goal,
+        adjusted_carbs/protein/fat_goal and, where set, added_sugars,
+        saturated_fat, calcium, iron, vitamin_a and vitamin_d goals) instead
+        of the full per-item food log that
         get_nutrition_daily_food_log returns for a single date. Use this for
         multi-day intake analysis (e.g. mean intake for a TDEE estimate)
         instead of calling get_nutrition_daily_food_log once per day.

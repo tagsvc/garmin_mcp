@@ -5,6 +5,30 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Two fields the coverage report showed missing — 2026-11-10
+
+From a `scripts/field_coverage.py` run against a live account after the day's
+upstream PRs:
+
+- **`get_activity` and its laps give `step_speed_loss_mps`** beside
+  `step_speed_loss_percent`: the speed lost on each step's ground contact, in
+  m/s as Garmin sends it, the input Garmin's running economy rests on.
+- **`get_nutrition_summary_between_dates` gives the remaining daily goals**
+  Garmin sends: `added_sugars_goal`, `saturated_fat_goal`, `calcium_goal`,
+  `iron_goal`, `vitamin_a_goal`, `vitamin_d_goal`, beside the totals it already
+  returned for those nutrients.
+
+## Sensor summary times name their zone — 2026-11-10
+
+- **`get_activity_fit_messages(output_format="device_summary")`** gives each
+  sensor's first and last sighting as `first_seen_gmt`/`first_seen_local` and
+  `last_seen_gmt`/`last_seen_local`, in place of upstream's bare `first_seen`
+  and `last_seen`. device_info timestamps are UTC; the local time is at the
+  watch's own offset from the activity message, and is left out when the file
+  has none.
+- New `tests/integration/test_fit_device_summary_times.py` runs the summary
+  through the units-and-times contract check, which no test did before.
+
 ## FIT field names and sensor health (upstream #492) — 2026-11-10
 
 Cherry-picked from Taxuspt/garmin_mcp#492 while still open there: its eight
