@@ -213,6 +213,9 @@ TRAINING_TOOLS = CORE_TOOLS | frozenset(
         "get_power_zones",
         # FORK: the zones that training metrics are scored against
         "set_heart_rate_zones",
+        # FORK: Garmin's running economy score, beside VO2 max and lactate threshold
+        "get_running_economy",
+        "get_running_economy_history",
         # training
         "get_acclimation",
         "get_cycling_ftp",

@@ -5,6 +5,25 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Running economy tools — 2026-11-10
+
+- **`get_running_economy`:** Garmin's latest running economy score and
+  classification (such as `INTERMEDIATE`) as of a date, today by default, with
+  the date Garmin computed it.
+- **`get_running_economy_history`:** each scored day, or week, over a range of up
+  to a year (Garmin refuses longer). Unscored periods are counted
+  (`periods_requested`, `periods_with_score`), not listed; with two or more
+  scores, `change` is the latest minus the first.
+- Both use garminconnect 0.3.20's `get_running_economy()` /
+  `get_running_economy_range()`, are read-only, and are in the `training`
+  profile. Keys Garmin adds to a reading pass through by name.
+- The score is returned as Garmin sends it, with no account-unit companion:
+  Garmin's manual describes running economy as oxygen per kilogram per
+  kilometre, but does not say the score is in that unit.
+- Garmin computes a score only after several outdoor runs with a strap that
+  measures step speed loss, such as the HRM 600; before that, both tools say so.
+- Tool counts: stdio 183, remote 180.
+
 ## Remote sign-in: day-long access tokens; metadata names the MCP endpoint — 2026-11-10
 
 - **Access tokens issued to claude.ai last a day instead of an hour.** claude.ai

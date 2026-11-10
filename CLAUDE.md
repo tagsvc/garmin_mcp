@@ -35,7 +35,7 @@ required checks must pass before it can merge.
    passed as plain local times (garminconnect places them in the profile zone),
    upstream's direct calls left as upstream wrote them, the remote login on garth,
    no `VOLUME` in `Dockerfile.remote`, `$PORT` handling).
-3. Re-enumerate tool counts if registration changed (expect stdio 181 / remote 178).
+3. Re-enumerate tool counts if registration changed (expect stdio 183 / remote 180).
    Before changing the garminconnect version, run
    `tests/integration/test_garminconnect_client.py` against the new version
    (FORK.md, "What a version change has to keep working").
