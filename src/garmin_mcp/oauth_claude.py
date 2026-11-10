@@ -10,7 +10,9 @@ needs, so discovery fails before it ever reaches ``/authorize`` or ``/token``.
 This module fills four gaps without forking the SDK:
 
 1. ``/.well-known/oauth-protected-resource`` endpoint (RFC 9728). Claude.ai
-   refuses to start OAuth discovery without it. See
+   refuses to start OAuth discovery without it. Its ``resource`` is the MCP
+   endpoint's URL, path included, because RFC 9728 has a client discard
+   metadata whose ``resource`` differs from the URL it requested. See
    :func:`protected_resource_metadata` / :func:`protected_resource_response`.
 2. ``WWW-Authenticate`` on 401s must carry ``resource_metadata`` so the client
    knows where discovery begins. Per RFC 6750 the ``error="invalid_token"``
@@ -60,17 +62,38 @@ def resource_metadata_url(server_url: str) -> str:
     return f"{server_url.rstrip('/')}{WELL_KNOWN_PROTECTED_RESOURCE}"
 
 
+def _normalized_path(mcp_path: str) -> str:
+    """``"/mcp"`` for ``"mcp"``, ``"/mcp/"`` or ``"/mcp"``; ``""`` for the root."""
+    path = mcp_path.strip("/")
+    return f"/{path}" if path else ""
+
+
+def mcp_resource_url(server_url: str, mcp_path: str) -> str:
+    """The MCP endpoint's URL: the resource identifier its tokens are for.
+
+    It is the address the user gives the client, so it carries the path.
+    """
+    return f"{server_url.rstrip('/')}{_normalized_path(mcp_path)}"
+
+
+def path_resource_metadata_path(mcp_path: str) -> str:
+    """The path-suffixed metadata location RFC 9728 derives from the resource
+    (``/.well-known/oauth-protected-resource/mcp``), where a client without a
+    ``resource_metadata`` pointer looks first."""
+    return f"{WELL_KNOWN_PROTECTED_RESOURCE}{_normalized_path(mcp_path)}"
+
+
 def protected_resource_metadata(
-    server_url: str, scopes: list[str] | None = None
+    server_url: str, mcp_path: str, scopes: list[str] | None = None
 ) -> dict[str, Any]:
     """Build the RFC 9728 protected resource metadata document.
 
-    In combined AS+RS mode the resource and its authorization server are the
-    same origin, so both point at ``server_url``.
+    ``resource`` is the MCP endpoint's URL. In combined AS+RS mode the
+    authorization server is the same origin, so it is ``server_url``.
     """
     base = server_url.rstrip("/")
     data: dict[str, Any] = {
-        "resource": base,
+        "resource": mcp_resource_url(server_url, mcp_path),
         "authorization_servers": [base],
     }
     if scopes:
@@ -80,7 +103,7 @@ def protected_resource_metadata(
 
 
 def protected_resource_response(
-    request: Request, server_url: str, scopes: list[str] | None = None
+    request: Request, server_url: str, mcp_path: str, scopes: list[str] | None = None
 ) -> Response:
     """Starlette handler body for the protected-resource metadata route.
 
@@ -91,7 +114,7 @@ def protected_resource_response(
     if request.method == "OPTIONS":
         return Response(status_code=204, headers=_CORS_HEADERS)
     return JSONResponse(
-        protected_resource_metadata(server_url, scopes),
+        protected_resource_metadata(server_url, mcp_path, scopes),
         headers=_CORS_HEADERS,
     )
 

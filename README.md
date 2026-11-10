@@ -163,7 +163,7 @@ When you add the connector, claude.ai opens the server's sign-in page:
 3. The page redirects back to claude.ai, and the tools are ready. The whole
    sign-in must finish within 15 minutes of opening the page.
 
-claude.ai's access token lasts an hour and is renewed with a refresh token,
+claude.ai's access token lasts a day and is renewed with a refresh token,
 which expires after 30 days unused; then you sign in again. Your Garmin session
 on the server is separate and lasts until Garmin rejects it.
 

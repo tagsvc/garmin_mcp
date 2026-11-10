@@ -44,6 +44,16 @@ def test_claude_ai_oauth_patches_still_take_effect(run):
         in run["no_token_challenge"]
 
 
+def test_resource_metadata_names_the_mcp_endpoint_at_both_locations(run):
+    """claude.ai requests the connector URL, path included, and RFC 9728 has it
+    discard metadata whose resource differs. The document is served where the
+    challenge points and at the path-suffixed location derived from /mcp."""
+    assert run["resource_by_metadata_path"] == {
+        "/.well-known/oauth-protected-resource": "https://e2e.example.invalid/mcp",
+        "/.well-known/oauth-protected-resource/mcp": "https://e2e.example.invalid/mcp",
+    }
+
+
 def test_each_caller_gets_only_their_own_garmin_data(run):
     expected = {"tok-alice": ("Alice", "111", "Bob", "222"),
                 "tok-bob": ("Bob", "222", "Alice", "111")}

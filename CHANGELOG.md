@@ -5,6 +5,25 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Remote sign-in: day-long access tokens; metadata names the MCP endpoint — 2026-11-10
+
+- **Access tokens issued to claude.ai last a day instead of an hour.** claude.ai
+  renews its access token with the refresh token, and a renewal it misses leaves
+  the connector refused until you sign in again. A day keeps renewals to about one
+  a day. Refresh tokens still last 30 days and rotate on every use. Tokens issued
+  before the change keep their one-hour expiry; the next renewal issues a day-long
+  one.
+- **The protected-resource metadata's `resource` is the MCP endpoint's URL,
+  path included** (`https://<domain>/mcp`, not `https://<domain>`). RFC 9728 has a
+  client discard metadata whose `resource` is not the URL it requested, and
+  Anthropic's connector docs require the URL as entered in Claude. The document is
+  now also served at the path-suffixed `/.well-known/oauth-protected-resource/mcp`,
+  where a client without the 401's pointer looks first. The server does not bind
+  tokens to `resource`, so signed-in connectors are unaffected.
+- **New tests:** `tests/unit/test_token_lifetime.py`; the metadata at both
+  locations in `test_oauth_discovery.py` and, through the real remote server, in
+  `test_remote_end_to_end.py`.
+
 ## Every tool in a tool profile; a check for history in code — 2026-11-02
 
 - **`GARMIN_TOOL_PROFILE` now covers every tool but one.** 26 tools were in no

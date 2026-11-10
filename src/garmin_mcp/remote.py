@@ -293,13 +293,20 @@ def main():
 
     # RFC 9728 protected resource metadata. Claude.ai requires this endpoint
     # before it will begin OAuth discovery; in combined AS+RS mode the SDK does
-    # not register it, so we serve it ourselves.
-    @app.custom_route(
-        oauth_claude.WELL_KNOWN_PROTECTED_RESOURCE, methods=["GET", "OPTIONS"]
-    )
+    # not register it, so we serve it ourselves, at two locations: the root one
+    # the 401 challenge points to, and the path-suffixed one RFC 9728 derives
+    # from the resource, which a client without that pointer tries first.
     async def protected_resource_metadata(request: Request) -> Response:
         return oauth_claude.protected_resource_response(
-            request, config.server_url, [config.scope]
+            request, config.server_url, config.path, [config.scope]
+        )
+
+    for metadata_path in dict.fromkeys((
+        oauth_claude.WELL_KNOWN_PROTECTED_RESOURCE,
+        oauth_claude.path_resource_metadata_path(config.path),
+    )):
+        app.custom_route(metadata_path, methods=["GET", "OPTIONS"])(
+            protected_resource_metadata
         )
 
     # Register custom routes for login pages
