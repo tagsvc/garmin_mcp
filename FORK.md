@@ -514,6 +514,7 @@ what the last column says, and check the PR's tests still pass.
 | #505 | Energy balance excludes the partial current day and future days | as-is, conflict resolved | today from `local_today(get_client())` (the profile's time zone), not the server's date; the docstring says so |
 | #507 | Scheduling returns the calendar entry's `scheduled_workout_id` | as-is, conflict resolved | the fork's Garmin Coach constants beside `_schedule_response_id`; its "PR #295" lines are in `UPSTREAM_TEXT` |
 | #488 | `get_activity_fit_messages`: `fields` selection, `compact`/`columnar` output, every reply under 1,000,000 characters (`truncated_by_size`, `next_offset`), record field 108 decoded as `enhanced_respiration_rate` | as-is (both commits), conflict resolved | both docstring paragraphs: the fork's note on FIT times (UTC values end in Z) and upstream's on the formats |
+| #492 | `get_activity_fit_messages`: names undocumented Garmin FIT fields with confidence tags (`field_aliases`: evidence and the firmware each was checked on, flagging other firmware; renamed fields keep `raw_name`, and `unknown_NNN` still selects them), `output_format="device_summary"` (one row per sensor: product, firmware, battery, connects, wrist against strap heart-rate coverage), `every_n` record thinning | as-is (its eight commits after #488's two) | its "renamed from" docstring line is in `UPSTREAM_TEXT`; `distance_check` reads message 22 by field number through its own parser, which #492 does not touch |
 | #511 | Nutrition summary's daily goals | **adapted** | the fork's flat `*_goal` fields, not upstream's nested `goals` object; #511's addition is `adjusted_carbs_goal`, `adjusted_protein_goal`, `adjusted_fat_goal` |
 
 **Manual procedure:**
@@ -647,7 +648,7 @@ upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
 fixes; the first sync to route remote registration through `_ToolFilter`), and
 on 2026-10-27 (33 upstream commits: 2 new tools, tool bodies moved off the event
 loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). On
-2026-11-10, 12 upstream PRs were taken while still open upstream (see "Upstream
+2026-11-10, 13 upstream PRs were taken while still open upstream (see "Upstream
 PRs taken before upstream merged them"). See `CHANGELOG.md` for a
 categorized list of every change relative to upstream, and `README.md` (Remote
 Mode, Security, Token import / refresh) for operational detail.

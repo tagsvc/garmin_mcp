@@ -69,6 +69,9 @@ UPSTREAM_TEXT = {
         "moved to a background thread (#255) that is before Garmin login has",
         "starts (issue #255): the login call may still emit stray progress",
     },
+    "src/garmin_mcp/activity_analysis.py": {
+        "Garmin fields are renamed from live comparison with Garmin Connect.",
+    },
     "src/garmin_mcp/courses.py": {
         "and course points (as waypoints); it is not the originally uploaded file.",
     },

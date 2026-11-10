@@ -5,6 +5,28 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## FIT field names and sensor health (upstream #492) — 2026-11-10
+
+Cherry-picked from Taxuspt/garmin_mcp#492 while still open there: its eight
+commits after #488's two, under their upstream author.
+
+- **Undocumented Garmin FIT fields get names** in `get_activity_fit_messages`,
+  each with a confidence tag. Confirmed ones are renamed: record
+  `unknown_144` is `strap_heart_rate`, `unknown_143` `body_battery`; session
+  205/215/216 `begin_potential_stamina` and `begin_`/`end_body_battery`;
+  device_info 32 `battery_level`. Candidates (performance condition, stamina,
+  wrist heart rate, the Firstbeat fields in message 140) are described but
+  keep their `unknown_<n>` name.
+- A renamed field keeps `raw_name`, and asking for it by its `unknown_<n>`
+  name still works. The reply's `field_aliases` gives each mapping's
+  confidence, evidence and the firmware it was checked on (fēnix 8 24.13 and
+  24.14), and flags a file from other firmware.
+- **`output_format="device_summary"`:** one row per sensor serial, source and
+  type from device_info (product, firmware, battery status and level,
+  connects and reconnects, presence at the end), plus heart_rate against
+  strap_heart_rate coverage from the records.
+- **`every_n`** keeps every nth record of a record stream.
+
 ## FIT messages small enough for claude.ai (upstream #488) — 2026-11-10
 
 Cherry-picked from Taxuspt/garmin_mcp#488 while still open there, both commits
