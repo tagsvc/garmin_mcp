@@ -498,6 +498,23 @@ it in."* `CLAUDE.md` routes here; the session follows the steps below.
 
 Do not silently merge — the value is the review, not the merge.
 
+### Upstream PRs taken before upstream merged them
+
+Upstream squash-merges, so when it merges one of these PRs the commit on
+`upstream/main` will not match the one cherry-picked here, and the next sync
+shows the same change again. For each: take upstream's merged version, keep
+what the last column says, and check the PR's tests still pass.
+
+| Upstream PR | Change | Taken | Keep on sync |
+|---|---|---|---|
+| #482 | Heart-rate summaries ignore null samples | as-is | — |
+| #483 | Course details keep an explicit zero distance or elevation | as-is, conflict resolved | the fork's `_course_activity(data)` in place of upstream's `activity` line |
+| #484 | Negative pagination offsets are refused | as-is | — |
+| #496, #497, #500, #501, #503 | FIT summary: heart-rate drift, grade buckets, climbs and temperature weighted by recorded time; climbs end at the first flat sample | as-is | — |
+| #505 | Energy balance excludes the partial current day and future days | as-is, conflict resolved | today from `local_today(get_client())` (the profile's time zone), not the server's date; the docstring says so |
+| #507 | Scheduling returns the calendar entry's `scheduled_workout_id` | as-is, conflict resolved | the fork's Garmin Coach constants beside `_schedule_response_id`; its "PR #295" lines are in `UPSTREAM_TEXT` |
+| #511 | Nutrition summary's daily goals | **adapted** | the fork's flat `*_goal` fields, not upstream's nested `goals` object; #511's addition is `adjusted_carbs_goal`, `adjusted_protein_goal`, `adjusted_fat_goal` |
+
 **Manual procedure:**
 
 One-time — wire the upstream remote:
@@ -628,6 +645,8 @@ stdio/remote split was collapsed, and the first needing no tool migration), on
 upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
 fixes; the first sync to route remote registration through `_ToolFilter`), and
 on 2026-10-27 (33 upstream commits: 2 new tools, tool bodies moved off the event
-loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). See `CHANGELOG.md` for a
+loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). On
+2026-11-10, 11 upstream PRs were taken while still open upstream (see "Upstream
+PRs taken before upstream merged them"). See `CHANGELOG.md` for a
 categorized list of every change relative to upstream, and `README.md` (Remote
 Mode, Security, Token import / refresh) for operational detail.
