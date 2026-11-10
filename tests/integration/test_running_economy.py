@@ -14,7 +14,7 @@ from garmin_mcp.client_resolver import set_global_client
 
 pytestmark = pytest.mark.integration
 
-LATEST = {"calendarDate": "2026-10-03", "score": 230, "classification": "INTERMEDIATE"}
+LATEST = {"calendarDate": "2026-10-03", "score": 220, "classification": "INTERMEDIATE"}
 DAILY = [
     {"calendarDate": "2026-10-01", "score": None, "classification": None},
     {"calendarDate": "2026-10-02", "score": 234, "classification": "INTERMEDIATE"},
@@ -56,8 +56,12 @@ async def _call(app, name, args):
 async def test_latest_score_and_rating_as_of_the_date(app, client):
     payload = json.loads(await _call(app, "get_running_economy", {"date": "2026-10-05"}))
 
-    assert payload == {"as_of": "2026-10-05", "date": "2026-10-03", "score": 230,
-                       "classification": "INTERMEDIATE"}
+    assert payload == {
+        "as_of": "2026-10-05", "date": "2026-10-03", "score": 220,
+        "classification": "INTERMEDIATE",
+        "band": {"name": "Intermediate", "low": 215, "high": 224},
+        "next_band": {"name": "Trained", "at_or_below": 214, "points_to_go": 6},
+    }
     client.get_running_economy.assert_called_once_with("2026-10-05")
 
 
@@ -167,3 +171,35 @@ async def test_a_full_year_is_accepted(app, client):
 def test_a_year_after_a_leap_day_is_the_28th():
     assert training._one_year_after(datetime.date(2028, 2, 29)) == datetime.date(2029, 2, 28)
     assert training._one_year_after(datetime.date(2026, 11, 10)) == datetime.date(2027, 11, 10)
+
+
+# ─── Garmin Connect's bands ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "score, band, next_band",
+    [
+        (184, {"name": "Elite", "high": 184}, None),
+        (185, {"name": "Superior", "low": 185, "high": 189},
+         {"name": "Elite", "at_or_below": 184, "points_to_go": 1}),
+        (204, {"name": "Well-Trained", "low": 195, "high": 204},
+         {"name": "Expert", "at_or_below": 194, "points_to_go": 10}),
+        (214, {"name": "Trained", "low": 205, "high": 214},
+         {"name": "Well-Trained", "at_or_below": 204, "points_to_go": 10}),
+        (215, {"name": "Intermediate", "low": 215, "high": 224},
+         {"name": "Trained", "at_or_below": 214, "points_to_go": 1}),
+        (225, {"name": "Recreational", "low": 225},
+         {"name": "Intermediate", "at_or_below": 224, "points_to_go": 1}),
+        (184.5, {"name": "Superior", "low": 185, "high": 189},
+         {"name": "Elite", "at_or_below": 184, "points_to_go": 0.5}),
+    ],
+)
+def test_each_score_falls_in_garmins_band(score, band, next_band):
+    result = training._running_economy_band(score)
+
+    assert result["band"] == band
+    assert result.get("next_band") == next_band
+
+
+def test_no_score_has_no_band():
+    assert training._running_economy_band(None) == {}
