@@ -323,3 +323,35 @@ def test_a_zero_utc_offset_is_the_records_own():
     zone_garmin_times(pair, None, "Europe/London")
     assert pair["xTimeLocal"] == "2026-10-25T01:30:00+00:00"
     assert pair["xTimeGmt"] == "2026-10-25T01:30:00Z"
+
+
+# --- Garmin's first day of the week ---------------------------------------------
+
+@pytest.mark.parametrize(
+    "setting, expected",
+    [
+        ({"firstDayOfWeek": {"dayId": 3, "dayName": "monday"}}, "monday"),
+        ({"firstDayOfWeek": {"dayName": "Sunday"}}, "sunday"),
+        ({"firstDayOfWeek": {"dayName": "saturday"}}, "saturday"),
+        ({}, "monday"),
+        ({"firstDayOfWeek": {"dayName": "tuesday"}}, "monday"),
+    ],
+)
+def test_first_day_of_week_reads_garmins_setting(setting, expected):
+    from garmin_mcp.times import first_day_of_week
+
+    client = Mock()
+    client.get_userprofile_settings.return_value = setting
+
+    assert first_day_of_week(client) == expected
+
+
+@pytest.mark.parametrize(
+    "first_day, expected",
+    [("monday", "2026-11-16"), ("sunday", "2026-11-15"), ("saturday", "2026-11-14")],
+)
+def test_week_start_follows_the_first_day(first_day, expected):
+    """Thursday 2026-11-19 falls in the week starting on each of these days."""
+    from garmin_mcp.times import week_start
+
+    assert week_start(datetime.date(2026, 11, 19), first_day).isoformat() == expected

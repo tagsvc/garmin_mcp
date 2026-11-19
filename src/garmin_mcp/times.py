@@ -409,3 +409,25 @@ def local_today(client: Any) -> datetime.date:
     if zone:
         return datetime.datetime.now(ZoneInfo(zone)).date()
     return datetime.date.today()
+
+
+# Garmin Connect's "First Day of the Week" choices, as Python weekday numbers.
+_WEEK_STARTS = {"monday": 0, "saturday": 5, "sunday": 6}
+
+
+def first_day_of_week(client: Any) -> str:
+    """The profile's first day of the week: "monday", "saturday" or "sunday".
+
+    From the profile settings' ``firstDayOfWeek`` (Garmin Connect, Display
+    Preferences). Monday, the ISO week, when the setting cannot be read.
+    """
+    setting = profile_settings(client).get("firstDayOfWeek")
+    name = setting.get("dayName") if isinstance(setting, dict) else None
+    name = name.strip().lower() if isinstance(name, str) else ""
+    return name if name in _WEEK_STARTS else "monday"
+
+
+def week_start(day: datetime.date, first_day: str) -> datetime.date:
+    """The first day of the week holding day, for a week starting on first_day."""
+    offset = (day.weekday() - _WEEK_STARTS.get(first_day, 0)) % 7
+    return day - datetime.timedelta(days=offset)

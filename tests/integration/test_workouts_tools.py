@@ -3460,3 +3460,20 @@ def test_a_coach_goal_time_reads_as_a_race_clock(seconds, text):
     from garmin_mcp.workouts import _clock_text
 
     assert _clock_text(seconds) == text
+
+
+@pytest.mark.asyncio
+async def test_coach_workouts_ask_for_weeks_from_the_profiles_first_day(
+    app_with_workouts, mock_garmin_client
+):
+    mock_garmin_client.get_userprofile_settings.return_value = {
+        "firstDayOfWeek": {"dayName": "sunday"}
+    }
+    mock_garmin_client.query_garmin_graphql.return_value = {
+        "data": {"trainingPlanScalar": {"trainingPlanWorkoutScheduleDTOS": []}}
+    }
+
+    await app_with_workouts.call_tool("get_garmin_coach_workouts", {"calendar_date": "2026-11-19"})
+
+    query = mock_garmin_client.query_garmin_graphql.call_args[0][0]["query"]
+    assert 'firstDayOfWeek:"sunday"' in query
