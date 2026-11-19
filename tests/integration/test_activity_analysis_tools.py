@@ -3242,3 +3242,81 @@ def test_fit_message_utc_times_end_in_z_and_local_times_stay_local():
     assert utc["value"] == "2026-10-27T18:37:26Z"
     assert local["value"] == "2026-10-27T14:37:26"
     assert local["profile_type"] == "local_date_time"
+
+
+# --- lap power by time, same-day weigh-ins, reply sizes ------------------------
+
+@pytest.mark.asyncio
+async def test_lap_power_without_a_native_average_is_weighted_by_time(
+    app_with_activity_analysis, mock_garmin_client
+):
+    """60 s at 300 W sampled every second, then 240 s at 150 W every 8 s: the
+    lap averaged 180 W, not the 250 W a plain mean of the 90 samples gives."""
+    start = datetime.datetime(2026, 5, 15, 8, 0, 0)
+    messages = [_make_mock_fit_message("lap", {"start_time": start, "total_elapsed_time": 300})]
+    for t in range(60):
+        messages.append(_make_mock_fit_message(
+            "record", {"timestamp": start + datetime.timedelta(seconds=t), "power": 300}
+        ))
+    for t in range(60, 300, 8):
+        messages.append(_make_mock_fit_message(
+            "record", {"timestamp": start + datetime.timedelta(seconds=t), "power": 150}
+        ))
+    mock_garmin_client.get_body_composition.return_value = {"dateWeightList": []}
+
+    data = await _fit_data_for(app_with_activity_analysis, mock_garmin_client, messages)
+
+    assert data["laps"][0]["avg_power_w"] == 180
+    assert data["laps"][0]["max_power_w"] == 300
+
+
+@pytest.mark.asyncio
+async def test_two_weigh_ins_on_one_day_use_the_later_one(
+    app_with_activity_analysis, mock_garmin_client
+):
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = {"dateWeightList": [
+        {"calendarDate": "2026-05-15", "date": 1778828400000, "weight": 72000},  # 07:00
+        {"calendarDate": "2026-05-15", "date": 1778878800000, "weight": 71000},  # 21:00
+    ]}
+    session_msg = _make_mock_fit_message("session", {
+        "sport": "cycling", "start_time": "2026-05-15 22:00:00", "avg_power": 213,
+    })
+
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile([session_msg])
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID}
+        )
+
+    assert json.loads(result[0][0].text)["rider_weight_kg"] == 71.0
+
+
+@pytest.mark.asyncio
+async def test_records_too_big_for_one_reply_are_left_out_with_a_pointer(
+    app_with_activity_analysis, mock_garmin_client, monkeypatch
+):
+    monkeypatch.setattr(activity_analysis, "FIT_MESSAGES_MAX_RESPONSE_CHARS", 5000)
+    start = datetime.datetime(2026, 5, 15, 8, 0, 0)
+    messages = [
+        _make_mock_fit_message("record", {"timestamp": start + datetime.timedelta(seconds=t), "power": 200})
+        for t in range(400)
+    ]
+    mock_garmin_client.download_activity.return_value = b"\x00" * 20
+    mock_garmin_client.get_body_composition.return_value = {"dateWeightList": []}
+    with patch("garmin_mcp.activity_analysis.fitparse") as mock_fp:
+        mock_fp.FitFile.return_value = _mock_fitfile(messages)
+        result = await app_with_activity_analysis.call_tool(
+            "get_activity_fit_data", {"activity_id": ACTIVITY_ID, "include_records": True}
+        )
+
+    data = json.loads(result[0][0].text)
+    assert "records" not in data
+    assert data["records_omitted"]["record_count"] == 400
+    assert "get_activity_fit_messages" in data["records_omitted"]["hint"]
+
+
+def test_an_inline_download_fits_in_one_reply():
+    """Base64 adds a third: the largest file allowed still fits the cap."""
+    largest = activity_analysis._MAX_INLINE_DOWNLOAD_BYTES
+    assert (largest + 2) // 3 * 4 + 4096 <= activity_analysis.FIT_MESSAGES_MAX_RESPONSE_CHARS

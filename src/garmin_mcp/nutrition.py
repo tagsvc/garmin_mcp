@@ -898,9 +898,8 @@ def register_tools(app):
             existing_nutrition: dict = (
                 ((existing or {}).get("nutritionContents") or [{}])[0] or {}
             )
-            existing_brand: Optional[str] = (
-                (existing or {}).get("foodMetaData") or {}
-            ).get("brandName")
+            existing_meta: dict = (existing or {}).get("foodMetaData") or {}
+            existing_brand: Optional[str] = existing_meta.get("brandName")
 
             # API field name → optional param value (None means "not supplied by caller")
             optional_updates = {
@@ -934,7 +933,10 @@ def register_tools(app):
                 "calories": _num_to_str(calories),
             }
             # Carry forward existing optional fields, then overlay caller-supplied values.
-            preserved_keys = set(optional_updates.keys())
+            # The PUT replaces the whole record, so every nutrient Garmin stores
+            # is carried, including those this tool takes no parameter for
+            # (vitamins A and C, added sugars, mono- and polyunsaturated fat).
+            preserved_keys = set(optional_updates) | {key for key, _name in _MICRONUTRIENTS}
             for key, existing_val in existing_nutrition.items():
                 if key in preserved_keys and existing_val is not None:
                     nutrition[key] = _num_to_str(existing_val)
@@ -945,13 +947,15 @@ def register_tools(app):
             # Effective brand: caller-supplied wins, else preserve existing, else omit.
             effective_brand = brand_name if brand_name is not None else existing_brand
 
+            # The stored record's type, source, region and language are kept;
+            # the create-time defaults apply only when it carries none.
             food_meta: dict = {
                 "foodId": food_id,
                 "foodName": food_name,
-                "foodType": "GENERIC",
-                "source": "GARMIN",
-                "regionCode": "US",
-                "languageCode": "en",
+                "foodType": existing_meta.get("foodType") or "GENERIC",
+                "source": existing_meta.get("source") or "GARMIN",
+                "regionCode": existing_meta.get("regionCode") or "US",
+                "languageCode": existing_meta.get("languageCode") or "en",
             }
             if effective_brand is not None:
                 food_meta["brandName"] = effective_brand

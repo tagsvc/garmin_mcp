@@ -17,7 +17,11 @@ from typing import Any, Dict, List, Optional
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import gmt, profile_time_zone, put_times
+from garmin_mcp.times import gmt, offset_from_pair, profile_time_zone, put_times
+
+# Recordings in one list reply: garminconnect's default page size, which the
+# tool leaves as it is.
+ECG_PAGE_SIZE = 20
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -249,8 +253,10 @@ def register_tools(app):
         ECG app version and the device and its firmware. start_time_gmt and
         start_time_local give when it was taken, local from the recording's own
         offset; local_time_zone appears only when the profile's zone had to be
-        used. get_ecg returns one recording with its waveform. An account
-        without the ECG feature gets a "no ECG data" answer.
+        used. Garmin returns at most 20 recordings per call; a full page sets
+        may_have_more, so narrow the range to see the rest. get_ecg returns one
+        recording with its waveform. An account without the ECG feature gets a
+        "no ECG data" answer.
 
         Args:
             start_date: First day, YYYY-MM-DD.
@@ -272,6 +278,14 @@ def register_tools(app):
             errors = data.get("transformErrors")
             if errors:
                 result["transform_errors"] = errors
+            if len(content or []) >= ECG_PAGE_SIZE:
+                # Garmin pages the list and the next page's token is not known
+                # from a live reply, so a full page is flagged, not followed.
+                result["may_have_more"] = True
+                result["note"] = (
+                    f"Garmin returned a full page of {ECG_PAGE_SIZE}; there may be more. "
+                    "Narrow the date range to see the rest."
+                )
             return json.dumps(result, indent=2)
         except Exception as e:
             if _not_found(e):
@@ -313,9 +327,15 @@ def register_tools(app):
                 "sample_count": len(samples) if samples is not None else None,
             }.items() if v is not None})
             processing = data.get("processingInfo") if isinstance(data.get("processingInfo"), dict) else {}
+            # The recording's own offset, else the one its start time's GMT and
+            # local pair give, as for start_time; the profile zone is the last
+            # resort, and then named.
             offset = _ecg_offset(summary)
+            if offset is None:
+                offset = offset_from_pair(summary.get("startTime"), summary.get("startTimeLocal"))
             for stem, key in (("uploaded", "uploadTime"), ("processed", "processingTime")):
-                put_times(ecg, stem, processing.get(key), offset=offset, zone=zone)
+                if put_times(ecg, stem, processing.get(key), offset=offset, zone=zone):
+                    ecg["local_time_zone"] = zone
             if include_waveform and samples is not None:
                 ecg["samples"] = samples
             return json.dumps(ecg, indent=2)

@@ -15,7 +15,7 @@ from garminconnect import (
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
-from garmin_mcp.times import put_times
+from garmin_mcp.times import local_today, put_times
 from garmin_mcp.units import (
     METERS_PER_FOOT,
     METERS_PER_MILE,
@@ -2296,7 +2296,8 @@ def register_tools(app):
                 datetime.date.fromisoformat(date)
             except ValueError as e:
                 return f"Invalid date format: {e}. Use YYYY-MM-DD."
-        as_of = date or datetime.date.today().isoformat()
+        # The profile zone's today, not the server's (UTC on Railway).
+        as_of = date or local_today(get_client(ctx)).isoformat()
         try:
             data = get_client(ctx).get_running_economy(as_of)
         except Exception as e:

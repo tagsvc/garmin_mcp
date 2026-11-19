@@ -1405,7 +1405,10 @@ def _resolve_download_dir(output_dir: Optional[str]) -> Optional[str]:
 # Remote mode has no useful notion of "the server's disk": a path there names the
 # HOST's filesystem, not the caller's, so writing to it is both useless to the
 # caller and an arbitrary-file-write primitive. Return the bytes instead.
-_MAX_INLINE_DOWNLOAD_BYTES = 8 * 1024 * 1024
+# Base64 grows a file by a third, so this is the largest file whose inline
+# reply stays under FIT_MESSAGES_MAX_RESPONSE_CHARS, what MCP clients accept in
+# one tool result, with room for the JSON around it.
+_MAX_INLINE_DOWNLOAD_BYTES = (FIT_MESSAGES_MAX_RESPONSE_CHARS - 4096) * 3 // 4
 
 
 def _download_as_base64(client, activity_id, fmt: str, format_map: dict) -> str:
@@ -1432,7 +1435,10 @@ def _download_as_base64(client, activity_id, fmt: str, format_map: dict) -> str:
                 f"File is {len(payload)} bytes, over the "
                 f"{_MAX_INLINE_DOWNLOAD_BYTES}-byte inline limit."
             ),
-            "hint": "Use get_activity_fit_data for parsed metrics instead of raw bytes.",
+            "hint": (
+                "Use get_activity_fit_data for parsed metrics, or "
+                "get_activity_fit_messages for the records in pages, instead of raw bytes."
+            ),
         }, indent=2)
 
     return json.dumps({
@@ -1981,18 +1987,20 @@ def _get_rider_weight_kg(activity_date_str: str) -> Optional[Tuple[float, str]]:
             start_date.isoformat(), activity_date.isoformat()
         )
         weight_list = (data or {}).get("dateWeightList") or []
+        # (day, time, weight): on a day with several weigh-ins the latest wins,
+        # by its own timestamp, never the heaviest.
         readings = [
-            (entry.get("calendarDate"), entry.get("weight"))
+            (entry.get("calendarDate"), entry.get("date") or 0, entry.get("weight"))
             for entry in weight_list
             if isinstance(entry, dict)
         ]
         readings = [
-            (day, weight_g) for day, weight_g in readings
+            (day, taken, weight_g) for day, taken, weight_g in readings
             if day and weight_g and day <= activity_date_str
         ]
         if not readings:
             return None
-        day, weight_g = max(readings)
+        day, _taken, weight_g = max(readings, key=lambda reading: reading[:2])
         return round(weight_g / 1000.0, 2), day
     except Exception:
         pass
@@ -2533,14 +2541,17 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
             except (ValueError, TypeError):
                 return None
 
+        # Each sample is weighted by the seconds it covers, as the other
+        # record analytics are: with smart recording, densely sampled
+        # stretches would otherwise count for more than their time.
         rec_pw = []
-        for r in records:
+        for r, held in zip(records, _record_seconds(records)):
             pw = r.get("power_w")
             if pw is None:
                 continue
             ts_dt = _parse_iso_pw(r.get("timestamp"))
             if ts_dt is not None:
-                rec_pw.append((ts_dt, float(pw)))
+                rec_pw.append((ts_dt, float(pw), held))
 
         if rec_pw:
             for lap in laps:
@@ -2552,7 +2563,7 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
                     continue
                 lap_end = lap_start + _dt2.timedelta(seconds=float(elapsed))
                 vals = []
-                for ts_dt, pw in rec_pw:
+                for ts_dt, pw, held in rec_pw:
                     a, b, t = lap_start, lap_end, ts_dt
                     if a.tzinfo and not t.tzinfo:
                         t = t.replace(tzinfo=a.tzinfo)
@@ -2560,10 +2571,15 @@ def _parse_fit(fit_bytes: bytes, include_records: bool) -> dict:
                         a = a.replace(tzinfo=t.tzinfo)
                         b = b.replace(tzinfo=t.tzinfo)
                     if a <= t < b:
-                        vals.append(pw)
+                        vals.append((pw, held))
                 if vals:
-                    lap["avg_power_w"] = round(sum(vals) / len(vals))
-                    lap["max_power_w"] = round(max(vals))
+                    seconds = sum(held for _pw, held in vals)
+                    if seconds:
+                        average = sum(pw * held for pw, held in vals) / seconds
+                    else:
+                        average = sum(pw for pw, _held in vals) / len(vals)
+                    lap["avg_power_w"] = round(average)
+                    lap["max_power_w"] = round(max(pw for pw, _held in vals))
 
     # Also compute per-lap HRV by bucketing R-R intervals by timestamp.
     if rr_pairs:
@@ -2860,7 +2876,9 @@ def register_tools(app):
         - HR drift / cardiac drift coefficient (aerobic decoupling for rides ≥60 min)
         - Temperature correlation: avg HR/power in hottest vs. coolest portions of ride
         - Power Duration Curve: best mean maximal power at 5s, 30s, 1min, 5min, 10min, 20min, 60min
-        - Optional full per-second time series when include_records=True
+        - Optional full per-second time series when include_records=True; when
+          they would take the reply past what an MCP client accepts, they are
+          left out and records_omitted says how to page through them
 
         Multisport files (triathlon, duathlon) contain one session per leg. For
         these, the response adds multisport=true and a sessions list with every
@@ -2959,11 +2977,33 @@ def register_tools(app):
                         if climb_w:
                             climb["avg_w_per_kg"] = round(climb_w / weight_kg, 2)
 
-            return json.dumps(
+            text = json.dumps(
                 add_account_units(parsed, account_unit_system(get_client(ctx))),
                 indent=2,
                 default=str,
             )
+            if len(text) > FIT_MESSAGES_MAX_RESPONSE_CHARS and include_records:
+                # The record stream is what makes a reply too big for an MCP
+                # client to accept; the summary is returned without it.
+                record_count = len(parsed.pop("records", None) or [])
+                parsed.pop("rr_intervals_seconds", None)
+                parsed["records_omitted"] = {
+                    "record_count": record_count,
+                    "reason": (
+                        f"With its records the reply passes {FIT_MESSAGES_MAX_RESPONSE_CHARS} "
+                        "characters, more than an MCP client accepts in one result."
+                    ),
+                    "hint": (
+                        "Page through them with get_activity_fit_messages(include_records=true, "
+                        "fields=[...], output_format='columnar')."
+                    ),
+                }
+                text = json.dumps(
+                    add_account_units(parsed, account_unit_system(get_client(ctx))),
+                    indent=2,
+                    default=str,
+                )
+            return text
 
         except Exception as e:
             return f"Error downloading FIT data for activity {activity_id}: {str(e)}"

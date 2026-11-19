@@ -251,3 +251,30 @@ async def test_an_account_without_ecg_gets_a_plain_answer(app, client):
     text = await _call(app, "get_ecg_recordings", {"start_date": "2026-11-01"})
 
     assert text.startswith("No ECG data")
+
+
+@pytest.mark.asyncio
+async def test_a_full_page_of_ecgs_says_there_may_be_more(app, client):
+    client.get_ecg_list.return_value = {
+        "content": [dict(ECG_SUMMARY, detailId=f"ecg-{n}") for n in range(health_snapshots.ECG_PAGE_SIZE)]
+    }
+
+    payload = json.loads(await _call(app, "get_ecg_recordings", {"start_date": "2026-01-01", "end_date": "2026-11-01"}))
+
+    assert payload["count"] == health_snapshots.ECG_PAGE_SIZE
+    assert payload["may_have_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_ecg_upload_times_follow_the_start_times_offset(app, client):
+    """With no timeZoneOffsetInSeconds, the start time's GMT/local pair gives the
+    offset (-04:00 while travelling), not the profile's zone (-05:00 that day)."""
+    summary = {k: v for k, v in ECG_SUMMARY.items() if k != "timeZoneOffsetInSeconds"}
+    summary["startTimeLocal"] = "2026-11-01T18:43:20.0"
+    client.get_ecg.return_value = dict(ECG_RECORDING, summary=summary)
+
+    ecg = json.loads(await _call(app, "get_ecg", {"ecg_id": ECG_ID}))
+
+    assert ecg["start_time_local"].endswith("-04:00")
+    assert ecg["uploaded_local"].endswith("-04:00")
+    assert "local_time_zone" not in ecg

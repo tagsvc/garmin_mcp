@@ -298,6 +298,11 @@ def _daily_rows(client: Any, end_date: str | None, days: int) -> list[dict[str, 
     end = _parse_date(end_date) if end_date else local_today(client)
     start = end - dt.timedelta(days=safe_days - 1)
     activities_by_date = _activity_totals(client, start, end)
+    # A day with no activity is a rest day, zero on every activity metric, when
+    # the list was fetched; only a failed fetch leaves the day unknown. Left as
+    # None, rest days drop out of every average, so averages run over active
+    # days only and correlations lose the low-load days they need.
+    no_activity = {} if activities_by_date is None else dict(_NO_ACTIVITY)
     rows: list[dict[str, Any]] = []
 
     for offset in range(safe_days):
@@ -306,20 +311,31 @@ def _daily_rows(client: Any, end_date: str | None, days: int) -> list[dict[str, 
         stats = _safe_call(lambda: client.get_stats(date_text), default={})
         sleep = _safe_call(lambda: client.get_sleep_data(date_text), default={})
         readiness = _safe_call(lambda: client.get_training_readiness(date_text), default=[])
-        activity = activities_by_date.get(date_text, {})
+        activity = (activities_by_date or {}).get(date_text, no_activity)
         rows.append(_normalize_day(date_text, stats, sleep, readiness, activity))
 
     return [row for row in rows if _has_signal(row)]
 
 
-def _activity_totals(client: Any, start: dt.date, end: dt.date) -> dict[str, dict[str, float]]:
+_NO_ACTIVITY = {
+    "activity_count": 0.0,
+    "activity_distance_meters": 0.0,
+    "activity_duration_seconds": 0.0,
+    "activity_calories": 0.0,
+}
+
+
+def _activity_totals(
+    client: Any, start: dt.date, end: dt.date
+) -> dict[str, dict[str, float]] | None:
+    """Activity totals by local date, or None when the list could not be fetched."""
     activities = _safe_call(
         lambda: client.get_activities_by_date(start.isoformat(), end.isoformat(), ""),
-        default=[],
+        default=None,
     )
-    output: dict[str, dict[str, float]] = {}
     if not isinstance(activities, list):
-        return output
+        return None
+    output: dict[str, dict[str, float]] = {}
     for activity in activities:
         if not isinstance(activity, dict):
             continue
@@ -327,15 +343,7 @@ def _activity_totals(client: Any, start: dt.date, end: dt.date) -> dict[str, dic
         if not isinstance(raw_start, str) or len(raw_start) < 10:
             continue
         key = raw_start[:10]
-        bucket = output.setdefault(
-            key,
-            {
-                "activity_count": 0.0,
-                "activity_distance_meters": 0.0,
-                "activity_duration_seconds": 0.0,
-                "activity_calories": 0.0,
-            },
-        )
+        bucket = output.setdefault(key, dict(_NO_ACTIVITY))
         bucket["activity_count"] += 1
         bucket["activity_distance_meters"] += _number(activity.get("distance")) or 0
         bucket["activity_duration_seconds"] += _number(activity.get("duration")) or 0
@@ -400,10 +408,24 @@ def _hm_key(metric: str) -> str:
 
 
 def _baseline_payload(rows: list[dict[str, Any]], baseline_window: int) -> dict[str, Any]:
-    window = min(max(7, baseline_window), len(rows))
-    baseline_rows = rows[-window:]
-    prior_rows = rows[-(window * 2) : -window] if len(rows) >= window * 2 else []
+    """The latest day against the window of days before it.
+
+    The latest day is left out of the baseline it is compared with, as in
+    _anomalies: inside it, an outlier pulls the mean toward itself and widens
+    the spread, so its own z-score reads smaller than it is. Windows are
+    calendar days, so a day with no data shortens the sample, not the span.
+    """
     latest = rows[-1]
+    latest_day = _parse_date(latest["date"])
+    window = min(max(7, baseline_window), MAX_DAYS)
+    baseline_rows = _rows_between(
+        rows, latest_day - dt.timedelta(days=window), latest_day - dt.timedelta(days=1)
+    )
+    prior_rows = _rows_between(
+        rows,
+        latest_day - dt.timedelta(days=window * 2),
+        latest_day - dt.timedelta(days=window + 1),
+    )
     metrics: dict[str, dict[str, Any]] = {}
 
     for field, metadata in ANALYTIC_METRICS.items():
@@ -442,8 +464,9 @@ def _anomalies(
 ) -> list[dict[str, Any]]:
     window = min(max(7, baseline_window), MAX_DAYS)
     anomalies: list[dict[str, Any]] = []
-    for index, row in enumerate(rows):
-        history = rows[max(0, index - window) : index]
+    for row in rows:
+        day = _parse_date(row["date"])
+        history = _rows_between(rows, day - dt.timedelta(days=window), day - dt.timedelta(days=1))
         if len(history) < 7:
             continue
         for field, metadata in ANALYTIC_METRICS.items():
@@ -473,6 +496,7 @@ def _anomalies(
 
 def _lagged_correlations(rows: list[dict[str, Any]], max_lag_days: int) -> list[dict[str, Any]]:
     safe_lag = min(max(1, max_lag_days), 14)
+    by_date = {row["date"]: row for row in rows}
     output: list[dict[str, Any]] = []
     fields = list(ANALYTIC_METRICS)
     for left in fields:
@@ -481,9 +505,15 @@ def _lagged_correlations(rows: list[dict[str, Any]], max_lag_days: int) -> list[
                 continue
             for lag in range(1, safe_lag + 1):
                 pairs: list[tuple[float, float]] = []
-                for index, row in enumerate(rows[:-lag]):
+                for row in rows:
+                    # Paired by date: a day with no data drops its pairs,
+                    # rather than pairing the days either side of it.
+                    later_date = (_parse_date(row["date"]) + dt.timedelta(days=lag)).isoformat()
+                    later = by_date.get(later_date)
+                    if later is None:
+                        continue
                     left_value = _number(row.get(left))
-                    right_value = _number(rows[index + lag].get(right))
+                    right_value = _number(later.get(right))
                     if left_value is not None and right_value is not None:
                         pairs.append((left_value, right_value))
                 correlation = _pearson(pairs)
@@ -509,8 +539,11 @@ def _lagged_correlations(rows: list[dict[str, Any]], max_lag_days: int) -> list[
 
 
 def _weekly_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    current = rows[-7:]
-    previous = rows[-14:-7] if len(rows) >= 14 else []
+    # The seven calendar days ending on the latest day with data, and the
+    # seven before them; a day with no data shortens a week, not shifts it.
+    last = _parse_date(rows[-1]["date"])
+    current = _rows_between(rows, last - dt.timedelta(days=6), last)
+    previous = _rows_between(rows, last - dt.timedelta(days=13), last - dt.timedelta(days=7))
     baseline = _baseline_payload(rows, baseline_window=28)
     anomalies = _anomalies(rows[-35:], baseline_window=21, z_threshold=1.75)[:8]
     correlations = _lagged_correlations(rows[-35:], max_lag_days=5)[:6]
@@ -807,7 +840,9 @@ def _recovery_pressure(row: dict[str, Any]) -> float | None:
         else None,
     ]
     values = [float(value) for value in drivers if value is not None]
-    if not values:
+    # Activity alone is not a recovery reading: a rest day with no other data
+    # would read as zero pressure.
+    if all(value is None for index, value in enumerate(drivers) if index != 3):
         return None
     return _round(max(0, min(100, sum(values) / len(values))))
 
@@ -837,8 +872,27 @@ def _window(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {"start": rows[0]["date"], "end": rows[-1]["date"], "days": len(rows)}
 
 
+def _rows_between(rows: list[dict[str, Any]], first: dt.date, last: dt.date) -> list[dict[str, Any]]:
+    """The rows dated from first to last, inclusive."""
+    first_text, last_text = first.isoformat(), last.isoformat()
+    return [row for row in rows if first_text <= row["date"] <= last_text]
+
+
 def _has_signal(row: dict[str, Any]) -> bool:
-    return any(_number(row.get(field)) is not None for field in ANALYTIC_METRICS)
+    """Whether a day has data: a reading, or an activity. A rest day's zero
+    activity totals alone are not data: they fill every day of the window."""
+    if (_number(row.get("activity_count")) or 0) > 0:
+        return True
+    return any(
+        _number(row.get(field)) is not None
+        for field in ANALYTIC_METRICS
+        if field not in _ACTIVITY_FIELDS
+    )
+
+
+_ACTIVITY_FIELDS = frozenset(
+    ("activity_count", "activity_distance_meters", "activity_duration_hours", "activity_calories")
+)
 
 
 def _values(rows: list[dict[str, Any]], field: str) -> list[float]:

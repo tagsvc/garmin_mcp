@@ -180,6 +180,11 @@ def configure(client):
     garmin_client = client
 
 
+def _first_present(*values: Any) -> Any:
+    """The first value that is not None; a 0 counts."""
+    return next((value for value in values if value is not None), None)
+
+
 def _activity_preview(client: Any, activity_id: int) -> Dict[str, Any]:
     """Build a compact preview of an activity before deleting it."""
     preview: Dict[str, Any] = {"activity_id": activity_id}
@@ -199,8 +204,9 @@ def _activity_preview(client: Any, activity_id: int) -> Dict[str, Any]:
             {
                 "name": activity.get("activityName"),
                 "type": type_dto.get("typeKey"),
-                "distance_meters": summary.get("distance") or activity.get("distance"),
-                "duration_seconds": summary.get("duration") or activity.get("duration"),
+                # A 0 (a yoga session's distance) is a value, not a missing one.
+                "distance_meters": _first_present(summary.get("distance"), activity.get("distance")),
+                "duration_seconds": _first_present(summary.get("duration"), activity.get("duration")),
             }
         )
         put_times(
@@ -398,6 +404,8 @@ def register_tools(app):
         try:
             # Clamp page_size to [1, 200]
             page_size = min(max(1, page_size), 200)
+            if page < 0:
+                return "Error retrieving activities: page must be non-negative"
             start = page * page_size
 
             # Call the Garmin API directly with explicit pagination params.
@@ -1529,7 +1537,7 @@ def register_tools(app):
         start_time: str = "09:00",
         activity_name: str = "",
         distance_km: float = 0.0,
-        time_zone: str = "UTC",
+        time_zone: Optional[str] = None,
     ) -> str:
         """Log a manual activity in Garmin Connect — useful for activities done without a watch.
 
@@ -1544,7 +1552,9 @@ def register_tools(app):
             start_time: Start time as HH:MM (24-hour, default 09:00)
             activity_name: Optional title; defaults to the type_key if not provided
             distance_km: Distance in kilometres (default 0.0 for non-distance activities)
-            time_zone: IANA time zone for the activity (default UTC)
+            time_zone: IANA time zone for the activity; defaults to the Garmin
+                profile's zone (UTC when the profile has none), so start_time is
+                read as the athlete's own wall-clock time
 
         If a write fails with write_committed="unknown", check whether the
         activity exists before retrying to avoid creating a duplicate.
@@ -1575,10 +1585,12 @@ def register_tools(app):
             name = activity_name.strip() or type_key.replace("_", " ").title()
             start_datetime = f"{date}T{start_time}:00.000"
 
+            zone = time_zone or profile_time_zone(get_client(ctx)) or "UTC"
+
             tracker.sending()
             result = garmin_client.create_manual_activity(
                 start_datetime=start_datetime,
-                time_zone=time_zone,
+                time_zone=zone,
                 type_key=type_key,
                 distance_km=distance_km,
                 duration_min=duration_minutes,

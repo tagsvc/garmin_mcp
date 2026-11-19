@@ -202,3 +202,39 @@ class TestLoginState:
         pending._ready.wait(5)
 
         assert pending.login_state() == "failed"
+
+
+# --- a runtime login reaches every module ------------------------------------
+
+def test_a_runtime_login_replaces_a_failed_background_login():
+    """Every module holds the same _GarminProxy(pending); activating the client
+    from login_to_garmin must reach them all, not only the resolver's global."""
+    from garmin_mcp import _GarminProxy, _PendingGarminClient
+
+    pending = _PendingGarminClient(timeout=1).start(lambda: None)
+    pending._ready.wait(1)
+    module_global = _GarminProxy(pending)
+    new_client = Mock()
+    new_client.get_daily_weigh_ins.return_value = {"ok": True}
+
+    pending.activate(new_client)
+
+    assert pending.login_state() == "ready"
+    assert module_global.get_daily_weigh_ins("2026-11-19") == {"ok": True}
+
+
+def test_a_background_login_finishing_late_does_not_undo_a_runtime_login():
+    from garmin_mcp import _PendingGarminClient
+
+    release = threading.Event()
+    old_client, new_client = Mock(name="old"), Mock(name="new")
+    pending = _PendingGarminClient(timeout=1).start(lambda: release.wait(1) and old_client)
+
+    pending.activate(new_client)
+    release.set()
+    for _ in range(100):
+        if not any(t.name == "garmin-login" and t.is_alive() for t in threading.enumerate()):
+            break
+        threading.Event().wait(0.01)
+
+    assert pending._client is new_client

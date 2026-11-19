@@ -315,7 +315,15 @@ def _collect_latest_recovery_time(
 
     curated = _recovery_from_recent_activities(client, now, source_errors)
     if curated:
-        curated.setdefault("date", utc_today.isoformat())
+        # The athlete's date, not the server's: UTC is already tomorrow every
+        # evening in the Americas.
+        zone = profile_time_zone(client)
+        local_date = now.astimezone(ZoneInfo(zone)).date() if zone else utc_today
+        curated.setdefault("date", local_date.isoformat())
+        if zone:
+            # The estimate is as of now; its local time is in the profile zone.
+            curated["as_of_local"] = now.astimezone(ZoneInfo(zone)).isoformat(timespec="seconds")
+            curated["local_time_zone"] = zone
         if source_errors:
             curated["source_errors"] = source_errors
         return curated
@@ -2173,8 +2181,12 @@ def register_tools(app):
             # Calculate stress distribution from time-series if available
             stress_values = stress_data.get('stressValuesArray', [])
             if stress_values:
-                # Filter valid stress readings (exclude -1 and -2 which are gaps/activity)
-                valid_values = [v[1] for v in stress_values if v[1] and v[1] > 0]
+                # Filter valid stress readings (exclude -1 and -2 which are gaps/activity);
+                # 0 is a reading, the bottom of the rest band.
+                valid_values = [
+                    v[1] for v in stress_values
+                    if isinstance(v[1], (int, float)) and not isinstance(v[1], bool) and v[1] >= 0
+                ]
                 rest_values = [v for v in valid_values if v < 26]
                 low_values = [v for v in valid_values if 26 <= v < 51]
                 medium_values = [v for v in valid_values if 51 <= v < 76]
@@ -2710,8 +2722,9 @@ def register_tools(app):
         timezone -- in the evening in the Americas a UTC server is already on
         tomorrow's date, which has no snapshot yet. Only when no snapshot exists
         within the last day does it fall back to estimating remaining recovery by
-        decaying recent activity assignments. Pass `date` for a specific day's
-        latest snapshot.
+        decaying recent activity assignments. That estimate is as of now: its
+        `date` and `as_of_local` are in the Garmin profile's time zone, named in
+        local_time_zone. Pass `date` for a specific day's latest snapshot.
 
         Garmin records recovery in snapshots, and `input_context` says what
         produced each one: AFTER_WAKEUP_RESET, AFTER_POST_EXERCISE_RESET, or

@@ -163,3 +163,83 @@ async def test_weekly_review_and_anomalies_and_correlations(app_with_analytics):
         result = await app_with_analytics.call_tool(tool, {})
         # Each returns valid JSON (not an "Error ..." string).
         json.loads(_text(result))
+
+
+# --- rest days, the judged day and gaps ----------------------------------------
+
+def _row(date, **values):
+    row = {"date": date, **values}
+    return row
+
+
+def test_a_rest_day_counts_as_zero_activity():
+    """Averages of activity duration run over every day, not active days only."""
+    client = Mock()
+    client.get_stats = Mock(return_value={"totalSteps": 5000})
+    client.get_sleep_data = Mock(return_value={})
+    client.get_training_readiness = Mock(return_value=[])
+    client.get_activities_by_date = Mock(
+        return_value=[{"startTimeLocal": "2026-11-03 07:00:00", "duration": 7200}]
+    )
+
+    rows = analytics._daily_rows(client, end_date="2026-11-07", days=7)
+
+    durations = [row["activity_duration_hours"] for row in rows]
+    assert len(rows) == 7
+    assert durations.count(0) == 6 and 2.0 in durations
+    assert analytics._average(analytics._values(rows, "activity_duration_hours")) == pytest.approx(2 / 7)
+
+
+def test_a_failed_activity_fetch_leaves_activity_unknown():
+    client = Mock()
+    client.get_stats = Mock(return_value={"totalSteps": 5000})
+    client.get_sleep_data = Mock(return_value={})
+    client.get_training_readiness = Mock(return_value=[])
+    client.get_activities_by_date = Mock(side_effect=RuntimeError("429"))
+
+    rows = analytics._daily_rows(client, end_date="2026-11-07", days=3)
+
+    assert [row["activity_duration_hours"] for row in rows] == [None, None, None]
+
+
+def test_the_baseline_leaves_out_the_day_it_judges():
+    rows = [
+        _row((dt.date(2026, 10, 1) + dt.timedelta(days=n)).isoformat(), resting_hr=50 + n % 2)
+        for n in range(27)
+    ]
+    rows.append(_row("2026-10-28", resting_hr=60))
+
+    metric = analytics._baseline_payload(rows, baseline_window=28)["metrics"]["resting_hr"]
+
+    assert metric["baseline_avg"] == pytest.approx(50.48, abs=0.01)
+    assert metric["sample_days"] == 27
+    assert metric["z_score"] > 15
+
+
+def test_lags_pair_calendar_days_across_a_gap():
+    """With Nov 5 missing, Nov 4 pairs with nothing a day later, not with Nov 6."""
+    rows = [
+        _row(f"2026-11-{day:02d}", steps=day * 100, resting_hr=day)
+        for day in range(1, 21)
+        if day != 5
+    ]
+
+    correlations = analytics._lagged_correlations(rows, max_lag_days=1)
+
+    pair = next(c for c in correlations if c["left_metric"] == "steps" and c["right_metric"] == "resting_hr")
+    # 19 days of data, 18 consecutive-day pairs, less the two that span Nov 5.
+    assert pair["pairs"] == 17
+
+
+def test_the_weekly_review_takes_calendar_weeks_across_a_gap():
+    rows = [
+        _row(f"2026-11-{day:02d}", steps=1000 if day > 7 else 9000)
+        for day in range(1, 15)
+        if day != 10
+    ]
+
+    review = analytics._weekly_review(rows)
+
+    steps = review["comparisons"]["steps"]
+    assert steps["current_7d_avg"] == 1000
+    assert steps["previous_7d_avg"] == 9000

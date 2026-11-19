@@ -11,7 +11,7 @@ from garmin_mcp.client_resolver import get_client
 # The garmin_client will be set by the main file
 garmin_client = None
 
-MENSTRUAL_CALENDAR_MAX_DAYS = 92
+MENSTRUAL_CALENDAR_MAX_DAYS = 90
 
 
 def _unique_items(items: List[Any]) -> List[Any]:
