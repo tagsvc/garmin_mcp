@@ -5,6 +5,42 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## History out of the documents; the history check widened — 2026-11-19
+
+- **`FORK.md` says only what is true now.** Its "History" section, a second and
+  incomplete record of the upstream syncs (it left out the 2026-06-18, 06-19
+  and 06-20 syncs), is replaced by a pointer here. Its invariants, decision log
+  and sync procedure lose the dated stories this file already holds: the
+  training-plan tools' removal, the 2026-10-27 sync's worker threads, the
+  path-guard's origin, the time-text change, the email-only import, the
+  2026-09-10 `nutrition.py` hunk and the 2026-10-14 helper drift. Dates that
+  are evidence for a claim (a measured plan week, a verified unit, a live
+  snapshot) stay beside the claim. The suite's test count ("1683 at time of
+  writing", against 2,076 with this change) is dropped: nothing kept it current.
+- **`OPERATIONS.md`** describes the account-level Actions halt by its symptoms
+  and its check, without the 2026-10-14..10-27 outage it was learned from, and
+  drops "now" and "beforehand" from the Dependabot and CodeQL notes.
+- **`tests/unit/test_no_history_in_docs.py`** (new) fails on a phrase about the
+  past, "at time of writing", or a date tied to a change in `README.md`,
+  `FORK.md`, `OPERATIONS.md`, `SECURITY.md`, `CLAUDE.md`,
+  `.github/WORKFLOWS.md` or `docs/`. Evidence dates are not flagged; a
+  present-tense line that matches is listed in `ALLOWED` with its reason.
+- **`test_no_history_in_code.py` catches more of upstream's history**: "used to
+  default/go/swap", "the earlier", "this produced", "now has", a "Regression:"
+  label and "Bug N". The 14 upstream lines this newly matches are listed in
+  `UPSTREAM_TEXT`, word for word; none of the fork's own lines match. The list
+  says some entries come from upstream PRs taken before upstream merged them.
+  String literals (test data, error text) stay outside the check: dated error
+  messages such as "No data found for 2024-01-15" would read as history.
+- **`CLAUDE.md`** extends the present-tense rule to the reference documents.
+- **`.claude/skills/babysit-prs/project.md`** drops the two open decisions
+  already settled, the garminconnect upgrade (0.3.20 is pinned) and the Python
+  3.12 minimum (`requires-python = ">=3.12"`), and its version constraints read
+  as `pyproject.toml` does (`garminconnect==0.3.20`, `mcp>=1.30.0,<2`). Its
+  rules are unchanged.
+- Two entries this file was missing are added below: the Desktop extension's
+  source (2026-11-02) and oauthlib 4.0.1 (2026-11-06).
+
 ## Running economy: Garmin's coaching phrase — 2026-11-10
 
 - **`get_running_economy` gives `feedback`:** Garmin Connect's coaching phrase
@@ -165,6 +201,11 @@ says what to keep when upstream merges them.
   locations in `test_oauth_discovery.py` and, through the real remote server, in
   `test_remote_end_to_end.py`.
 
+## oauthlib 4.0.0 → 4.0.1 — 2026-11-06
+
+Dependabot's lock-file bump (`uv.lock` only); oauthlib still arrives only
+through garth → requests-oauthlib. No code change.
+
 ## Every tool in a tool profile; a check for history in code — 2026-11-02
 
 - **`GARMIN_TOOL_PROFILE` now covers every tool but one.** 26 tools were in no
@@ -260,6 +301,17 @@ the local stdio server as the fallback.
   for the remote server; the `/import-token` curl call and its replies.
 - **Placeholders** replace a personal local path, an example workout id and a
   watch model.
+
+## Desktop extension runs this fork — 2026-11-02
+
+- **`dxt/manifest.json` launches this fork's server** (`uvx --from
+  git+https://github.com/tagsvc/garmin_mcp`) in place of upstream's, which it
+  ran while listing this fork's tools; its repository and homepage point here,
+  and the author credit stays. `garmin-mcp.dxt` is rebuilt. Checked: `uvx
+  --from` this repository installs the fork's server on garminconnect 0.3.20.
+- **README:** the one-click install downloads this repository's `.dxt`, not
+  upstream's release, and an "About this fork" note says what the fork is and
+  adds, linking `FORK.md`, `OPERATIONS.md` and `CHANGELOG.md`.
 
 ## Fastest splits — 2026-11-02
 

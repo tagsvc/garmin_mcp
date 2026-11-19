@@ -42,15 +42,18 @@ MARKERS = {
     ),
     "the code's past": re.compile(
         r"\b(?:used to (?:be|return|send|have|call|read|write|drop|report|show|"
-        r"crash|fail|work|give|keep|skip)|previously|formerly|originally|"
+        r"crash|fail|work|give|keep|skip|default|go|swap)|previously|formerly|originally|"
         r"no longer|until recently|turned out|we found|fixed in|introduced in|"
         r"regressed|this fix|the fix for|(?:before|after) the fix|"
-        r"the old (?:code|version|behaviou?r|path|tool)|was renamed|renamed from)\b",
+        r"the old (?:code|version|behaviou?r|path|tool)|was renamed|renamed from|"
+        r"the earlier|this produced|now has)\b|(?-i:\bRegression:)|\bBug \d+\b",
         re.I,
     ),
 }
 
-# Upstream's comments that match a marker, left as upstream wrote them.
+# Upstream's comments that match a marker, left as upstream wrote them. Some
+# come from upstream PRs taken before upstream merged them, so they are not yet
+# on upstream's main; FORK.md's table of those PRs names each.
 UPSTREAM_TEXT = {
     "scripts/generate_dxt_tools.py": {
         "to 8 hand-picked entries while the server grew to ~150 tools (#340). This",
@@ -78,6 +81,9 @@ UPSTREAM_TEXT = {
     "src/garmin_mcp/http_auth.py": {
         "Shared-secret bearer auth for the HTTP transports (#339).",
     },
+    "src/garmin_mcp/training.py": {
+        "# Device data now has training status fields flattened — no",
+    },
     "src/garmin_mcp/workout_builders.py": {
         'Garmin shows the real set count — previously "sets" only ever reached the',
     },
@@ -86,6 +92,10 @@ UPSTREAM_TEXT = {
         "Adapted from PR #295. Parsing is optional: a successful POST with no JSON",
         "devices. As of July 31, 2026, no supported or known Garmin Connect",
     },
+    "tests/e2e/test_delete_food_log_live.py": {
+        "Live integration test for delete_food_log (Bug 2 fix).",
+        "The exact call used by delete_food_log after the Bug 2 fix.",
+    },
     "tests/e2e/test_nested_workout_target_values_live.py": {
         "MCP repairs issue #210's payload before Garmin silently drops its bounds.",
     },
@@ -93,16 +103,28 @@ UPSTREAM_TEXT = {
         "# from a live Instinct 2X Solar (upstream PR #247); values are made up.",
     },
     "tests/integration/test_activity_management_tools.py": {
+        "Regression: the single-activity detail endpoint returns eventTypeDTO (the",
         "Regression: the detail view previously never extracted 'description', so a",
     },
     "tests/integration/test_health_wellness_tools.py": {
+        "get_stats_range's has_data/is_partial exclusion logic that the earlier",
+        "a gate, this produced a physiologically nonsensical TDEE with a",
         "the deficit is returned -- both were previously impossible with the",
     },
     "tests/integration/test_nutrition_tools.py": {
+        "# Regression tests for Bug 1 and Bug 2",
+        'Regression: these params used to default to "G"/100, so omitting them on a',
+        "Regression: the full-replace PUT used to go out anyway, wiping brand and",
+        "Regression: the lookup searched only for the NEW name, missed the record,",
+        "Regression for Bug 1: client.put(api=True) returns a plain dict, not a Response.",
+        "Regression for Bug 2: delete_food_log must accept 32-char hex UUID log IDs",
         "# Field names follow the reporter's settings payload in issue #294.",
     },
     "tests/integration/test_schedule_response_ids.py": {
         "Extracted from the scheduling support in PR #295. Transport is mocked; these",
+    },
+    "tests/integration/test_workout_builders_tools.py": {
+        "Regression: garminconnect 0.3.2 removed the `.garth` attribute. The old",
     },
     "tests/integration/test_workouts_tools.py": {
         "# Cycling power target tests (Issue #155)",
@@ -126,6 +148,7 @@ UPSTREAM_TEXT = {
         "GARMIN_MCP_HTTP_TOKEN gates the HTTP transports with a bearer token (#339).",
     },
     "tests/unit/test_login_gate.py": {
+        "Regression: init_api() used to swap the process-wide sys.stderr for a",
         "Unit tests for the deferred-login helpers behind issue #255.",
     },
     "tests/unit/test_server_startup.py": {
@@ -231,6 +254,9 @@ def test_listed_upstream_text_is_still_there():
         "# The tool used to send the query in the path.",
         "# Previously this read the change phrase.",
         "# Garmin no longer sends the field.",
+        "# Regression: the tool used to default to grams.",
+        "# Regression for Bug 2: the delete call.",
+        "# The summary now has the field.",
     ],
 )
 def test_each_marker_is_caught(text):
@@ -247,6 +273,8 @@ def test_each_marker_is_caught(text):
         "An empty reply says no plan was found, rather than an empty shell.",
         "# The value is used to compute the pace.",
         "# Zone 1 starts at 0 W.",
+        "The deficit is the slope of a single regression: for each day,",
+        "# Regression tests for the token bridge.",
     ],
 )
 def test_present_tense_text_is_not_flagged(text):
