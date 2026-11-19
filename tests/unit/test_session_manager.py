@@ -54,3 +54,90 @@ def test_persisted_tokens_load_into_garminconnect_client(tmp_path):
     client.load(token_dir)
     assert client.di_token == "di-bearer-xyz"
     assert client.is_authenticated is True
+
+
+# ─── one user's session work never blocks another's ──────────────────────
+
+import json
+import threading
+
+from garmin_mcp import session_manager as session_module
+from garmin_mcp.session_manager import _CachedClient
+
+_BLOB = json.dumps({"di_token": "di-new", "di_refresh_token": "r-new", "di_client_id": "c"})
+
+
+class _BlockingGarmin:
+    """Stands in for garminconnect.Garmin: a login from a directory named
+    "slow" waits until released, any other returns at once."""
+
+    release = threading.Event()
+
+    def __init__(self):
+        self.client = SimpleNamespace(_tokenstore_path=None)
+
+    def login(self, token_dir):
+        if os.path.basename(token_dir) == "slow":
+            assert self.release.wait(5), "the slow restore was never released"
+        self.client._tokenstore_path = token_dir
+
+
+def test_a_slow_restore_does_not_block_another_users_calls(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_module, "Garmin", _BlockingGarmin)
+    _BlockingGarmin.release.clear()
+    sm = SessionManager(str(tmp_path))
+    os.makedirs(tmp_path / "slow")
+    os.makedirs(tmp_path / "fast")
+
+    slow = threading.Thread(target=sm.get_client, args=("slow",))
+    slow.start()
+    try:
+        fast_result = []
+        fast = threading.Thread(target=lambda: fast_result.append(sm.get_client("fast")))
+        fast.start()
+        fast.join(timeout=2)
+        assert not fast.is_alive(), "user 'fast' waited on user 'slow''s restore"
+        assert fast_result and fast_result[0] is not None
+    finally:
+        _BlockingGarmin.release.set()
+        slow.join(timeout=5)
+
+
+def test_a_replaced_session_stops_the_old_clients_token_writes(tmp_path):
+    """garminconnect saves a token refresh to the directory the client loaded
+    from; a client still in use after an import must not write the replaced
+    tokens back over the imported ones."""
+    sm = SessionManager(str(tmp_path))
+    old = SimpleNamespace(client=SimpleNamespace(_tokenstore_path=str(tmp_path / "u")))
+    sm._cache["u"] = _CachedClient(old, sm.CACHE_TTL)
+
+    sm.create_session_from_token_blob("u", _BLOB)
+
+    assert old.client._tokenstore_path is None
+    assert "u" not in sm._cache
+    with open(tmp_path / "u" / "garmin_tokens.json") as f:
+        assert json.load(f)["di_token"] == "di-new"
+
+
+def test_removing_a_session_stops_the_old_clients_token_writes(tmp_path):
+    sm = SessionManager(str(tmp_path))
+    sm.create_session_from_token_blob("u", _BLOB)
+    old = SimpleNamespace(client=SimpleNamespace(_tokenstore_path=str(tmp_path / "u")))
+    sm._cache["u"] = _CachedClient(old, sm.CACHE_TTL)
+
+    assert sm.remove_session("u") is True
+
+    assert old.client._tokenstore_path is None
+    assert not os.path.exists(tmp_path / "u")
+
+
+def test_garminconnect_saves_refreshes_to_the_loaded_directory(tmp_path):
+    """_stop_token_writes relies on this attribute; a garminconnect version
+    without it would let a retired client write tokens back."""
+    sm = SessionManager(str(tmp_path))
+    sm.create_session_from_token_blob("u", _BLOB)
+
+    client = Client()
+    client.load(str(tmp_path / "u"))
+
+    assert client._tokenstore_path

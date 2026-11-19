@@ -64,6 +64,8 @@ def _matches(reply: Any, find: Optional[str], fields: Optional[List[str]]) -> Li
             return
         if isinstance(node, dict):
             for key, value in node.items():
+                if len(found) >= MAX_MATCHES:
+                    return
                 here = f"{path}.{key}" if path else str(key)
                 if (pattern and pattern.search(str(key))) or key in wanted:
                     found.append({"path": here, "value": value})
@@ -77,23 +79,66 @@ def _matches(reply: Any, find: Optional[str], fields: Optional[List[str]]) -> Li
     return found
 
 
+def _size(value: Any) -> int:
+    return len(json.dumps(value, default=str))
+
+
+def _shrink_matches(entry: Dict[str, Any], budget: int) -> None:
+    """Fit one call's find/fields matches into budget characters: a value too
+    big is replaced by its size, then the matches that still do not fit are
+    counted, not listed."""
+    matches = entry["matches"]
+    for match in matches:
+        size = _size(match["value"])
+        if size > budget // 10:
+            match["value"] = {"truncated": True, "size_chars": size}
+    kept, used = [], 0
+    for match in matches:
+        used += _size(match)
+        if used > budget:
+            break
+        kept.append(match)
+    if len(kept) < len(matches):
+        entry["matches"] = kept
+        entry["matches_not_shown"] = len(matches) - len(kept)
+
+
 def _capped(payload: Dict[str, Any]) -> str:
-    """The payload as JSON, with any reply too big to fit summarised."""
+    """The payload as JSON, with any reply or set of matches too big to fit
+    summarised, so the result stays valid JSON."""
     text = json.dumps(payload, indent=2, default=str)
     if len(text) <= MAX_CHARS:
         return text
-    for entry in payload.get("garmin_replies", []):
+    entries = payload.get("garmin_replies", [])
+    budget = MAX_CHARS // 4
+    for entry in entries:
+        if "matches" in entry:
+            if _size(entry["matches"]) > budget:
+                _shrink_matches(entry, budget)
+            continue
         reply = entry.get("reply")
-        size = len(json.dumps(reply, default=str))
-        if size > MAX_CHARS // 4:
+        size = _size(reply)
+        if size > budget:
             keys = list(reply)[:50] if isinstance(reply, dict) else None
             entry["reply"] = {"truncated": True, "size_chars": size, "top_level_keys": keys}
     payload["note"] = (
-        f"Replies over {MAX_CHARS // 4} characters are summarised; narrow them "
+        f"Replies over {budget} characters are summarised; narrow them "
         "with find (a regex on key names) or fields (exact key names)."
     )
     text = json.dumps(payload, indent=2, default=str)
-    return text if len(text) <= MAX_CHARS else text[:MAX_CHARS] + "\n... (truncated)"
+    if len(text) <= MAX_CHARS:
+        return text
+    # Still too big (many calls, or a long missing-field list): list each
+    # call by name and size only.
+    for entry in entries:
+        content = entry.pop("matches", None) if "matches" in entry else entry.pop("reply", None)
+        entry["size_chars"] = _size(content)
+    payload.pop("missing_fields", None)
+    payload["note"] = (
+        "Too much to return: each call is listed by size only. Narrow it with "
+        "find or fields, or inspect a shorter date range."
+    )
+    return json.dumps(payload, indent=2, default=str)
 
 
 def register_tools(app):

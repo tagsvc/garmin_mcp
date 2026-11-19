@@ -5,6 +5,46 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Review of the remote server and sign-in code: eight fixes — 2026-11-19
+
+A review of the remote-server and sign-in files found eight problems; each is
+fixed here, with a test that fails without the fix.
+
+- **One user per Garmin email, merged at startup.** The case-insensitive user
+  lookup (2026-11-02) did not merge users that already existed in two cases,
+  so an import could land on a user the claude.ai connection does not use. At
+  startup the server now merges them: the oldest is kept, the others'
+  authorization codes and access and refresh tokens move to it, the newer of
+  their Garmin sessions on disk is kept under it, and their saved reports are
+  combined (the kept user's definition wins a name clash). Every stored email
+  is normalized, so lookups are an exact match.
+- **Emails fold case as the allowlist does.** The lookup compared SQLite's
+  `lower()`, which folds ASCII only, against Python's `str.lower()`; an email
+  with a non-ASCII capital made a second user. Emails are now folded in Python
+  only.
+- **One user's session restore no longer blocks every other user.**
+  `SessionManager.get_client` held one lock across the live Garmin login of a
+  restore. Restores, session writes and removals now take a lock per user;
+  the shared lock guards only the cache.
+- **A replaced session stays replaced.** garminconnect saves a token refresh to
+  the directory the client loaded from, so a client still in use after an
+  import could write the old tokens back over the imported ones. Replacing or
+  removing a session now stops the old client saving refreshes.
+- **`login_to_garmin` refuses a symlinked token path before logging in.**
+  garminconnect refuses to save tokens through a symlink, so the tokens from a
+  correct one-time code were lost, and the message cut off the path. The tool
+  now checks first and names the real directory.
+- **The optional base64 token copy is never written through a symlink.** It
+  is opened without following links, and an existing file is restricted to
+  owner-only before tokens are written.
+- **`inspect_garmin` returns valid JSON however much `find` or `fields`
+  match.** Oversized matches were cut mid-JSON; now an oversized value is
+  replaced by its size and matches beyond the cap are counted, and a result
+  that still cannot fit lists each call by size. The 300-match limit now also
+  holds within a single object.
+- **A non-ASCII `X-Import-Secret` is refused with 401**, not a 500: the
+  secret is compared as bytes.
+
 ## History out of the documents; the history check widened — 2026-11-19
 
 - **`FORK.md` says only what is true now.** Its "History" section, a second and

@@ -209,6 +209,74 @@ async def test_login_tool_keeps_the_tokens_when_the_profile_load_fails(offline_g
     assert saved["di_refresh_token"] == "synthetic-refresh-token"
 
 
+
+
+def _user_owned_links(monkeypatch):
+    """Links a test creates are root's when the suite runs as root, and a
+    root-owned link is allowed; treat them as the user's own, as on a laptop."""
+    from garmin_mcp import token_utils
+
+    monkeypatch.setattr(token_utils, "_root_owned_link", lambda _path: False)
+
+
+@pytest.mark.asyncio
+async def test_login_tool_refuses_a_symlinked_token_path_before_logging_in(
+    offline_garmin, monkeypatch, tmp_path
+):
+    """garminconnect cannot save through a symlink, so the login must not be
+    spent: no credential exchange runs, and the message names the real path."""
+    app, activated = _login_tool(monkeypatch)
+    _user_owned_links(monkeypatch)
+    exchanges = []
+    real_login = type(Garmin().client).login
+    monkeypatch.setattr(
+        type(Garmin().client), "login",
+        lambda self, *a, **k: exchanges.append(1) or real_login(self, *a, **k),
+    )
+    (tmp_path / "real").mkdir()
+    (tmp_path / "tokens").symlink_to(tmp_path / "real")
+
+    result = json.loads(await _call(app, "login_to_garmin", _login_args(tmp_path)))
+
+    assert result["status"] == "failed"
+    assert "symlink" in result["message"]
+    assert str(tmp_path / "real") in result["message"]
+    assert exchanges == []
+    assert activated == []
+
+
+@pytest.mark.asyncio
+async def test_login_tool_never_writes_the_base64_copy_through_a_symlink(
+    offline_garmin, monkeypatch, tmp_path
+):
+    app, activated = _login_tool(monkeypatch)
+    _user_owned_links(monkeypatch)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text("unchanged")
+    elsewhere.chmod(0o644)
+    (tmp_path / "tokens_base64").symlink_to(elsewhere)
+
+    result = json.loads(await _call(app, "login_to_garmin", _login_args(tmp_path)))
+
+    assert result["status"] == "authenticated"
+    assert "symlink" in result["warning"]
+    assert elsewhere.read_text() == "unchanged"
+    assert stat.S_IMODE(elsewhere.stat().st_mode) == 0o644
+
+
+@pytest.mark.asyncio
+async def test_login_tool_restricts_an_existing_base64_copy(offline_garmin, monkeypatch, tmp_path):
+    app, _activated = _login_tool(monkeypatch)
+    copy = tmp_path / "tokens_base64"
+    copy.write_text("old")
+    copy.chmod(0o644)
+
+    await _call(app, "login_to_garmin", _login_args(tmp_path))
+
+    assert stat.S_IMODE(copy.stat().st_mode) == 0o600
+    assert json.loads(base64.b64decode(copy.read_text()))["di_refresh_token"] == "synthetic-refresh-token"
+
+
 # ─── Garmin Coach: queries travel as params ───────────────────────────────
 
 PLAN_DETAIL = {"athletePlanId": 11, "quit": "2026-10-01T12:00:00.0",

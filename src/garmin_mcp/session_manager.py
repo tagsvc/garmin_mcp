@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import time
 import threading
 from typing import Dict, Optional
@@ -33,7 +34,11 @@ class SessionManager:
         self.storage_path = storage_path
         self._cache: Dict[str, _CachedClient] = {}
         self._token_user_map: Dict[str, str] = {}
+        # Guards the dicts only, never a call to Garmin.
         self._lock = threading.Lock()
+        # One per user: restoring, writing or removing one user's session waits
+        # for that user's other session work, never for another user's.
+        self._user_locks: Dict[str, threading.Lock] = {}
         os.makedirs(storage_path, exist_ok=True)
         self._secure_existing_sessions()
 
@@ -83,18 +88,40 @@ class SessionManager:
         """Get the token storage directory for a user."""
         return os.path.join(self.storage_path, user_id)
 
+    def _user_lock(self, user_id: str) -> threading.Lock:
+        with self._lock:
+            return self._user_locks.setdefault(user_id, threading.Lock())
+
+    def _retire_cached(self, user_id: str) -> None:
+        """Drop a user's cached client before the session on disk is replaced.
+
+        A call already holding the client keeps using it, but the client stops
+        saving token refreshes: garminconnect writes a refresh to the directory
+        the client loaded from, which would put the replaced tokens back over
+        the new ones.
+        """
+        with self._lock:
+            cached = self._cache.pop(user_id, None)
+        if cached is not None:
+            _stop_token_writes(cached.client)
+
     def get_client(self, user_id: str) -> Optional[Garmin]:
         """Get or restore a Garmin client for a user.
 
-        Returns None if no session exists for this user.
+        Returns None if no session exists for this user. A restore talks to
+        Garmin, so it holds only this user's lock: another user's calls go on
+        while it runs.
         """
-        with self._lock:
-            # Check memory cache first
-            cached = self._cache.get(user_id)
-            if cached and not cached.is_expired():
-                return cached.client
+        cached = self._cached_client(user_id)
+        if cached is not None:
+            return cached
 
-            # Try to restore from disk
+        with self._user_lock(user_id):
+            # Another call may have restored the session while this one waited.
+            cached = self._cached_client(user_id)
+            if cached is not None:
+                return cached
+
             token_dir = self._user_token_dir(user_id)
             if not os.path.isdir(token_dir):
                 logger.warning(
@@ -112,8 +139,6 @@ class SessionManager:
                 # missing (expired refresh token, Garmin rate-limiting/blocking
                 # the server IP, transient network errors, etc.).
                 garmin.login(token_dir)
-                self._cache[user_id] = _CachedClient(garmin, self.CACHE_TTL)
-                return garmin
             except Exception:
                 # Don't swallow silently: the cause is otherwise invisible and
                 # surfaces only as a generic "session expired" to the user.
@@ -123,6 +148,17 @@ class SessionManager:
                     token_dir,
                 )
                 return None
+
+            with self._lock:
+                self._cache[user_id] = _CachedClient(garmin, self.CACHE_TTL)
+            return garmin
+
+    def _cached_client(self, user_id: str) -> Optional[Garmin]:
+        with self._lock:
+            cached = self._cache.get(user_id)
+            if cached and not cached.is_expired():
+                return cached.client
+        return None
 
     def create_session_from_garth_tokens(
         self, user_id: str, oauth1_token, oauth2_token
@@ -160,18 +196,25 @@ class SessionManager:
             except Exception:
                 logger.debug("Could not extract di_client_id from JWT", exc_info=True)
 
-        token_dir = self._user_token_dir(user_id)
-        os.makedirs(token_dir, exist_ok=True)
-        client.dump(token_dir)  # writes garmin_tokens.json
-        # Owner-only permissions on the token dir and files. Defence in depth
-        # over the garminconnect >= 0.3.5 fix for CVE-2026-54447 (token store
-        # written world-readable under the default umask), so the guarantee
-        # does not depend on the library version.
-        secure_token_dir(token_dir)
+        self._write_session(user_id, client)
 
-        # Invalidate cache so next get_client() reloads from disk
-        with self._lock:
-            self._cache.pop(user_id, None)
+    def _write_session(self, user_id: str, client) -> None:
+        """Save a garminconnect client's tokens as the user's session.
+
+        Under the user's lock, so no restore loads the old tokens meanwhile, and
+        after the cached client is retired, so it cannot write them back. The
+        next get_client() loads the new tokens from disk.
+        """
+        with self._user_lock(user_id):
+            self._retire_cached(user_id)
+            token_dir = self._user_token_dir(user_id)
+            os.makedirs(token_dir, exist_ok=True)
+            client.dump(token_dir)  # writes garmin_tokens.json
+            # Owner-only permissions on the token dir and files. Defence in depth
+            # over the garminconnect >= 0.3.5 fix for CVE-2026-54447 (token store
+            # written world-readable under the default umask), so the guarantee
+            # does not depend on the library version.
+            secure_token_dir(token_dir)
 
     def create_session_from_token_blob(self, user_id: str, blob: str) -> None:
         """Persist a Garmin session from a pre-minted token blob.
@@ -217,41 +260,72 @@ class SessionManager:
         except Exception as e:
             raise ValueError(f"Token is missing required fields: {e}") from e
 
-        token_dir = self._user_token_dir(user_id)
-        os.makedirs(token_dir, exist_ok=True)
-        garmin.client.dump(token_dir)  # writes garmin_tokens.json
-        # Owner-only permissions (see create_session_from_garth_tokens).
-        secure_token_dir(token_dir)
-
-        # Invalidate cache so next get_client() reloads from disk
-        with self._lock:
-            self._cache.pop(user_id, None)
+        self._write_session(user_id, garmin.client)
 
     def remove_session(self, user_id: str) -> bool:
         """Remove a user's Garmin session and tokens.
 
         Returns True if session existed and was removed.
         """
-        import shutil
+        with self._user_lock(user_id):
+            with self._lock:
+                removed = user_id in self._cache
+            self._retire_cached(user_id)
 
-        removed = False
-
-        with self._lock:
-            if user_id in self._cache:
-                del self._cache[user_id]
+            token_dir = self._user_token_dir(user_id)
+            if os.path.isdir(token_dir):
+                shutil.rmtree(token_dir)
                 removed = True
 
-        token_dir = self._user_token_dir(user_id)
-        if os.path.isdir(token_dir):
-            shutil.rmtree(token_dir)
-            removed = True
-
         return removed
+
+    def merge_sessions(self, keep_id: str, merged_id: str) -> None:
+        """Fold one user's Garmin session into another's, for users being merged.
+
+        The newer session on disk (by its token file's time) ends up under
+        keep_id, and merged_id's directory is removed, so the account keeps the
+        tokens it last saved whichever of the two users held them.
+        """
+        first, second = sorted((keep_id, merged_id))
+        with self._user_lock(first), self._user_lock(second):
+            self._retire_cached(keep_id)
+            self._retire_cached(merged_id)
+            source = self._user_token_dir(merged_id)
+            target = self._user_token_dir(keep_id)
+            if not os.path.isdir(source):
+                return
+            if os.path.isdir(target) and _token_time(target) >= _token_time(source):
+                shutil.rmtree(source)
+                return
+            if os.path.isdir(target):
+                shutil.rmtree(target)
+            shutil.move(source, target)
+            secure_token_dir(target)
 
     def has_session(self, user_id: str) -> bool:
         """Check if a user has a stored Garmin session."""
         token_dir = self._user_token_dir(user_id)
         return os.path.isdir(token_dir)
+
+
+def _stop_token_writes(garmin) -> None:
+    """Stop a garminconnect client saving token refreshes to disk.
+
+    garminconnect saves a refresh to ``client._tokenstore_path``, the directory
+    the tokens were loaded from; with it unset, a refresh stays in memory.
+    ``test_session_manager.py`` checks the library still has the attribute.
+    """
+    inner = getattr(garmin, "client", None)
+    if inner is not None and hasattr(inner, "_tokenstore_path"):
+        inner._tokenstore_path = None
+
+
+def _token_time(token_dir: str) -> float:
+    """When the session in a token directory was last saved; 0 if it has none."""
+    try:
+        return os.path.getmtime(os.path.join(token_dir, "garmin_tokens.json"))
+    except OSError:
+        return 0.0
 
 
 class _CachedClient:
