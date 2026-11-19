@@ -133,7 +133,8 @@ coverage.
   `structured_output=False` (bare FastMCP registration re-wraps every JSON string
   as `{"result": "<escaped json>"}`, doubling the payload, and attaches no
   annotations). It also withholds `REMOTE_EXCLUDED_TOOLS` — currently only
-  `delete_activity` — and **fails closed**: an exclusion naming no registered
+  `delete_activity` — plus any tool named in `GARMIN_DISABLED_TOOLS` (a
+  deployment's choice; a name matching no tool is only logged), and **fails closed**: an exclusion naming no registered
   tool (an upstream rename) raises at startup instead of serving the tool. The
   count and contract tests call this same function, so documented remote counts
   are what is actually served. Pinned by `test_remote_mode_contract.py`, which

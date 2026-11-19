@@ -122,6 +122,9 @@ _CONFIGURED_MODULES = (
 
 
 
+logger = logging.getLogger(__name__)
+
+
 # --- Remote tool set ---------------------------------------------------------
 # Individual tools that stdio registers but this network server withholds.
 # (auth_tools is withheld at module level instead: remote.py never registers it.)
@@ -136,8 +139,13 @@ _CONFIGURED_MODULES = (
 REMOTE_EXCLUDED_TOOLS = frozenset({"delete_activity"})
 
 
-def register_remote_tools(app):
+def register_remote_tools(app, disabled_tools=frozenset()):
     """Register every remote-mode tool on ``app`` and return the wrapper.
+
+    disabled_tools are further tools the deployment withholds, from
+    GARMIN_DISABLED_TOOLS (e.g. the women's health tools on an account they
+    do not apply to). A withheld tool is not offered to the client at all, so
+    its description costs no context.
 
     Goes through ``garmin_mcp._ToolFilter``, the wrapper stdio registers through,
     so remote tools get the same treatment: effect annotations
@@ -149,10 +157,12 @@ def register_remote_tools(app):
 
     Fails closed: if a name in REMOTE_EXCLUDED_TOOLS matches no registered tool
     (an upstream rename, say), startup raises rather than silently serving it.
+    A disabled_tools name that matches nothing is a typo in configuration and
+    only logged, so it cannot stop a deploy.
     """
     from garmin_mcp import _ToolFilter
 
-    tool_filter = _ToolFilter(app, set(), set(REMOTE_EXCLUDED_TOOLS))
+    tool_filter = _ToolFilter(app, set(), set(REMOTE_EXCLUDED_TOOLS) | set(disabled_tools))
     app = tool_filter
     app = activity_management.register_tools(app)
     app = health_wellness.register_tools(app)
@@ -174,7 +184,13 @@ def register_remote_tools(app):
     app = diagnostics.register_tools(app)
     app = health_snapshots.register_tools(app)
 
-    unmatched = tool_filter.unknown_filter_names()
+    unmatched = [name for name in tool_filter.unknown_filter_names() if name in REMOTE_EXCLUDED_TOOLS]
+    unknown_disabled = sorted(set(disabled_tools) - tool_filter._seen)
+    if unknown_disabled:
+        logger.warning(
+            "GARMIN_DISABLED_TOOLS names no registered tool (ignored): %s",
+            ", ".join(unknown_disabled),
+        )
     if unmatched:
         raise RuntimeError(
             f"REMOTE_EXCLUDED_TOOLS names no registered tool: {unmatched}. "
@@ -347,7 +363,12 @@ def main():
     # Register tools from all modules -- through the same filter stdio uses,
     # minus REMOTE_EXCLUDED_TOOLS. Tests measure the remote tool set by calling
     # this same function, so documented counts cannot drift from what is served.
-    app = register_remote_tools(app)
+    from garmin_mcp import _parse_tool_set
+
+    disabled_tools = frozenset(_parse_tool_set(os.getenv("GARMIN_DISABLED_TOOLS")))
+    if disabled_tools:
+        logger.info("Withholding %d tool(s) from GARMIN_DISABLED_TOOLS", len(disabled_tools))
+    app = register_remote_tools(app, disabled_tools)
 
     # Register resources (workout templates)
     app = workout_templates.register_resources(app)

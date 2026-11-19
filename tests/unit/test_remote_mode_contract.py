@@ -479,3 +479,32 @@ async def test_tool_bodies_on_worker_threads_still_see_their_own_callers_token()
         thread, seen = text.split("|", 1)
         assert seen == sent, f"{sent!r}'s tool call saw {seen!r}"
         assert thread != loop_thread, "tool body is expected off the event-loop thread"
+
+
+# --- tools a deployment withholds ------------------------------------------------
+
+def _remote_tool_names(disabled=frozenset()):
+    import asyncio
+
+    from mcp.server.fastmcp import FastMCP
+
+    from garmin_mcp import remote
+
+    app = remote.register_remote_tools(FastMCP("remote"), disabled)
+    return {tool.name for tool in asyncio.run(app.list_tools())}
+
+
+def test_garmin_disabled_tools_withholds_tools_from_the_remote_server():
+    womens_health = {"get_menstrual_data_for_date", "get_menstrual_calendar_data", "get_pregnancy_summary"}
+
+    served = _remote_tool_names(frozenset(womens_health))
+
+    assert not womens_health & served
+    assert len(_remote_tool_names()) - len(served) == 3
+
+
+def test_an_unknown_disabled_tool_is_logged_not_fatal(caplog):
+    served = _remote_tool_names(frozenset({"get_menstrual_calendar_data", "no_such_tool"}))
+
+    assert "get_menstrual_calendar_data" not in served
+    assert "no_such_tool" in caplog.text
