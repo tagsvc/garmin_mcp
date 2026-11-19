@@ -508,3 +508,24 @@ def test_an_unknown_disabled_tool_is_logged_not_fatal(caplog):
 
     assert "get_menstrual_calendar_data" not in served
     assert "no_such_tool" in caplog.text
+
+
+def test_routine_logs_go_to_stdout_and_problems_to_stderr(capsys):
+    """Railway labels every stderr line an error; only warnings and errors go there."""
+    import logging
+
+    from garmin_mcp import remote
+
+    root = logging.getLogger()
+    saved = (root.handlers[:], root.level)
+    try:
+        remote._configure_logging(logging.INFO)
+        log = logging.getLogger("garmin_mcp.test")
+        log.info("routine line")
+        log.warning("problem line")
+        out, err = capsys.readouterr()
+    finally:
+        root.handlers[:], root.level = saved
+
+    assert "routine line" in out and "routine line" not in err
+    assert "problem line" in err and "problem line" not in out

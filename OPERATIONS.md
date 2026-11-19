@@ -252,6 +252,10 @@ queued runs.
   accumulate (CVE-2026-59951) and no idle-session expiry for claude.ai to trip
   over. Callers are identified per request by their OAuth bearer token.
 - **Deploys**: push to `main` triggers a redeploy.
+- **Logs**: the remote server writes routine lines (INFO and below, the startup
+  banner, uvicorn's access and lifecycle lines) to stdout and warnings and
+  errors to stderr. Railway labels every stderr line an error, so the
+  dashboard's error filter shows only real problems. `LOG_LEVEL` sets the level.
 
 ### Environment variables
 

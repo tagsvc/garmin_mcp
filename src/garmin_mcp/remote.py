@@ -200,6 +200,27 @@ def register_remote_tools(app, disabled_tools=frozenset()):
     return app
 
 
+def _configure_logging(level: int) -> None:
+    """Send routine log lines to stdout and warnings and errors to stderr.
+
+    Railway labels every stderr line an error, so with everything on stderr a
+    startup INFO line reads as a failure and the dashboard's error filter
+    shows nothing but noise. Only the remote server does this: the stdio
+    server's stdout carries the MCP protocol and must hold nothing else.
+    """
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    routine = logging.StreamHandler(sys.stdout)
+    routine.setLevel(logging.DEBUG)
+    routine.addFilter(lambda record: record.levelno < logging.WARNING)
+    problems = logging.StreamHandler(sys.stderr)
+    problems.setLevel(logging.WARNING)
+    root = logging.getLogger()
+    for handler in (routine, problems):
+        handler.setFormatter(formatter)
+    root.handlers[:] = [routine, problems]
+    root.setLevel(level)
+
+
 def main():
     """Start the remote MCP server with OAuth2 authentication."""
     # Configure logging so our own logs (session restore failures, OAuth
@@ -207,10 +228,7 @@ def main():
     # visible. Set LOG_LEVEL=DEBUG to surface garminconnect's token
     # load/refresh failure reasons when diagnosing session issues.
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, log_level, logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    _configure_logging(getattr(logging, log_level, logging.INFO))
 
     # Load configuration
     try:
@@ -219,12 +237,12 @@ def main():
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Starting Garmin MCP remote server...", file=sys.stderr)
-    print(f"  Server URL: {config.server_url}", file=sys.stderr)
-    print(f"  Listen: {config.host}:{config.port}", file=sys.stderr)
-    print(f"  MCP path: {config.path}", file=sys.stderr)
-    print(f"  DB: {config.db_path}", file=sys.stderr)
-    print(f"  Sessions: {config.session_storage_path}", file=sys.stderr)
+    print(f"Starting Garmin MCP remote server...", file=sys.stdout)
+    print(f"  Server URL: {config.server_url}", file=sys.stdout)
+    print(f"  Listen: {config.host}:{config.port}", file=sys.stdout)
+    print(f"  MCP path: {config.path}", file=sys.stdout)
+    print(f"  DB: {config.db_path}", file=sys.stdout)
+    print(f"  Sessions: {config.session_storage_path}", file=sys.stdout)
 
     # Initialize session manager
     session_manager = SessionManager(config.session_storage_path)
@@ -234,7 +252,7 @@ def main():
     if config.allowed_emails:
         print(
             f"  Allowlist: {len(config.allowed_emails)} email(s) permitted",
-            file=sys.stderr,
+            file=sys.stdout,
         )
     else:
         print(
@@ -244,11 +262,11 @@ def main():
         )
 
     if config.import_secret:
-        print("  Token import endpoint: enabled (/import-token)", file=sys.stderr)
+        print("  Token import endpoint: enabled (/import-token)", file=sys.stdout)
     else:
         print(
             "  Token import endpoint: disabled (set GARMIN_IMPORT_SECRET to enable)",
-            file=sys.stderr,
+            file=sys.stdout,
         )
 
     # Initialize OAuth provider
@@ -373,7 +391,7 @@ def main():
     # Register resources (workout templates)
     app = workout_templates.register_resources(app)
 
-    print("Server ready.", file=sys.stderr)
+    print("Server ready.", file=sys.stdout)
 
     # Build the streamable-HTTP app, wrap it with the security-headers middleware,
     # and serve it ourselves (FastMCP.run() offers no middleware hook). This
@@ -387,6 +405,9 @@ def main():
         host=config.host,
         port=config.port,
         log_level=log_level.lower(),
+        # uvicorn's own config sends its INFO lines to stderr; without it its
+        # loggers reach the root handlers set up by _configure_logging.
+        log_config=None,
     )
 
 
