@@ -16,6 +16,11 @@ allowlist, secret-gated token import, and a Railway remote deployment).
 `main` takes **no direct pushes**: every change goes through a PR, and the four
 required checks must pass before it can merge.
 
+Every PR a session opens gets **auto-merge turned on** (merge method: merge) as
+soon as it is open, so it lands once the four required checks pass. If the
+checks have already passed by then, merge it directly. The owner reviews after
+the merge, not before.
+
 ## Working in this repo
 
 - Setup: `uv sync`
