@@ -302,6 +302,14 @@ def _fix_hr_zone_step(step: dict) -> None:
         _fix_hr_zone_step(nested)
 
 
+def _clock_text(seconds: float) -> str:
+    """A goal time as a race clock: m:ss under an hour, h:mm:ss from one up
+    (a 2:05:00 half marathon, not "125:00")."""
+    hours, rest = divmod(int(seconds), 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+
+
 def _fix_repeat_group_step(step: dict) -> None:
     """Ensure RepeatGroupDTO steps have a valid endCondition and numberOfIterations.
 
@@ -313,6 +321,9 @@ def _fix_repeat_group_step(step: dict) -> None:
     - Adds conditionTypeId: 7 ("iterations") when conditionTypeKey is "iterations"
       but conditionTypeId is absent.
     - Backfills numberOfIterations from endConditionValue when the former is missing.
+    - Adds an "iterations" endCondition (and its endConditionValue) when the
+      group has none but says how many times it repeats; with no endCondition
+      at all, Garmin corrupts the group the same way.
     - Recurses into nested workoutSteps so nested repeat groups are also fixed.
     """
     if step.get('type') != 'RepeatGroupDTO':
@@ -332,6 +343,11 @@ def _fix_repeat_group_step(step: dict) -> None:
         value = step.get('endConditionValue')
         if value is not None:
             step['numberOfIterations'] = int(value)
+
+    if not isinstance(step.get('endCondition'), dict) and step.get('numberOfIterations') is not None:
+        step['endCondition'] = {'conditionTypeId': 7, 'conditionTypeKey': 'iterations'}
+        if step.get('endConditionValue') is None:
+            step['endConditionValue'] = step['numberOfIterations']
 
     for nested in step.get('workoutSteps', []):
         _fix_repeat_group_step(nested)
@@ -1935,7 +1951,7 @@ def register_tools(app):
             goal_seconds = data.get("goalTimeSeconds")
             goal_time = None
             if isinstance(goal_seconds, (int, float)) and goal_seconds > 0:
-                goal_time = f"{int(goal_seconds) // 60}:{int(goal_seconds) % 60:02d}"
+                goal_time = _clock_text(goal_seconds)
 
             curated = {
                 "plan_id": data.get("athletePlanId"),
@@ -2169,7 +2185,7 @@ def register_tools(app):
                 seconds = plan.get("goalTimeSeconds")
                 goal_time = None
                 if isinstance(seconds, (int, float)) and seconds > 0:
-                    goal_time = f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+                    goal_time = _clock_text(seconds)
                 summary = {
                     "plan_id": plan.get("athletePlanId"),
                     "status": _ended_status(plan) if completed else "active",

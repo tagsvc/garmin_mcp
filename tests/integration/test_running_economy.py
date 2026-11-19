@@ -68,12 +68,17 @@ async def test_latest_score_and_rating_as_of_the_date(app, client):
 
 
 @pytest.mark.asyncio
-async def test_latest_defaults_to_today(app, client):
+async def test_latest_defaults_to_the_profile_zones_today(app, client, monkeypatch):
+    """Not the server's date: on Railway's UTC clock that is tomorrow every
+    evening in New York and yesterday every morning in Tokyo."""
+    from garmin_mcp import training
+
+    monkeypatch.setattr(training, "local_today", lambda _client: datetime.date(2026, 11, 20))
+
     payload = json.loads(await _call(app, "get_running_economy", {}))
 
-    today = datetime.date.today().isoformat()
-    assert payload["as_of"] == today
-    client.get_running_economy.assert_called_once_with(today)
+    assert payload["as_of"] == "2026-11-20"
+    client.get_running_economy.assert_called_once_with("2026-11-20")
 
 
 @pytest.mark.asyncio

@@ -106,6 +106,14 @@ def local_from_offset(gmt_value: Any, offset: Optional[datetime.timedelta]) -> O
     return _iso_with_offset(moment.astimezone(datetime.timezone(offset)))
 
 
+def _own_or(
+    own: Optional[datetime.timedelta], fallback: Optional[datetime.timedelta]
+) -> Optional[datetime.timedelta]:
+    """A record's own offset, else the fallback. A zero offset (UTC+0: London
+    in winter, Reykjavik) is the record's own, though timedelta(0) is falsy."""
+    return fallback if own is None else own
+
+
 def offset_from_ms(offset_ms: Any) -> Optional[datetime.timedelta]:
     """A ``timezoneOffset`` in milliseconds (-14400000) as a timedelta."""
     if isinstance(offset_ms, (int, float)) and not isinstance(offset_ms, bool):
@@ -273,7 +281,7 @@ def add_local_siblings(
         return node
     if not isinstance(node, dict):
         return node
-    offset = offset_from_ms(node.get("timezoneOffset")) or offset
+    offset = _own_or(offset_from_ms(node.get("timezoneOffset")), offset)
     for key in list(node):
         value = node[key]
         if isinstance(value, (dict, list)):
@@ -350,13 +358,13 @@ def zone_garmin_times(
         return node
     if not isinstance(node, dict):
         return node
-    offset = offset_from_ms(node.get("timezoneOffset")) or offset
+    offset = _own_or(offset_from_ms(node.get("timezoneOffset")), offset)
     # Local values first, while their GMT partners still read as Garmin sent.
     for key in list(node):
         value = node[key]
         if key.endswith("Local") and _zoneless_text(value):
             clock = wall_clock(value)
-            own = offset_from_pair(_gmt_partner(node, key), value) or offset
+            own = _own_or(offset_from_pair(_gmt_partner(node, key), value), offset)
             if own is None and zone and clock is not None:
                 own = ZoneInfo(zone).utcoffset(clock)
             if own is not None and clock is not None:

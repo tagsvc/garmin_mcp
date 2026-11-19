@@ -1808,3 +1808,18 @@ async def test_training_readiness_empty_dictionary_remains_no_data(
     mock_garmin_client.get_training_readiness.return_value = {}
     result = await app_with_health_wellness.call_tool("get_training_readiness", {"date": "2024-01-15"})
     assert result[0][0].text == "No training readiness data found for 2024-01-15"
+
+
+@pytest.mark.asyncio
+async def test_stress_summary_counts_a_reading_of_zero_as_rest(app_with_health_wellness, mock_garmin_client):
+    """0 is the bottom of Garmin's rest band; only -1 and -2 are gaps."""
+    mock_garmin_client.get_stress_data.return_value = {
+        "calendarDate": "2026-11-19",
+        "stressValuesArray": [[1, 0], [2, 0], [3, 60], [4, -1], [5, -2]],
+    }
+
+    result = await app_with_health_wellness.call_tool("get_stress_summary", {"date": "2026-11-19"})
+
+    data = json.loads(result[0][0].text)
+    assert data["data_points_count"] == 3
+    assert data["rest_percent"] == 66.7

@@ -3440,3 +3440,23 @@ async def test_get_scheduled_workouts_handles_null_graphql_data(app_with_workout
     text = result[0][0].text
     assert "NoneType" not in text
     assert "No workouts scheduled" in text
+
+
+def test_a_repeat_group_with_no_end_condition_gets_iterations():
+    """Garmin corrupts a repeat group with no endCondition, as with one that
+    lacks its conditionTypeId; numberOfIterations says what it should be."""
+    from garmin_mcp.workouts import _fix_repeat_group_step
+
+    group = {"type": "RepeatGroupDTO", "stepOrder": 2, "numberOfIterations": 6, "workoutSteps": []}
+
+    _fix_repeat_group_step(group)
+
+    assert group["endCondition"] == {"conditionTypeId": 7, "conditionTypeKey": "iterations"}
+    assert group["endConditionValue"] == 6
+
+
+@pytest.mark.parametrize("seconds, text", [(1860, "31:00"), (7500, "2:05:00"), (14400, "4:00:00")])
+def test_a_coach_goal_time_reads_as_a_race_clock(seconds, text):
+    from garmin_mcp.workouts import _clock_text
+
+    assert _clock_text(seconds) == text

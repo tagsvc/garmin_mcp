@@ -190,3 +190,31 @@ async def test_the_tool_without_a_date_reports_the_latest_snapshot(app, mock_gar
     data = await _call(app, "get_recovery_time_remaining", {})
     assert data["resolved_as"] == "latest_snapshot"
     assert data["remaining_hours"] == 72.0
+
+
+class _NoSnapshotClient(_DatedClient):
+    """No Training Readiness (a Forerunner 255, say); one recent run."""
+
+    def __init__(self, zone):
+        super().__init__({})
+        self.zone = zone
+
+    def get_userprofile_settings(self):
+        return {"timeZone": self.zone}
+
+    def get_activities(self, start, limit):
+        # Began 2026-11-18T22:00Z, one hour long, with 24 hours of recovery.
+        return [{"activityId": 1, "activityName": "Run", "beginTimestamp": 1795039200000,
+                 "duration": 3600, "recoveryTime": 1440}]
+
+
+def test_the_activity_estimate_is_dated_on_the_athletes_day():
+    """21:00 in New York on 11-18 is 02:00 UTC on 11-19; the estimate is the
+    athlete's 11-18, as of 21:00 local."""
+    client = _NoSnapshotClient("America/New_York")
+    data = _collect_latest_recovery_time(client, _dt.datetime(2026, 11, 19, 2, 0, tzinfo=_UTC))
+
+    assert data["source"] == "recent_activity"
+    assert data["date"] == "2026-11-18"
+    assert data["as_of_local"] == "2026-11-18T21:00:00-05:00"
+    assert data["local_time_zone"] == "America/New_York"

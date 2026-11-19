@@ -1460,3 +1460,47 @@ async def test_delete_activity_exception(
 
     assert "Error deleting activity" in result[0][0].text
     assert "Garmin API error" in result[0][0].text
+
+
+@pytest.mark.asyncio
+async def test_create_manual_activity_places_the_time_in_the_profile_zone(
+    app_with_activity_management, mock_garmin_client, monkeypatch
+):
+    """start_time is the athlete's wall clock: 07:00 in New York, not UTC."""
+    monkeypatch.setattr(activity_management, "profile_time_zone", lambda _client: "America/New_York")
+    mock_garmin_client.create_manual_activity.return_value = {"activityId": 1}
+
+    await app_with_activity_management.call_tool(
+        "create_manual_activity",
+        {"type_key": "yoga", "date": "2026-11-19", "duration_minutes": 30, "start_time": "07:00"},
+    )
+
+    assert mock_garmin_client.create_manual_activity.call_args.kwargs["time_zone"] == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_get_activities_by_date_refuses_a_negative_page(
+    app_with_activity_management, mock_garmin_client
+):
+    result = await app_with_activity_management.call_tool(
+        "get_activities_by_date",
+        {"start_date": "2026-01-01", "end_date": "2026-02-01", "page": -1},
+    )
+
+    assert "page must be non-negative" in result[0][0].text
+    mock_garmin_client.connectapi.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_preview_keeps_a_zero_distance(app_with_activity_management, mock_garmin_client):
+    mock_garmin_client.get_activity.return_value = {
+        "activityId": 1,
+        "activityName": "Yoga",
+        "activityTypeDTO": {"typeKey": "yoga"},
+        "summaryDTO": {"startTimeLocal": "2026-11-19 07:00:00", "distance": 0.0, "duration": 1800.0},
+    }
+
+    result = await app_with_activity_management.call_tool("delete_activity", {"activity_id": 1})
+
+    data = json.loads(result[0][0].text)
+    assert data["activity"]["distance_meters"] == 0.0

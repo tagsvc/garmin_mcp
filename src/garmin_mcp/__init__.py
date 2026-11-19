@@ -20,6 +20,7 @@ from garminconnect import Garmin, GarminConnectAuthenticationError, GarminConnec
 
 # Import all modules
 from garmin_mcp import payload_recording
+from garmin_mcp.profile_settings import forget as forget_profile_settings
 from garmin_mcp import token_utils
 from garmin_mcp import activity_management
 from garmin_mcp import health_wellness
@@ -386,6 +387,10 @@ class _PendingGarminClient:
         self._ready = threading.Event()
         self._client = None
         self._login_error = None
+        # Set once login_to_garmin supplies a client, which then wins over
+        # whatever the background login returns.
+        self._activated = False
+        self._lock = threading.Lock()
 
     def start(self, login_fn):
         """Run ``login_fn`` on a background daemon thread; store its outcome."""
@@ -394,8 +399,13 @@ class _PendingGarminClient:
             try:
                 client = login_fn()
             except BaseException as exc:  # noqa: BLE001 - stored, not raised here
-                self._login_error = exc
+                with self._lock:
+                    if not self._activated:
+                        self._login_error = exc
             else:
+                with self._lock:
+                    if self._activated:
+                        return
                 if client is None:
                     self._login_error = RuntimeError(
                         "Garmin login failed. Run 'garmin-mcp-auth' to "
@@ -418,6 +428,17 @@ class _PendingGarminClient:
 
         threading.Thread(target=_worker, name="garmin-login", daemon=True).start()
         return self
+
+    def activate(self, client):
+        """Make the client from a runtime login (login_to_garmin) the one every
+        tool uses. Every module holds this object through its _GarminProxy, so
+        replacing the client here reaches them all, including after a failed
+        or still-running background login."""
+        with self._lock:
+            self._client = client
+            self._login_error = None
+            self._activated = True
+        self._ready.set()
 
     def login_state(self):
         """Non-blocking login status: ``"pending"``, ``"ready"`` or ``"failed"``.
@@ -848,9 +869,16 @@ def main():
     calendar_events.configure(garmin_client)
     diagnostics.configure(garmin_client)
     health_snapshots.configure(garmin_client)
-    # auth_tools activates the live client after a successful runtime login;
-    # wrap it the same way so runtime-login clients get friendly error messages.
-    auth_tools.configure(lambda c: set_global_client(_GarminProxy(c)))
+    # auth_tools activates the live client after a successful runtime login.
+    # It goes into pending_client, which every module's garmin_client and the
+    # resolver's global reach through the same _GarminProxy, so all tools move
+    # to it; the profile settings cached under that proxy are the old
+    # account's, so they are dropped.
+    def _activate(client):
+        pending_client.activate(client)
+        forget_profile_settings(garmin_client)
+
+    auth_tools.configure(_activate)
 
     # Create the MCP app, wrapped so the env-var filter can drop tools.
     # host/port only matter for the HTTP transports; stdio ignores them.

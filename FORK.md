@@ -370,6 +370,17 @@ coverage.
   by case into the oldest: their tokens move to it, `SessionManager.merge_sessions`
   keeps the newer Garmin session, and `analytics.merge_saved_reports` combines
   saved reports. Pinned by `tests/unit/test_token_import.py`.
+- **Analytics windows are calendar days, and rest days are zero.** Baselines,
+  anomalies, lags and the weekly review select days by date, never by
+  position in the list of days with data; the judged day is never in its own
+  baseline. A day with no activity is zero on every activity metric when the
+  activity list was fetched, unknown when it was not. Pinned by
+  `tests/integration/test_analytics_tools.py`.
+- **A runtime login reaches every tool.** On the stdio server every module's
+  `garmin_client` and the resolver's global are one `_GarminProxy` over
+  `_PendingGarminClient`; `login_to_garmin` activates its client there
+  (`_PendingGarminClient.activate`), never by replacing only one of them.
+  Pinned by `tests/unit/test_login_gate.py`.
 - **Session work is locked per user.** `SessionManager` holds a user's own lock
   across a restore (a live Garmin login), a session write or a removal, and its
   shared lock only around the cache, so one user's slow restore never blocks

@@ -1152,10 +1152,10 @@ async def test_get_menstrual_calendar_data_tool(app_with_womens_health, mock_gar
 
 @pytest.mark.asyncio
 async def test_get_menstrual_calendar_data_chunking(app_with_womens_health, mock_garmin_client):
-    """Range >92 days is split into 92-day windows and stitched."""
+    """A range over 90 days is split into 90-day windows (Garmin rejects 92) and stitched."""
     second_chunk = {
         **MOCK_MENSTRUAL_DATA,
-        "calendarDate": "2026-04-03",
+        "calendarDate": "2026-04-01",
         "cycleDay": 1,
     }
     mock_garmin_client.get_menstrual_calendar_data.side_effect = [
@@ -1165,14 +1165,14 @@ async def test_get_menstrual_calendar_data_chunking(app_with_womens_health, mock
 
     result = await app_with_womens_health.call_tool(
         "get_menstrual_calendar_data",
-        {"start_date": "2026-01-01", "end_date": "2026-06-30"},
+        {"start_date": "2026-01-01", "end_date": "2026-05-31"},
     )
 
     assert result is not None
     assert mock_garmin_client.get_menstrual_calendar_data.call_count == 2
     calls = mock_garmin_client.get_menstrual_calendar_data.call_args_list
-    assert calls[0].args == ("2026-01-01", "2026-04-02")
-    assert calls[1].args == ("2026-04-03", "2026-06-30")
+    assert calls[0].args == ("2026-01-01", "2026-03-31")
+    assert calls[1].args == ("2026-04-01", "2026-05-31")
 
     data = json.loads(result[0][0].text)
     assert data == [MOCK_MENSTRUAL_DATA, second_chunk]
@@ -1252,7 +1252,7 @@ async def test_menstrual_calendar_deduplicates_cycles_crossing_chunk_seam(
     ]
 
     result = await app_with_womens_health.call_tool("get_menstrual_calendar_data", {
-        "start_date": "2026-01-01", "end_date": "2026-06-30"
+        "start_date": "2026-01-01", "end_date": "2026-05-31"
     })
 
     assert json.loads(result[0][0].text) == wrap([before, spanning, after])

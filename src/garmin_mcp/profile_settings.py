@@ -9,7 +9,7 @@ up when the session is next restored.
 """
 
 import weakref
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 _settings: "weakref.WeakKeyDictionary[Any, Dict[str, Any]]" = weakref.WeakKeyDictionary()
 
@@ -33,8 +33,12 @@ def profile_settings(client: Any) -> Dict[str, Any]:
         if client in _settings:
             return _settings[client]
     except TypeError:
-        return _read(client)
+        return _read(client) or {}
     settings = _read(client)
+    if settings is None:
+        # A failed read (a 429, say) is not cached: the next call tries again,
+        # rather than the client going without its zone for its whole life.
+        return {}
     try:
         _settings[client] = settings
     except TypeError:
@@ -42,9 +46,18 @@ def profile_settings(client: Any) -> Dict[str, Any]:
     return settings
 
 
-def _read(client: Any) -> Dict[str, Any]:
+def _read(client: Any) -> Optional[Dict[str, Any]]:
+    """The settings, {} when Garmin sends something else, None when the read fails."""
     try:
         settings = client.get_userprofile_settings()
     except Exception:
-        return {}
+        return None
     return settings if isinstance(settings, dict) else {}
+
+
+def forget(client: Any) -> None:
+    """Drop the settings cached for a client, as when it signs in to another account."""
+    try:
+        _settings.pop(client, None)
+    except TypeError:
+        pass

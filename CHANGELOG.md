@@ -5,6 +5,89 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Review of the rest of the code: twenty-two fixes — 2026-11-19
+
+A review of every source file the sign-in review did not cover found
+twenty-three problems. Twenty-two are fixed here, each with a test that fails
+without the fix; one is left for a decision (below).
+
+**Numbers that came out wrong**
+
+- **Analytics count rest days.** A day with no activity was left empty rather
+  than zero, so activity averages ran over active days only: one 2 h run in a
+  week read as a 2 h daily average. When the activity list is fetched, rest
+  days are zero; a failed fetch still leaves them unknown, and a day with
+  nothing but zero activity is not counted as a day with data.
+- **`get_health_baselines` judges the latest day against the days before it.**
+  The day was inside its own baseline, which pulled the mean toward it and
+  shrank its z-score (4.9 for a spike that is 18.7 against the days before).
+- **Analytics windows are calendar days.** Days with no data were dropped and
+  the rest indexed as if consecutive, so a lag of one day across a missing day
+  paired days two apart, and the weekly review's "last 7 days" spanned 8.
+  Lags, baselines, anomalies and the weekly review now go by date.
+- **Lap power without a native average is weighted by time**, as every other
+  record analytic is: with smart recording, densely sampled stretches counted
+  for more than their time (250 W for a lap that averaged 180 W).
+- **Two weigh-ins on one day use the later one** for W/kg, not the heavier.
+- **A zero UTC offset is the record's own.** `timedelta(0)` is falsy, so a
+  record at UTC+0 (London in winter) took its parent's offset or the profile
+  zone instead, and a local time could disagree with its own GMT partner.
+- **A stress reading of 0 counts**, at the bottom of the rest band; only -1
+  and -2 are gaps.
+- **Coach goal times read as race clocks**: 2:05:00, not "125:00".
+
+**Times on the wrong day or in the wrong zone**
+
+- **`get_running_economy` defaults to the profile zone's today**, not the
+  server's UTC date.
+- **`create_manual_activity` reads `start_time` in the profile's zone** when no
+  zone is given, not UTC: "7 AM yoga" in New York was logged at 2 AM.
+- **The recovery estimate from recent activity is dated on the athlete's day**,
+  with `as_of_local` and `local_time_zone`; it was dated by the server's UTC
+  date, tomorrow every evening in the Americas.
+- **ECG upload and processing times** take the offset of the recording's own
+  start time when it has no `timeZoneOffsetInSeconds`, as `start_time` does,
+  and name `local_time_zone` when the profile zone is used.
+- **A failed profile-settings read is tried again**, not cached as empty for
+  the client's life, which left every tool without the profile's zone.
+
+**Writes and requests Garmin rejects or corrupts**
+
+- **`update_custom_food` keeps every nutrient Garmin stores**, including those
+  it takes no parameter for (vitamins A and C, added sugars, mono- and
+  polyunsaturated fat), and the record's type, region and language; the
+  full-replace PUT erased them.
+- **A repeat group with no `endCondition` gets an "iterations" one** before
+  upload; Garmin otherwise corrupts the repeat count.
+- **Menstrual calendar windows are 90 days**: garminconnect documents that
+  Garmin rejects 92, the size used.
+- **A runtime `login_to_garmin` reaches every tool.** On the stdio server it
+  replaced only the resolver's client, so tools that use their module's client
+  kept failing until a restart, or kept using the previous account. The new
+  client now goes where every module looks, a background login finishing late
+  cannot undo it, and the old account's cached profile settings are dropped.
+
+**Replies too big, partial or misleading**
+
+- **`get_activity_fit_data(include_records=true)` leaves out records that would
+  take the reply past 1,000,000 characters** (what MCP clients accept) and says
+  how to page through them with `get_activity_fit_messages`.
+- **Remote inline downloads are capped so their base64 fits one reply**
+  (about 747 KB of file, from 8 MiB).
+- **`get_ecg_recordings` flags a full page** (`may_have_more`): Garmin returns
+  at most 20 per call, and the next page's token is not known from a live
+  reply, so it is flagged rather than followed.
+- **`get_activities_by_date` refuses a negative page**, as `get_activities` does.
+- **The delete preview keeps a distance or duration of 0.**
+
+**Left for a decision:** with no `end_date`, the analytics include today's
+unfinished day as if complete, so at 8 AM a 900-step morning can read as an
+anomaly against full days. The fix (end on yesterday by default, or mark today
+partial) changes what the tools mean by "today", so it is not made here.
+
+An existing test pinned the old goal-time text ("105:00" for 6,300 seconds)
+and now expects "1:45:00".
+
 ## Review of the remote server and sign-in code: eight fixes — 2026-11-19
 
 A review of the remote-server and sign-in files found eight problems; each is

@@ -2517,3 +2517,41 @@ async def test_upsert_response_decode_commit_status_refers_to_food_log(
         assert data["custom_food_created"] is True
         assert "not logged" in data["hint"]
     mock_garmin_client.client.put.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_update_custom_food_keeps_nutrients_it_has_no_parameter_for(
+    app_with_nutrition, mock_garmin_client
+):
+    """The PUT replaces the record: vitamins A and C, added sugars and the
+    unsaturated fats are carried, and the record's region and type are kept."""
+    mock_garmin_client.connectapi.return_value = {
+        "customFoods": [
+            {
+                "foodMetaData": {
+                    "foodId": "abc123", "foodName": "Juice", "foodType": "BRANDED",
+                    "regionCode": "GB", "languageCode": "en-GB",
+                },
+                "nutritionContents": [
+                    {
+                        "servingId": "srv456", "servingUnit": "ML", "numberOfUnits": 250,
+                        "calories": 110, "vitaminA": 10, "vitaminC": 90, "addedSugars": 0,
+                        "monounsaturatedFat": 0.2, "polyunsaturatedFat": 0.1,
+                    }
+                ],
+            }
+        ]
+    }
+    mock_garmin_client.client.put.return_value = {}
+
+    await app_with_nutrition.call_tool(
+        "update_custom_food",
+        {"food_id": "abc123", "serving_id": "srv456", "food_name": "Juice", "calories": 120},
+    )
+
+    payload = mock_garmin_client.client.put.call_args[1]["json"]
+    nc = payload["nutritionContents"][0]
+    assert (nc["vitaminA"], nc["vitaminC"], nc["addedSugars"]) == ("10", "90", "0")
+    assert (nc["monounsaturatedFat"], nc["polyunsaturatedFat"]) == ("0.2", "0.1")
+    meta = payload["foodMetaData"]
+    assert (meta["foodType"], meta["regionCode"], meta["languageCode"]) == ("BRANDED", "GB", "en-GB")

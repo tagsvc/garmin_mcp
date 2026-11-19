@@ -467,7 +467,7 @@ async def test_coach_plans_give_the_goal_in_seconds_and_the_schedule(app, mock_g
 
     plan = (await _call(app, "get_coach_plans", {"include_completed": False}))["plans"][0]
 
-    assert plan["goal_time"] == "105:00"
+    assert plan["goal_time"] == "1:45:00"
     assert plan["goal_time_seconds"] == 6300
     assert plan["workout_days"] == ["TUESDAY", "THURSDAY", "SATURDAY", "SUNDAY"]
     assert plan["long_run_day"] == "SUNDAY"

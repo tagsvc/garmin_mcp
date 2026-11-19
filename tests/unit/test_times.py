@@ -294,3 +294,32 @@ def test_add_local_siblings_places_by_the_zone_when_no_offset_is_given():
     assert payload["events"][0]["eventStartTimeLocal"] == "2026-11-01T01:30:00-04:00"
     # A record's own offset still wins over the zone.
     assert payload["events"][1]["eventStartTimeLocal"] == "2026-11-01T13:06:39-04:00"
+
+
+def test_a_failed_settings_read_is_tried_again():
+    """A 429 on the first read must not leave the client without its zone."""
+    client = Mock()
+    client.get_userprofile_settings.side_effect = [
+        RuntimeError("rate limited"),
+        {"timeZone": "America/New_York"},
+    ]
+
+    assert profile_time_zone(client) is None
+    assert profile_time_zone(client) == "America/New_York"
+    assert profile_time_zone(client) == "America/New_York"
+    assert client.get_userprofile_settings.call_count == 2
+
+
+def test_a_zero_utc_offset_is_the_records_own():
+    """timedelta(0) is falsy; a record at UTC+0 (London in winter) keeps it
+    rather than taking the parent's offset."""
+    from garmin_mcp.times import add_local_siblings, zone_garmin_times
+
+    payload = {"events": [{"timezoneOffset": 0, "readingTimeLocal": "2026-01-10T10:00:00.0"}]}
+    zone_garmin_times(payload, datetime.timedelta(hours=-5))
+    assert payload["events"][0]["readingTimeLocal"] == "2026-01-10T10:00:00+00:00"
+
+    pair = {"xTimeGmt": "2026-10-25T01:30:00.0", "xTimeLocal": "2026-10-25T01:30:00.0"}
+    zone_garmin_times(pair, None, "Europe/London")
+    assert pair["xTimeLocal"] == "2026-10-25T01:30:00+00:00"
+    assert pair["xTimeGmt"] == "2026-10-25T01:30:00Z"
