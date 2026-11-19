@@ -34,7 +34,7 @@ status under the same name. When adding a required check, pick the entry whose
 source is *GitHub Actions*, not the "any source" variant.
 
 This is what upgrades `FORK.md`'s invariants from "CI tells you" to "CI stops
-you": a merge that regresses an invariant now cannot land at all.
+you": a merge that regresses an invariant cannot land at all.
 
 Two defaults GitHub sets on its own, both deliberate to leave as-is:
 
@@ -83,15 +83,15 @@ Deliberately **on**, and the one exception to the version-updates line above:
   `.github/dependabot.yml` (monthly, grouped into one PR). That ecosystem holds
   no deliberate pins, so there is nothing for Dependabot to fight. Without it,
   every GitHub runner-runtime deprecation means hand-bumping ten `uses:` lines
-  across three workflows — which is what prompted the file. Its PRs still have
+  across three workflows. Its PRs still have
   to clear all four required checks.
 - **CodeQL**, default setup, scanning **Python and GitHub Actions**. The second
-  language matters here: Dependabot now opens PRs that modify workflow files, and
+  language matters here: Dependabot opens PRs that modify workflow files, and
   CodeQL checks those for script injection and unsafe handling of untrusted
   input. It adds three check runs — `Analyze (python)`, `Analyze (actions)` and
   `CodeQL` — which report but do **not** gate merges, since they are not in the
-  required set. Enabling it also activates the **Copilot Autofix** toggle, which
-  was on but inert beforehand.
+  required set. It is also what activates the **Copilot Autofix** toggle, which
+  is inert without it.
 
 #### CodeQL baseline (first scan, 2026-09-02)
 
@@ -102,7 +102,7 @@ scanner.
 
 **Fixed — `actions/missing-workflow-permissions` (6, medium).** None of the three
 workflows declared `permissions:`, so `GITHUB_TOKEN` inherited the repository
-default, which can be read/write. All three now pin `contents: read` at the top
+default, which can be read/write. All three pin `contents: read` at the top
 level: these jobs only read the repository, so anything more is blast radius for
 no benefit — a compromised dependency pulled during `uv sync` would otherwise run
 with push rights.
@@ -197,11 +197,10 @@ activity, so a long-dormant period can put this back to `disabled_fork` — wort
 re-checking after any long gap.
 
 **Actions can also be halted at the account level, and it looks like nothing.**
-From 2026-10-14 to 2026-10-27 no workflow ran: Actions was waiting on an approval
-in the owner's GitHub account, accepted 2026-10-27. Every repository setting was
-normal throughout (Actions allowed, workflows `active`), so the settings pages
-and the workflows API both said all was well. The symptoms, in order of
-visibility:
+An approval pending in the owner's GitHub account stops every workflow while
+every repository setting stays normal (Actions allowed, workflows `active`), so
+the settings pages and the workflows API both say all is well. The symptoms, in
+order of visibility:
 
 - runs created by GitHub itself (CodeQL, Dependabot updates) sit at **queued**
   with no jobs, indefinitely;

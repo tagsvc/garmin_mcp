@@ -22,6 +22,7 @@ required checks must pass before it can merge.
 - Tests: `uv run pytest -m "not e2e"` (integration + unit; e2e needs real Garmin creds)
 - Entry points: `garmin-mcp` (stdio), `garmin-mcp-remote` (HTTP + OAuth2), `garmin-mcp-auth` (stdio auth CLI)
 - Comments and docstrings say why the code is as it is, in the present tense. History (what it used to do, when or how something was found, dates, PR numbers) goes in CHANGELOG.md and commit messages, never in code. `tests/unit/test_no_history_in_code.py` enforces it; upstream's own lines that trip it are listed, word for word, in its `UPSTREAM_TEXT`.
+- The reference documents (README.md, FORK.md, OPERATIONS.md, SECURITY.md, CLAUDE.md, `.github/WORKFLOWS.md`, `docs/`) say what is true now, in the present tense; what changed and when goes in CHANGELOG.md. A date stays only as evidence beside a claim ("verified 2026-10-28 against a run"). `tests/unit/test_no_history_in_docs.py` enforces it; a present-tense line that trips it goes in its `ALLOWED`, with the reason.
 
 ## After ANY upstream merge or significant change
 

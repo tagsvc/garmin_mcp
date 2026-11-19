@@ -43,18 +43,18 @@ coverage.
 | Coach plan curation fix | `workouts.py` (`_get_garmin_coach_workouts`) | Surfaces the `trainingPlanDetailsDTO` fields that exist — race goal, workouts per week, registration date. Upstream reads only `trainingType`, which adaptive plans do not have. |
 | Garmin Coach tools (3) | `workouts.py` | `get_coach_plans` (active + completed), `get_coach_plan_details`, `get_coach_plan_progress` (per-workout grades). All on `atp-api`, found by capturing Garmin Connect's own traffic. |
 | Paired sensor battery (1 tool) | `devices.py` (`get_sensors`) | `/device-service/sensors` (garminconnect's `get_sensors()`) — battery level and last-connected, which `get_devices` omits. |
-| Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Three training-plan tools added alongside it were removed on 2026-09-19; see the invariant below. |
+| Coverage additions (1 tool) | `gear_management.py` | `get_gear_activities` — the reverse of `get_activity_gear`, for auditing a shoe's or bike's accumulated mileage. Garmin's training-plan REST endpoints get no tools; see the invariant below. |
 | Railway deploy | `railway.json`, `Dockerfile.remote`, `config.py` | `railway.json` pins the Dockerfile builder; `config.port` honors `$PORT`. |
 | Explicit time zones | `times.py`; applied across `health_wellness`, `activity_management`, `activity_analysis`, `gear_management`, `training`, `weight_management`, `devices`, `analytics` | Every curated time is `*_gmt` (ISO, `Z`) plus `*_local` (ISO with its UTC offset, from the record's own offset, else the profile's `timeZone`). Raw payloads keep their shape and gain local siblings and `utcOffsetHours`. On a day the profile zone's clocks change, day-level payloads place each time by that zone and add `utcOffsetHoursAfterChange` and `clockChangeGmt` (`times.clock_change`). |
-| Distance source check | `distance_check.py`; used by `activity_management.get_activity` | For runs, walks and hikes, `distance_check`: which sensor supplied distance (FIT message 22, undocumented) and the recorded distance against the GPS track's own length; warns past 5%. Built after a paired HRM 600 set to supply pace and distance Always inflated six weeks of runs by 24–40%. |
+| Distance source check | `distance_check.py`; used by `activity_management.get_activity` | For runs, walks and hikes, `distance_check`: which sensor supplied distance (FIT message 22, undocumented) and the recorded distance against the GPS track's own length; warns past 5%. A paired strap set to supply pace and distance can overstate it: an HRM 600 set to Always read 24–40% long across six weeks of runs. |
 | Diagnostics (1 tool) | `diagnostics.py`, `payload_recording.py`, `field_coverage.py` | `inspect_garmin`: runs one read-only tool with its Garmin replies recorded and returns them, optionally with the fields its output leaves out; or GETs one Garmin Connect API path. `find`/`fields` narrow a reply; replies cap at ~20 KB. Registered in both servers. |
 | Health Snapshot & ECG (4 tools) | `health_snapshots.py` | Needs garminconnect 0.3.20. `get_health_snapshots` / `get_health_snapshot`: the watch's two-minute readings, curated (heart rate, respiration, stress, SpO2 as avg/min/max; HRV RMSSD and SDRR; HR zones; device), times from the record's own GMT/local pair, per-second samples on request as seconds from the start. `get_ecg_recordings` / `get_ecg`: from `ghs.garmin.com`, curated from the live reply (rhythm, average heart rate, HRV RMSSD, wrist, symptoms, app version, device, and for one recording its lead and sampling); time from the GMT `startTime` epoch with the recording's own `timeZoneOffsetInSeconds`; the 128 Hz waveform only with `include_waveform`. |
 | Power zones (1 tool) | `user_profile.py` (`get_power_zones`) | garminconnect 0.3.20's `get_power_zones()`: per sport, FTP and each zone from/to in watts and % of FTP; a floor of 0 above zone 1 is a zone the sport does not use. |
 | Fastest splits (1 tool) | `activity_management.py` (`get_fastest_splits`) | garminconnect 0.3.20's `get_fastest_splits()`: Garmin's best 1K, mile, 5K (and longer) efforts in a date range, ranked per distance, with pace in the account's units and the activity_id. Bests come from each activity's recorded distance, as the description says; no distance check runs. |
 | Running economy (2 tools) | `training.py` (`get_running_economy`, `get_running_economy_history`) | garminconnect 0.3.20's `get_running_economy()` / `get_running_economy_range()`: Garmin's score and classification, the latest as of a date, or each scored day or week over up to a year (Garmin's limit). Unscored periods are counted, not listed; keys Garmin adds pass through by name. The score is returned as Garmin sends it, with no unit, as Garmin Connect shows it; Garmin describes running economy as oxygen per kg per km, lower being less energy, so it has no account-unit companion. `get_running_economy` adds `band` and `next_band` from Garmin Connect's help table (`_ECONOMY_BANDS`), worked out from the score rather than Garmin's classification spelling. Weekly history periods are 7-day spans from `start_date`. `feedback` is Garmin Connect's coaching phrase for the classification (`_ECONOMY_FEEDBACK`), copied word for word from the website's `reportswidget.properties` (`re_feedback_<CLASS>`), since Garmin's reply carries only the classification. |
 | Tool profiles cover every tool | `tool_profiles.py` | Each fork tool, and each upstream tool upstream left in no profile, is in its area's `GARMIN_TOOL_PROFILE`. A `devices` profile is added. The auth tools are in every profile, so a profile never stops a local server signing in again. `inspect_garmin` alone is in `NO_PROFILE_TOOLS`. `test_tool_profiles.py` fails on a tool in no profile, and `test_documented_counts.py` on a stale README profile table. Profiles apply to stdio only. |
-| History check | `tests/unit/test_no_history_in_code.py` | Fails on a PR or issue number, a month and year, a date beside a verb of change, or a phrase about the code's past in any comment or docstring under `src/`, `scripts/` and `tests/`. Upstream's own lines that trip it are listed in `UPSTREAM_TEXT`, word for word; a listed line that has gone fails too. |
-| Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. Built after a curated summary hid the body battery level (PR #61). |
+| History checks | `tests/unit/test_no_history_in_code.py`, `tests/unit/test_no_history_in_docs.py` | Fails on a PR or issue number, a month and year, a date beside a verb of change, or a phrase about the code's past in any comment or docstring under `src/`, `scripts/` and `tests/`. Upstream's own lines that trip it are listed in `UPSTREAM_TEXT`, word for word; a listed line that has gone fails too. `tests/unit/test_no_history_in_docs.py` does the same for the reference documents (README, FORK, OPERATIONS, SECURITY, CLAUDE, `.github/WORKFLOWS.md`, `docs/`), with present-tense exceptions in `ALLOWED`. |
+| Field-coverage check | `scripts/field_coverage.py` | Run locally with real Garmin tokens. Calls every read-only tool once, records the replies Garmin sent it, and lists the fields missing from the tool's output, by name only. A curated summary can drop a field Garmin sends, as one dropped the body battery level; this lists such fields. |
 | Account-unit companions | `units.py`; applied in `activity_management`, `weight_management`, `gear_management`, `training`, `courses`, `workouts` | Beside each metric field, the same value in the account's units (`distance_miles`, `avg_pace_per_mile`, `elevation_gain_feet`, `weight_lb` for `statute_us`). Workout uploads accept pace text such as `10:30/mi`. |
 
 ## Invariants that must NOT regress
@@ -98,7 +98,7 @@ coverage.
       Snapshot, ECG on `ghs.garmin.com` with the bearer token, sensors, power
       zones, fastest splits).
   - **Library methods or direct calls.** Upstream's direct `connectapi` calls stay
-    as upstream wrote them, even where garminconnect now has a method for the
+    as upstream wrote them, even where garminconnect has a method for the
     same request: changing them only adds merge conflicts. The fork's own direct
     calls move to a library method when it sends the identical request (path,
     query, headers), checked by a real-client test. The fork keeps its own call
@@ -118,8 +118,8 @@ coverage.
   from the OAuth bearer token. `mcp` is floored at 1.30.0 in `pyproject.toml`.
   Pinned by `tests/integration/test_remote_end_to_end.py`, which drives
   authenticated requests from two users through the real remote stack.
-- **Each tool call keeps its caller's identity on the worker thread.** Since the
-  2026-10-27 sync, `_ToolFilter` runs every tool body as
+- **Each tool call keeps its caller's identity on the worker thread.**
+  `_ToolFilter` runs every tool body as
   `anyio.to_thread.run_sync(lambda: asyncio.run(...))` (upstream #449), so the
   remote server's per-request auth contextvar must cross onto a worker thread
   and into a fresh event loop for `get_client()` to resolve the right user.
@@ -171,10 +171,10 @@ coverage.
   refuses `gpx_path`; `download_activity_file` returns the bytes inline and
   refuses `output_dir`; `set_fit_download_dir` is refused outright (it is also
   process-global, so one caller would redirect every other user's downloads).
-  **This is now CI-enforced:** `tests/unit/test_remote_mode_contract.py` fails
+  **CI enforces this:** `tests/unit/test_remote_mode_contract.py` fails
   when any registered tool exposes a path-shaped parameter that is not on its
-  reviewed `_GUARDED` list. That test replaces protection this used to get by
-  accident — see the module-configuration invariant below.
+  reviewed `_GUARDED` list. Nothing else stops such a tool: with every module
+  configured (the invariant below), it runs in remote mode.
 - **Every tool module is `configure()`d in remote mode**, from
   `remote._CONFIGURED_MODULES`, with a `_ResolvingGarminProxy`. The proxy holds
   no client: each attribute access resolves the *calling user's* client via the
@@ -195,10 +195,10 @@ coverage.
   workouts. Anything answering "how many sessions this week" from the feed
   alone is wrong. Pinned by `test_coach_progress_and_sensors.py`.
 - **Recovery hours come from `recoveryTime`; `recoveryTimeChangePhrase` is not a
-  reading.** Upstream zeroed recovery whenever the phrase was `REACHED_ZERO`. A
+  reading.** Upstream's rule zeroes recovery whenever the phrase is `REACHED_ZERO`. A
   live post-run snapshot (2026-10-27, `AFTER_POST_EXERCISE_RESET`) carried
   `REACHED_ZERO` with `recoveryTime` 4320 — the 72h Garmin's app showed — and a
-  recovery factor of 10 (POOR); the tools reported 0h and "recovered". The phrase
+  recovery factor of 10 (POOR); that rule reads it as 0h and "recovered". The phrase
   describes what changed at the snapshot's event; when recovery has drained,
   Garmin sends the low minute value itself (that morning: 1). Garmin Connect's
   web client has no display text for the phrase and shows hours from
@@ -209,8 +209,8 @@ coverage.
   as a live countdown. With no date given, `get_recovery_time_remaining`
   reports the most recent snapshot on any day (`resolved_as: latest_snapshot`),
   not the server's "today": on Railway's UTC clock it is already tomorrow every
-  evening in New York, and the tool said "unavailable" while a 72h snapshot was
-  current. Snapshots are filed under the athlete's local date, so it checks UTC
+  evening in New York, so a server-clock default reads "unavailable" while a 72h
+  snapshot is current. Snapshots are filed under the athlete's local date, so it checks UTC
   tomorrow, today and yesterday, newest first, with no timezone lookup. _On
   merge:_ do not take an upstream change that lets the phrase alter the hours,
   or that defaults the date to the server's clock. Pinned by `test_recovery_live_snapshots.py`, built from
@@ -228,7 +228,7 @@ coverage.
   adds a companion after each metric field — miles, feet, mph, min/mile pace and
   pounds for `statute_us`; km, km/h and min/km pace for `metric`; miles and pace
   but kilograms for `statute_uk` — and never overwrites a key. An unknown unit
-  system adds nothing, so output matches what it was before (the shared test
+  system adds nothing, so output carries the metric fields alone (the shared test
   mock's `get_unit_system` returns a Mock, which reads as unknown). Swims keep
   meters: Garmin shows pool units and pace per 100. The unit system is the profile's
   `measurementSystem`, which garminconnect caches at login; reading it makes no
@@ -253,10 +253,9 @@ coverage.
   `test_units.py`.
 - **Times name their zone; local comes from the record before the profile.**
   Garmin mixes GMT, the watch's local time and epoch milliseconds, often
-  under keys that do not say which: body battery printed its GMT start as a
-  bare `start_time` (6:37 PM for a 2:37 PM run), the activity lists and the
-  FIT tool used `start_time` for local and UTC respectively, and several
-  tools used the server's own clock (UTC on Railway). The rule (`times.py`):
+  under keys that do not say which, so a bare `start_time` can be GMT in one
+  tool and local in the next (a 2:37 PM run's GMT start reads 6:37 PM), and the
+  server's own clock is UTC on Railway. The rule (`times.py`):
   GMT under `*_gmt` as ISO ending in `Z`; local under `*_local` as ISO with
   its UTC offset, taken from the record's own offset when Garmin gives one
   (`timezoneOffset`, a `*Local` beside the `*GMT`, the FIT activity message),
@@ -267,14 +266,14 @@ coverage.
   on it -- never on the module proxy, which every remote user shares
   (`test_the_shared_proxy_is_never_the_cache_key`). Raw payloads keep their
   shape and keys and gain camelCase siblings (`eventStartTimeLocal`,
-  `sleepStartLocal`, `utcOffsetHours`); since 2026-10-28 their time *text* is
+  `sleepStartLocal`, `utcOffsetHours`); their time *text* is
   also given its zone in place (`times.zone_garmin_times`): `*Gmt`/`*GMT`
   values end in `Z`, `*Local` values carry their offset (from their GMT
   partner, the record's `timezoneOffset`, the day's offset, else the profile
   zone), descriptor-named GMT columns in series rows end in `Z`, and FIT
-  `date_time` values end in `Z`. Epoch numbers stay numbers. This replaced an
-  earlier choice to keep Garmin's exact strings: nothing reads them but
-  Claude, and three of Garmin's own `*Local` fields had no offset anywhere. `tzdata` is a dependency: Windows has no system zone
+  `date_time` values end in `Z`. Epoch numbers stay numbers. Garmin's exact
+  strings are not kept: nothing reads them but Claude, and three of Garmin's
+  own `*Local` fields have no offset anywhere. `tzdata` is a dependency: Windows has no system zone
   database. _On merge:_ keep the `_gmt`/`_local` names and do not reintroduce
   a bare time key or a server-clock "today". Pinned by `test_times.py` and
   `test_explicit_times_tools.py`.
@@ -311,8 +310,8 @@ coverage.
 - **A sensor's `serialNumber` is per pairing, not per strap.** One HRM 600,
   paired a few times, came back from `/device-service/sensors` as three
   records with three serials (2026-10-28). `get_sensors` groups records by
-  model and reports the latest, with `earlier_pairings`. Do not go back to
-  de-duplicating by serial. Pinned by `test_coach_progress_and_sensors.py`.
+  model and reports the latest, with `earlier_pairings`. Do not
+  de-duplicate by serial. Pinned by `test_coach_progress_and_sensors.py`.
 - **The fitnessstats endpoint is not in its documented units.** Behind
   `get_progress_summary_between_dates`, Garmin sends distance and elevation
   gain in centimeters, durations in milliseconds and calories pre-scaled by
@@ -344,10 +343,10 @@ coverage.
   Verified against a live enrolled adaptive (Garmin Coach) plan on 2026-09-19:
   `/trainingplan-service/trainingplan/plans` returns an **empty list** while a
   plan is active, and `.../fbt-adaptive/{plan_id}` returns **404** for a plan id
-  taken from the working feed. Three tools built on those endpoints
-  (`get_training_plans`, `get_training_plan_details`,
-  `get_adaptive_training_plan_details`) were removed for that reason — an empty
-  list reads as "you have no plans", which is worse than the tool not existing.
+  taken from the working feed. No tool is built on those endpoints
+  (`get_training_plans`, `get_training_plan_details` and
+  `get_adaptive_training_plan_details` are not offered): an empty list reads as
+  "you have no plans", which is worse than the tool not existing.
   Two sources work, and neither is `trainingplan-service`: the GraphQL
   `trainingPlanScalar` query used by `_get_garmin_coach_workouts`, and
   **`/atp-api/atp/athlete/plan?lang=en&athletePlanId=<id>`**, which is what
@@ -358,8 +357,8 @@ coverage.
   rebuild plan tools on `trainingplan-service`.
 - **`_get_garmin_coach_workouts` must surface the `trainingPlanDetailsDTO`
   fields that exist.** Upstream reads only `trainingType`, absent on adaptive
-  plans, so the key resolved to `None`, was dropped by the strip-`None` filter,
-  and the whole DTO — the athlete's race goal included — was discarded.
+  plans, so the key resolves to `None`, is dropped by the strip-`None` filter,
+  and the whole DTO — the athlete's race goal included — is discarded.
   `tests/integration/test_coach_plan_curation.py` pins this against a real ATP
   payload; an upstream merge that reverts the curation fails it.
 - **Per-user state is scoped by `user_id` in remote mode.** The analytics
@@ -409,7 +408,7 @@ each divergence so a merge doesn't silently undo a deliberate decision.
   would expose a redundant, confusing second auth path. _On merge:_ keep it out of
   `remote.py`.
 
-- **`delete_activity` is stdio-only** (added upstream 2026-10). Why: it is
+- **`delete_activity` is stdio-only** (an upstream tool). Why: it is
   irreversible, and an activity is a record, not a plan — Garmin Coach grades it,
   and training load, acute/chronic balance and every historical analytic here
   are computed from it. Its `confirm=true` gate stops an accidental call but not
@@ -449,13 +448,13 @@ each divergence so a merge doesn't silently undo a deliberate decision.
   re-introduce the datacenter-IP 429 surface (server calling Garmin). We gate with
   a secret instead. _On merge:_ keep validation structural-only.
 
-- **Import-secret gating, fail-closed, on both paths.** Why: the browser import was
-  originally email-only, but an email is not a secret — anyone who knew an
-  allowlisted email could overwrite that user's session with a bogus token (a DoS).
+- **Import-secret gating, fail-closed, on both paths.** Why: an email is not a
+  secret. Gated by email alone, the import lets anyone who knows an allowlisted
+  email overwrite that user's session with a bogus token (a DoS).
   The shared secret is the proof-of-authorization. _On merge:_ keep both paths
   gated with a constant-time compare; unset secret disables import.
 
-- **Remove `VOLUME` from `Dockerfile.remote`.** Why: Railway's builder rejects the
+- **No `VOLUME` in `Dockerfile.remote`.** Why: Railway's builder rejects the
   Docker `VOLUME` instruction; persistence is a Railway volume mounted at `/data`.
   _On merge:_ don't reintroduce `VOLUME`.
 
@@ -514,7 +513,7 @@ what the last column says, and check the PR's tests still pass.
 | #505 | Energy balance excludes the partial current day and future days | as-is, conflict resolved | today from `local_today(get_client())` (the profile's time zone), not the server's date; the docstring says so |
 | #507 | Scheduling returns the calendar entry's `scheduled_workout_id` | as-is, conflict resolved | the fork's Garmin Coach constants beside `_schedule_response_id`; its "PR #295" lines are in `UPSTREAM_TEXT` |
 | #488 | `get_activity_fit_messages`: `fields` selection, `compact`/`columnar` output, every reply under 1,000,000 characters (`truncated_by_size`, `next_offset`), record field 108 decoded as `enhanced_respiration_rate` | as-is (both commits), conflict resolved | both docstring paragraphs: the fork's note on FIT times (UTC values end in Z) and upstream's on the formats |
-| #492 | `get_activity_fit_messages`: names undocumented Garmin FIT fields with confidence tags (`field_aliases`: evidence and the firmware each was checked on, flagging other firmware; renamed fields keep `raw_name`, and `unknown_NNN` still selects them), `output_format="device_summary"` (one row per sensor: product, firmware, battery, connects, wrist against strap heart-rate coverage), `every_n` record thinning | as-is (its eight commits after #488's two) | its "renamed from" docstring line is in `UPSTREAM_TEXT`; `distance_check` reads message 22 by field number through its own parser, which #492 does not touch; the `device_summary` sensor times as `first_seen_gmt`/`_local` and `last_seen_gmt`/`_local` (local at the activity message's offset), not upstream's bare `first_seen`/`last_seen` (`tests/integration/test_fit_device_summary_times.py`) |
+| #492 | `get_activity_fit_messages`: names undocumented Garmin FIT fields with confidence tags (`field_aliases`: evidence and the firmware each was checked on, flagging other firmware; renamed fields keep `raw_name`, and `unknown_NNN` still selects them), `output_format="device_summary"` (one row per sensor: product, firmware, battery, connects, wrist against strap heart-rate coverage), `every_n` record thinning | as-is (its eight commits after #488's two) | its docstring line on how renamed fields were matched is in `UPSTREAM_TEXT`; `distance_check` reads message 22 by field number through its own parser, which #492 does not touch; the `device_summary` sensor times as `first_seen_gmt`/`_local` and `last_seen_gmt`/`_local` (local at the activity message's offset), not upstream's bare `first_seen`/`last_seen` (`tests/integration/test_fit_device_summary_times.py`) |
 | #511 | Nutrition summary's daily goals | **adapted** | the fork's flat `*_goal` fields, not upstream's nested `goals` object; #511's addition is `adjusted_carbs_goal`, `adjusted_protein_goal`, `adjusted_fat_goal`; the fork also gives the micronutrient goals (`added_sugars_goal` … `vitamin_d_goal`) |
 
 **Manual procedure:**
@@ -546,12 +545,12 @@ git push -u origin sync-upstream-$(date +%Y%m%d)
 **Conflict-prone files** (this fork customized them, so upstream edits here often
 collide): `src/garmin_mcp/__init__.py`, `remote.py`, `oauth_provider.py`,
 `config.py`, `token_utils.py`, `session_manager.py`, `pyproject.toml`,
-`Dockerfile.remote`. Add to those the **tool modules**, which conflicted in both
-the 2026-09-02 and 2026-09-10 syncs for the reason below: `health_wellness.py`,
+`Dockerfile.remote`. Add to those the **tool modules**, which conflict on most
+syncs for the reason below: `health_wellness.py`,
 `nutrition.py`, `courses.py`, `training.py`, `workouts.py`.
 
-**The recurring conflict, and how to resolve it.** Two syncs running, most
-conflicts were the same shape and are not real disagreements. Upstream inserts a
+**The recurring conflict, and how to resolve it.** Most conflicts in the tool
+modules are the same shape and are not real disagreements. Upstream inserts a
 new tool immediately *before* an existing one, and the existing one's signature
 differs here because this fork threads `ctx` into it. Git sees the new tool and
 the changed signature line as one overlapping hunk:
@@ -567,9 +566,8 @@ the changed signature line as one overlapping hunk:
 
 The resolution is mechanical: **take upstream's block, drop its last line, and
 restore our signature line.** Nothing else in the hunk is in dispute. Judge each
-hunk before applying it though — in the 2026-09-10 sync one conflict in
-`nutrition.py` looked identical but was a genuine upstream bug fix that had to be
-taken whole.
+hunk before applying it though: a hunk of the same shape can also carry a genuine
+upstream bug fix, which has to be taken whole.
 
 **Watch items during conflict resolution:**
 
@@ -582,11 +580,10 @@ taken whole.
   still installs from `uv.lock` (reproducible deploys), not a fresh resolve.
 - `config.py` — keep the `$PORT` fallback, the allowlist, and the import secret.
 - `README.md` — keep this fork's README and port over only upstream's new tool descriptions.
-- **New upstream tools no longer need migrating.** Upstream is stdio-only, so
-  its tools call the module-global `garmin_client` directly. That global is now
-  a `_ResolvingGarminProxy` in remote mode, so those tools work unchanged — the
-  old "grep for `garmin_client.` and rewrite every call to `get_client(ctx)`"
-  step is gone. Two things replace it, both automatic:
+- **New upstream tools need no migrating.** Upstream is stdio-only, so its
+  tools call the module-global `garmin_client` directly. In remote mode that
+  global is a `_ResolvingGarminProxy`, so those tools work unchanged. These
+  checks catch what does need attention, all automatic:
   - a **new module** must be added to `remote._CONFIGURED_MODULES` *and* have
     `register_tools()` called on it; the contract test fails if they diverge.
   - a **new tool taking a path** fails the path-guard test until it refuses that
@@ -603,13 +600,11 @@ taken whole.
     list the line in `UPSTREAM_TEXT` under its file rather than rewording it,
     and drop any listed line the merge removed.
 - **Watch for helper-signature drift — it does not show up as a conflict.**
-  Upstream has been dropping the `client` argument from module helpers (the
-  proxy makes it unnecessary). Taking upstream's side of a hunk that changes a
+  Upstream drops the `client` argument from module helpers (the proxy makes
+  it unnecessary). Taking upstream's side of a hunk that changes a
   helper's signature, or drops a local our code still uses, leaves code
   *outside* the hunk inconsistent: it merges cleanly and raises `TypeError` or
-  `NameError` on first call. The 2026-10-14 sync hit this with
-  `_is_already_scheduled`, `_put_activity_update` and `schedule_week`'s
-  `client`; the broken callers of `_put_activity_update` were in no conflict
+  `NameError` on first call, and the broken callers can sit in no conflict
   hunk at all. When a hunk changes a helper's signature, grep every call site
   across the package and adopt upstream's caller text along with the helper.
 
@@ -630,25 +625,14 @@ of your data types have data, so it stays out of the repo (`.gitignore` covers
 
 ## Expected state after a clean build
 
-- Full suite: `uv run pytest -m "not e2e"` → all pass (1683 at time of writing).
+- Full suite: `uv run pytest -m "not e2e"` → all pass.
 - Tool counts: **stdio 183**, **remote 180** (`auth_tools` and `delete_activity` are stdio-only).
 - Documented counts are test-enforced: `tests/unit/test_documented_counts.py`
   fails when `CLAUDE.md`, `FORK.md` or `README.md` disagrees with the tools
-  actually registered, so these figures cannot silently rot again.
+  actually registered, so these figures cannot go stale unnoticed.
 
 ## History
 
-Integrated via PRs #1–#6 on this fork, then synced with upstream on 2026-06-17
-(upstream PRs #140/#141/#142, Issues #137/#138/#139), and again on 2026-09-02
-(17 upstream commits: 10 new tools, 7 fixes — the first sync after the
-stdio/remote split was collapsed, and the first needing no tool migration), on
-2026-09-10 (9 upstream commits: 2 new tools, 7 fixes), on 2026-09-19
-(3 upstream commits: `get_energy_balance` plus docs), and on 2026-10-14 (54
-upstream commits: 4 new tools, tool effect annotations, ~30 data-correctness
-fixes; the first sync to route remote registration through `_ToolFilter`), and
-on 2026-10-27 (33 upstream commits: 2 new tools, tool bodies moved off the event
-loop, tool profiles, bearer auth for upstream's own HTTP mode, ~20 fixes). On
-2026-11-10, 13 upstream PRs were taken while still open upstream (see "Upstream
-PRs taken before upstream merged them"). See `CHANGELOG.md` for a
-categorized list of every change relative to upstream, and `README.md` (Remote
-Mode, Security, Token import / refresh) for operational detail.
+What changed and when, upstream syncs included, is in `CHANGELOG.md`; this
+file holds only what is true now. Operational detail is in `README.md`
+(Remote Mode, Security, Token import / refresh) and `OPERATIONS.md`.

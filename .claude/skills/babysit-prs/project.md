@@ -1,8 +1,7 @@
 # garmin_mcp: project rules for /babysit-prs
 
-The rules below are copied word for word from the previous SKILL.md.
-SKILL.md now holds the process (how to branch, merge and credit); edit this
-file to change project policy.
+SKILL.md holds the process (how to branch, merge and credit); this file holds
+the project's policy. Edit this file to change policy.
 
 Repository: `Taxuspt/garmin_mcp` (default branch `main`)
 
@@ -75,22 +74,20 @@ Run the full suite (not just the changed module) to catch regressions.
 ## Key version constraints
 
 ```
-garminconnect==0.3.2   ← pinned; upgrade is a design decision
-mcp>=1.28.1,<2         ← mcp 2.x renamed FastMCP; cap until ported
-requires-python>=3.10  ← 3.12 minimum is a pending design decision
+garminconnect==0.3.20  ← pinned exactly; never below 0.3.5 (CVE-2026-54447); a change is a design decision
+mcp>=1.30.0,<2         ← 1.30.0 floor (CVE-2026-59951); mcp 2.x renamed FastMCP; cap until ported
+requires-python>=3.12  ← garminconnect 0.3.5+ requires it
 ```
 
 ## Design decisions — always ask the user
 
 These are open questions that require user input before any code change:
 
-1. **garminconnect 0.3.7 / 0.3.8 upgrade** (PRs #214, #230)
-2. **Python 3.12 minimum** (PR #214)
-3. **Strength exercise catalog** (PRs #238, #251 — competing implementations)
-4. **AGENTS.md / CLAUDE.md** (PR #235 — conflicts with local CLAUDE.md)
-5. **Garmin China auth** (PRs #180, #249, #268 — three competing implementations)
-6. **Cycling power target ID reversal** (PR #194 — controversial, adds docs but changes behavior)
-7. **Docker token bootstrap / GHCR publishing** (PRs #229, #170, #195 — touch workflows)
-8. **HTTP FIT file serving** (PR #171)
-9. **Structured strength activity creation** (PR #208, depends on #214)
-10. **Remote OAuth2 multi-user mode** (PRs #43, #121, #124 — explicitly skipped)
+1. **Strength exercise catalog** (PRs #238, #251 — competing implementations)
+2. **AGENTS.md / CLAUDE.md** (PR #235 — conflicts with local CLAUDE.md)
+3. **Garmin China auth** (PRs #180, #249, #268 — three competing implementations)
+4. **Cycling power target ID reversal** (PR #194 — controversial, adds docs but changes behavior)
+5. **Docker token bootstrap / GHCR publishing** (PRs #229, #170, #195 — touch workflows)
+6. **HTTP FIT file serving** (PR #171)
+7. **Structured strength activity creation** (PR #208, depends on #214)
+8. **Remote OAuth2 multi-user mode** (PRs #43, #121, #124 — explicitly skipped)
