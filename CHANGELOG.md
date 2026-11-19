@@ -5,6 +5,13 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Pull requests merge themselves on green checks — 2026-11-19
+
+- **CLAUDE.md:** every PR a session opens gets auto-merge turned on, so it lands
+  once the four required checks pass; the owner reviews after the merge.
+- **OPERATIONS.md** records the two repository settings this rests on: "Allow
+  auto-merge" and "Automatically delete head branches", both on.
+
 ## Analytics: today is unfinished; weeks follow Garmin's first day — 2026-11-19
 
 - **Today's still-accumulating metrics wait until the day is over.** Steps,

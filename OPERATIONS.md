@@ -45,6 +45,19 @@ Two defaults GitHub sets on its own, both deliberate to leave as-is:
   even if `main` moved on since. Enabling it would force a rebase-and-rerun on
   every merge, which buys little on a single-author repo.
 
+### Merging
+
+Two settings under Settings, General, Pull Requests:
+
+- **Allow auto-merge: on.** Sessions turn on auto-merge for every PR they open
+  (CLAUDE.md), so a PR lands once the four required checks pass. With this off,
+  GitHub refuses to enable auto-merge on a PR.
+- **Automatically delete head branches: on.** A merged PR's branch is deleted;
+  the PR page can restore it.
+
+The required checks are what stops an untested change: auto-merge waits for
+them, and the ruleset blocks a merge without them.
+
 ### Advanced Security
 
 Settings → Advanced Security. All of these are **on**:
