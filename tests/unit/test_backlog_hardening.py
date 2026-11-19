@@ -17,6 +17,7 @@ from garmin_mcp.oauth_provider import (
     GarminOAuthProvider,
 )
 from garmin_mcp.session_manager import SessionManager
+from tests.unit.oauth_helpers import pending_sign_in
 
 
 @pytest.fixture
@@ -146,9 +147,9 @@ class _Req:
 
 
 def _provider(tmp_path, **kw):
-    return GarminOAuthProvider(
-        db_path=str(tmp_path / "t.db"), server_url="https://x", **kw
-    )
+    p = GarminOAuthProvider(db_path=str(tmp_path / "t.db"), server_url="https://x", **kw)
+    pending_sign_in(p, "s")
+    return p
 
 
 @pytest.mark.asyncio

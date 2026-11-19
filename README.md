@@ -142,6 +142,7 @@ Read by `src/garmin_mcp/config.py` and `remote.py`:
 | `GARMIN_MCP_SERVER_URL` | *(required)* | Public base URL. OAuth metadata and redirects use it; the server will not start without it. |
 | `GARMIN_ALLOWED_EMAILS` | *(none: every login rejected)* | Comma-separated Garmin Connect emails allowed to sign in, matched case-insensitively. **Fail-closed.** |
 | `GARMIN_IMPORT_SECRET` | *(none: import disabled)* | Shared secret for both token-import paths. **Fail-closed:** unset, `/import-token` answers 404 and the login-page import is refused. |
+| `GARMIN_ALLOWED_REDIRECT_HOSTS` | `claude.ai,claude.com` | Hosts an OAuth client may send you back to after sign-in, over https. Your own computer (localhost, for Claude Code and Claude Desktop) is always allowed. Set it to add another app's callback host; set it empty to allow only your own computer. A client registering any other address is refused. |
 | `DB_PATH` | `/data/garmin_mcp.db` | SQLite: OAuth clients, users, hashed tokens. |
 | `SESSION_STORAGE_PATH` | `/data/garmin_sessions` | One directory per user, holding garminconnect's `garmin_tokens.json`. |
 | `GARMIN_MCP_HOST` | `0.0.0.0` | Listen address. |
@@ -157,16 +158,20 @@ Read by `src/garmin_mcp/config.py` and `remote.py`:
 
 When you add the connector, claude.ai opens the server's sign-in page:
 
-1. Enter your Garmin Connect email and password. The email must be on
+1. Check the line above the form: it names the app asking for access and the
+   host you return to. If you did not start the sign-in, close the page.
+2. Enter your Garmin Connect email and password. The email must be on
    `GARMIN_ALLOWED_EMAILS`.
-2. If the account has two-factor authentication, a second page asks for the
+3. If the account has two-factor authentication, a second page asks for the
    code Garmin sent. It stays valid for 5 minutes; a wrong code can be retried.
-3. The page redirects back to claude.ai, and the tools are ready. The whole
+4. The page redirects back to claude.ai, and the tools are ready. The whole
    sign-in must finish within 15 minutes of opening the page.
 
 claude.ai's access token lasts a day and is renewed with a refresh token,
 which expires after 30 days unused; then you sign in again. Your Garmin session
-on the server is separate and lasts until Garmin rejects it.
+on the server is separate and lasts until Garmin rejects it. Taking an email
+off `GARMIN_ALLOWED_EMAILS` cuts off its connections at their next request;
+putting it back restores them.
 
 An email off the allowlist and a wrong password both show "Invalid email or
 password."; the server log says which. If Garmin rate-limits the sign-in, use

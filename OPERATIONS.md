@@ -266,6 +266,7 @@ Names only — values live in Railway. Defaults are in `src/garmin_mcp/config.py
 | `GARMIN_ALLOWED_EMAILS` | **yes** | Comma-separated allowlist. **Fail-closed**: unset means every login is rejected. |
 | `GARMIN_MCP_SERVER_URL` | **yes** | Public URL; used in OAuth metadata and redirects. |
 | `GARMIN_IMPORT_SECRET` | for token import | **Fail-closed**: unset disables `/import-token` and the login-page import. |
+| `GARMIN_ALLOWED_REDIRECT_HOSTS` | no | Hosts a sign-in may return to; defaults to `claude.ai,claude.com`, with localhost always allowed. Add a host here before connecting any other app. |
 | `DB_PATH` | no | Defaults to `/data/garmin_mcp.db`. |
 | `SESSION_STORAGE_PATH` | no | Defaults to `/data/garmin_sessions`. |
 | `GARMIN_MCP_PORT` | no | Overrides the injected `PORT`. Leave unset on Railway. |

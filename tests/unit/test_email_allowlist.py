@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from garmin_mcp.config import RemoteConfig
 from garmin_mcp.oauth_provider import GarminOAuthProvider
+from tests.unit.oauth_helpers import pending_sign_in
 
 
 # ─── RemoteConfig parsing / fail-closed ──────────────────────────────────
@@ -35,11 +36,13 @@ def test_config_allows_only_listed(monkeypatch):
 
 @pytest.fixture
 def provider(tmp_path):
-    return GarminOAuthProvider(
+    p = GarminOAuthProvider(
         db_path=str(tmp_path / "test.db"),
         server_url="https://example.com",
         allowed_emails={"Allowed@Example.com"},
     )
+    pending_sign_in(p, "abc")
+    return p
 
 
 def test_provider_allowlist_is_normalized(provider):

@@ -85,7 +85,9 @@ async def _session(client, token):
 
 
 async def main():
-    unauth_app = asgi.app if hasattr(asgi, "app") else asgi
+    unauth_app = asgi  # the Starlette app, under remote.py's ASGI middleware
+    while not hasattr(unauth_app, "router"):
+        unauth_app = unauth_app.app
     async with unauth_app.router.lifespan_context(unauth_app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=asgi),
                                      base_url="https://e2e.example.invalid") as client:

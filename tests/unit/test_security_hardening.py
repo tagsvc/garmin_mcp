@@ -15,14 +15,17 @@ from garmin_mcp.oauth_provider import (
     _RateLimiter,
 )
 from garmin_mcp.session_manager import SessionManager
+from tests.unit.oauth_helpers import issued_code, pending_sign_in
 
 
 def _provider(tmp_path, **kw):
-    return GarminOAuthProvider(
+    p = GarminOAuthProvider(
         db_path=str(tmp_path / "t.db"),
         server_url="https://example.com",
         **kw,
     )
+    pending_sign_in(p, "s")
+    return p
 
 
 class _FakeReq:
@@ -45,7 +48,9 @@ XSS = '"><script>alert(1)</script>'
 
 @pytest.mark.asyncio
 async def test_login_page_escapes_state(tmp_path):
-    resp = await _provider(tmp_path).get_login_page(XSS)
+    p = _provider(tmp_path)
+    pending_sign_in(p, XSS)
+    resp = await p.get_login_page(XSS)
     assert b"<script>alert(1)" not in resp.body
     assert b"&lt;script&gt;" in resp.body
 
@@ -124,6 +129,7 @@ async def test_mfa_handler_rate_limited(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_tokens_hashed_at_rest_and_roundtrip(tmp_path):
     p = _provider(tmp_path)
+    issued_code(p)
     client = SimpleNamespace(client_id="c1")
     ac = SimpleNamespace(code="authcode1", scopes=["garmin"])
     tok = await p.exchange_authorization_code(client, ac)

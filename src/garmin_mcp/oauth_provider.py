@@ -19,7 +19,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
+from urllib.parse import urlsplit
 
 from mcp.server.auth.provider import (
     AuthorizationCode,
@@ -28,6 +29,8 @@ from mcp.server.auth.provider import (
     OAuthToken,
     RefreshToken,
     AccessToken,
+    RegistrationError,
+    TokenError,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull
@@ -61,6 +64,21 @@ REFRESH_TOKEN_TTL = 86400 * 30  # 30 days
 # the response cannot be differenced to reveal allowlist membership.
 _GENERIC_LOGIN_ERROR = "Invalid email or password."
 
+# Hosts an OAuth client may send the user back to after sign-in, unless
+# GARMIN_ALLOWED_REDIRECT_HOSTS says otherwise: claude.ai's connector callback
+# (the web and phone apps) on either of its domains. The user's own computer
+# (loopback, for Claude Code and Claude Desktop) is always allowed, since a
+# code sent there reaches no one else. Any other host is refused: registration
+# is open, so without this a stranger's app could register its own address and
+# a link to this server's genuine sign-in page would hand it the account.
+DEFAULT_REDIRECT_HOSTS = frozenset({"claude.ai", "claude.com"})
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# Dynamically registered clients kept at most. At the cap, the oldest clients
+# holding no code or token are dropped to make room; registration is refused
+# only when every stored client is in use.
+MAX_REGISTERED_CLIENTS = 200
+
 # Retry status codes for the Garmin login client. garth's default also retries
 # on 429, which multiplies requests against Garmin's rate-limited OAuth endpoints
 # and makes throttling worse. We keep retries for genuinely transient errors but
@@ -78,6 +96,33 @@ def _safe_log(value: str, limit: int = 200) -> str:
     """
     text = (value or "")[:limit]
     return text.replace("\r", "\\r").replace("\n", "\\n")
+
+
+def normalize_redirect_hosts(hosts: Iterable[str] | None) -> frozenset[str]:
+    """Lowercased host names, blanks dropped; None gives DEFAULT_REDIRECT_HOSTS."""
+    if hosts is None:
+        return DEFAULT_REDIRECT_HOSTS
+    return frozenset(h.strip().lower() for h in hosts if h and h.strip())
+
+
+def redirect_uri_allowed(uri: Any, hosts: frozenset[str]) -> bool:
+    """True if a client may send the user back to ``uri`` after sign-in.
+
+    Loopback over http or https always; any other host only over https and
+    only when listed. A fragment is refused (RFC 6749 section 3.1.2), and the
+    host is the parsed one, so ``https://claude.ai@evil.example`` is evil.example.
+    """
+    try:
+        parts = urlsplit(str(uri))
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return False
+    if not host or parts.fragment:
+        return False
+    scheme = parts.scheme.lower()
+    if host in _LOOPBACK_HOSTS:
+        return scheme in ("http", "https")
+    return scheme == "https" and host in hosts
 
 
 def _hash_token(token: str) -> str:
@@ -166,6 +211,14 @@ class _PendingMfa:
         return time.time() - self.created_at > _MFA_TTL
 
 
+def _expired_page() -> HTMLResponse:
+    """The reply to a sign-in whose state is unknown, used or expired."""
+    return HTMLResponse(
+        "<h1>Authorization expired</h1><p>Please start again from your app.</p>",
+        status_code=400,
+    )
+
+
 def _email_key(email: str | None) -> str:
     """A Garmin email as users are stored and matched: trimmed, lowercased the
     way the allowlist compares (Python's ``str.lower``, Unicode included)."""
@@ -203,6 +256,45 @@ def _merge_case_variant_users(conn) -> list[tuple[str, str]]:
     return merged
 
 
+def _purge_expired(conn) -> None:
+    """Delete codes, unfinished sign-ins and tokens past their expiry."""
+    now = time.time()
+    conn.execute("DELETE FROM auth_codes WHERE expires_at < ?", (now,))
+    conn.execute("DELETE FROM access_tokens WHERE expires_at < ?", (now,))
+    conn.execute(
+        "DELETE FROM refresh_tokens WHERE expires_at IS NOT NULL AND expires_at < ?",
+        (now,),
+    )
+
+
+def _make_room_for_client(conn) -> bool:
+    """Keep stored clients under MAX_REGISTERED_CLIENTS; False if none can go.
+
+    Drops the oldest clients that hold no code or token (a client that
+    registered and never signed in, or whose tokens have expired) and never
+    the pre-registered Claude.ai client.
+    """
+    count = conn.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()[0]
+    excess = count - MAX_REGISTERED_CLIENTS + 1
+    if excess <= 0:
+        return True
+    from garmin_mcp.oauth_claude import CLAUDE_AI_CLIENT_ID
+
+    _purge_expired(conn)
+    conn.execute(
+        """DELETE FROM oauth_clients WHERE rowid IN (
+               SELECT rowid FROM oauth_clients
+               WHERE client_id != ?
+                 AND client_id NOT IN (SELECT client_id FROM auth_codes)
+                 AND client_id NOT IN (SELECT client_id FROM access_tokens)
+                 AND client_id NOT IN (SELECT client_id FROM refresh_tokens)
+               ORDER BY rowid LIMIT ?)""",
+        (CLAUDE_AI_CLIENT_ID, excess),
+    )
+    count = conn.execute("SELECT COUNT(*) FROM oauth_clients").fetchone()[0]
+    return count < MAX_REGISTERED_CLIENTS
+
+
 class GarminOAuthProvider(
     OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]
 ):
@@ -215,6 +307,7 @@ class GarminOAuthProvider(
         session_manager=None,
         allowed_emails=None,
         import_secret: str = "",
+        allowed_redirect_hosts=None,
     ):
         self.db_path = db_path
         self.server_url = server_url.rstrip("/")
@@ -228,6 +321,7 @@ class GarminOAuthProvider(
             for email in (allowed_emails or ())
             if (email or "").strip()
         )
+        self.allowed_redirect_hosts = normalize_redirect_hosts(allowed_redirect_hosts)
         self._pending_mfa: dict[str, _PendingMfa] = {}
         self._mfa_lock = threading.Lock()
         # Defense-in-depth rate limiters for the auth endpoints.
@@ -393,6 +487,7 @@ class GarminOAuthProvider(
                         )
 
             merged = _merge_case_variant_users(conn)
+            _purge_expired(conn)
             conn.commit()
         finally:
             conn.close()
@@ -434,6 +529,36 @@ class GarminOAuthProvider(
             return user_id
         finally:
             conn.close()
+
+    def _user_still_allowed(self, conn: sqlite3.Connection, user_id: Optional[str]) -> bool:
+        """True if ``user_id`` is a user whose email is still on the allowlist.
+
+        The allowlist is read at every token use, not only at sign-in, so taking
+        an email off GARMIN_ALLOWED_EMAILS cuts off the connections already made
+        under it. Their tokens are refused, not deleted: an allowlist emptied by
+        mistake costs no one their connection once it is restored.
+        """
+        if not user_id:
+            return False
+        row = conn.execute(
+            "SELECT garmin_email FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        return bool(row) and self._is_email_allowed(row["garmin_email"])
+
+    def _pending_authorization(self, state: str) -> Optional[sqlite3.Row]:
+        """The sign-in ``state`` names, while it waits for a user and is unexpired."""
+        if not state:
+            return None
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM auth_codes WHERE code = ? AND user_id IS NULL", (state,)
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None or row["expires_at"] < time.time():
+            return None
+        return row
 
     def _complete_auth_flow(self, state: str, user_id: str) -> Response:
         """Shared helper: look up pending auth, create auth code, redirect."""
@@ -525,19 +650,52 @@ class GarminOAuthProvider(
                 "SELECT client_info_json FROM oauth_clients WHERE client_id = ?",
                 (client_id,),
             ).fetchone()
-            if row:
-                return OAuthClientInformationFull.model_validate_json(
-                    row["client_info_json"]
-                )
-            return None
+            if not row:
+                return None
+            client = OAuthClientInformationFull.model_validate_json(row["client_info_json"])
         finally:
             conn.close()
+        # Applied to clients already stored, not only at registration, so one
+        # registered before the rule existed, or under a wider
+        # GARMIN_ALLOWED_REDIRECT_HOSTS, cannot be sent a code at another host.
+        allowed = [
+            uri for uri in client.redirect_uris or []
+            if redirect_uri_allowed(uri, self.allowed_redirect_hosts)
+        ]
+        if not allowed:
+            logger.warning(
+                "Refused OAuth client %s: no redirect URI on an allowed host",
+                _safe_log(client_id, 80),
+            )
+            return None
+        if len(allowed) != len(client.redirect_uris or []):
+            client = client.model_copy(update={"redirect_uris": allowed})
+        return client
 
     async def register_client(
         self, client_info: OAuthClientInformationFull
     ) -> None:
+        refused = [
+            str(uri) for uri in client_info.redirect_uris or []
+            if not redirect_uri_allowed(uri, self.allowed_redirect_hosts)
+        ]
+        if refused:
+            logger.warning("Refused client registration for redirect URI(s): %s",
+                           _safe_log(", ".join(refused)))
+            raise RegistrationError(
+                error="invalid_redirect_uri",
+                error_description=(
+                    "This server only returns sign-ins to approved hosts or to this "
+                    "computer (localhost)."
+                ),
+            )
         conn = self._get_conn()
         try:
+            if not _make_room_for_client(conn):
+                raise RegistrationError(
+                    error="invalid_client_metadata",
+                    error_description="Too many registered clients.",
+                )
             conn.execute(
                 "INSERT OR REPLACE INTO oauth_clients (client_id, client_info_json) VALUES (?, ?)",
                 (client_info.client_id, client_info.model_dump_json()),
@@ -571,6 +729,9 @@ class GarminOAuthProvider(
         state_token = secrets.token_urlsafe(32)
         conn = self._get_conn()
         try:
+            # Sign-ins that were started and never finished expire here, so an
+            # unauthenticated caller cannot grow the table without bound.
+            _purge_expired(conn)
             conn.execute(
                 """INSERT INTO auth_codes
                    (code, client_id, user_id, scopes, code_challenge, redirect_uri,
@@ -606,6 +767,8 @@ class GarminOAuthProvider(
             ).fetchone()
             if not row or row["expires_at"] < time.time():
                 return None
+            if not self._user_still_allowed(conn, row["user_id"]):
+                return None
             return AuthorizationCode(
                 code=row["code"],
                 client_id=row["client_id"],
@@ -631,9 +794,18 @@ class GarminOAuthProvider(
             ).fetchone()
             user_id = row["user_id"] if row else None
 
-            conn.execute(
-                "DELETE FROM auth_codes WHERE code = ?", (authorization_code.code,)
-            )
+            # The DELETE decides who redeems the code: SQLite serialises
+            # writers, so of two concurrent exchanges only one deletes a row.
+            deleted = conn.execute(
+                "DELETE FROM auth_codes WHERE code = ? AND user_id IS NOT NULL",
+                (authorization_code.code,),
+            ).rowcount
+            if not deleted:
+                conn.rollback()
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="The authorization code has already been used.",
+                )
 
             access_token_str = secrets.token_urlsafe(48)
             refresh_token_str = secrets.token_urlsafe(48)
@@ -685,6 +857,8 @@ class GarminOAuthProvider(
             ).fetchone()
             if not row or row["expires_at"] < time.time():
                 return None
+            if not self._user_still_allowed(conn, row["user_id"]):
+                return None
 
             if row["user_id"] and self.session_manager:
                 self.session_manager.set_token_user_mapping(token, row["user_id"])
@@ -711,6 +885,8 @@ class GarminOAuthProvider(
                 return None
             if row["expires_at"] and row["expires_at"] < time.time():
                 return None
+            if not self._user_still_allowed(conn, row["user_id"]):
+                return None
             return RefreshToken(
                 token=refresh_token,
                 client_id=row["client_id"],
@@ -734,10 +910,18 @@ class GarminOAuthProvider(
             ).fetchone()
             user_id = row["user_id"] if row else None
 
-            conn.execute(
+            # As with codes: only the request whose DELETE removes the row
+            # gets new tokens, so a replayed refresh token cannot fork the chain.
+            deleted = conn.execute(
                 "DELETE FROM refresh_tokens WHERE token = ?",
                 (_hash_token(refresh_token.token),),
-            )
+            ).rowcount
+            if not deleted:
+                conn.rollback()
+                raise TokenError(
+                    error="invalid_grant",
+                    error_description="The refresh token has already been used.",
+                )
 
             new_access = secrets.token_urlsafe(48)
             new_refresh = secrets.token_urlsafe(48)
@@ -838,8 +1022,31 @@ class GarminOAuthProvider(
         '<path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
     )
 
+    async def _requester_html(self, state: str) -> Optional[str]:
+        """Who the sign-in is for and where it returns, or None if ``state`` is dead.
+
+        Shown above the form so a sign-in started by a link someone sent names
+        the app that would receive the account, and the host it goes back to.
+        """
+        pending = self._pending_authorization(state)
+        if pending is None:
+            return None
+        client = await self.get_client(pending["client_id"])
+        name = (client.client_name if client else None) or pending["client_id"]
+        host = urlsplit(pending["redirect_uri"]).hostname or pending["redirect_uri"]
+        return (
+            '<div class="info">'
+            f"<strong>{_html_escape(str(name))}</strong> is asking to read and change "
+            "your Garmin data. After you sign in you return to "
+            f"<strong>{_html_escape(host)}</strong>. If you did not start this, "
+            "close this page.</div>"
+        )
+
     async def get_login_page(self, state: str, error: str = "") -> Response:
         """Render the Garmin Connect login form."""
+        requester_html = await self._requester_html(state)
+        if requester_html is None:
+            return _expired_page()
         error_html = f'<div class="error">{_html_escape(error)}</div>' if error else ""
 
         html = f"""<!DOCTYPE html>
@@ -855,6 +1062,7 @@ class GarminOAuthProvider(
         <div class="logo">{self._GARMIN_LOGO_SVG}</div>
         <h1>Connect to Garmin</h1>
         <p class="subtitle">Sign in with your Garmin Connect account to grant access to your fitness data.</p>
+        {requester_html}
         {error_html}
         <form method="POST" action="/login/callback">
             <input type="hidden" name="state" value="{_html_escape(state, quote=True)}">
@@ -920,6 +1128,35 @@ class GarminOAuthProvider(
                 state, "Too many attempts. Please wait a few minutes and try again."
             )
 
+        # The sign-in must be live before anything else happens: otherwise this
+        # endpoint would try any email and password against Garmin for anyone,
+        # telling a right password from a wrong one by the reply, and each try
+        # would count against the account at Garmin.
+        if self._pending_authorization(state) is None:
+            return _expired_page()
+
+        # Token import is decided on the import secret before the allowlist, so
+        # its refusals read the same for every email and say nothing of who is
+        # on the list.
+        if garmin_token:
+            if not self.session_manager:
+                return await self.get_login_page(
+                    state, "Token import is unavailable on this server."
+                )
+            if not self.import_secret:
+                return await self.get_login_page(
+                    state, "Token import is disabled on this server."
+                )
+            # Compared as bytes: compare_digest refuses str holding non-ASCII
+            # characters, which a form field can carry.
+            if not hmac.compare_digest(
+                import_secret.encode("utf-8"), self.import_secret.encode("utf-8")
+            ):
+                logger.warning("Rejected token import with bad/missing secret for %s", _safe_log(email))
+                return await self.get_login_page(
+                    state, "Invalid import secret."
+                )
+
         # Enforce the email allowlist before contacting Garmin. Fail-closed:
         # if no allowlist is configured, every login is rejected.
         if not self._is_email_allowed(email):
@@ -938,26 +1175,13 @@ class GarminOAuthProvider(
         # token-mint call, avoiding 429 rate-limiting of those endpoints from
         # datacenter IPs.
         #
-        # Gated by a shared secret in addition to the email allowlist: writing a
-        # session is a state-changing action, and an email is not a secret, so
-        # without this gate anyone who knew an allowlisted email could overwrite
-        # that user's session with a bogus token (denial of service). Requiring
-        # the secret means only the operator can import. Fail-closed: if no
-        # secret is configured, token import is disabled entirely.
+        # Gated by a shared secret (checked above) in addition to the email
+        # allowlist: writing a session is a state-changing action, and an email
+        # is not a secret, so without this gate anyone who knew an allowlisted
+        # email could overwrite that user's session with a bogus token (denial
+        # of service). Requiring the secret means only the operator can import.
+        # Fail-closed: if no secret is configured, token import is disabled.
         if garmin_token:
-            if not self.session_manager:
-                return await self.get_login_page(
-                    state, "Token import is unavailable on this server."
-                )
-            if not self.import_secret:
-                return await self.get_login_page(
-                    state, "Token import is disabled on this server."
-                )
-            if not hmac.compare_digest(import_secret, self.import_secret):
-                logger.warning("Rejected token import with bad/missing secret for %s", _safe_log(email))
-                return await self.get_login_page(
-                    state, "Invalid import secret."
-                )
             user_id = self._get_or_create_user(email)
             try:
                 self.session_manager.create_session_from_token_blob(

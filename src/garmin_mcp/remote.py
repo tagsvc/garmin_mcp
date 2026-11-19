@@ -66,7 +66,51 @@ class _SecurityHeadersMiddleware:
 
 from garmin_mcp.config import get_config
 from garmin_mcp import oauth_claude
-from garmin_mcp.oauth_provider import GarminOAuthProvider
+from garmin_mcp.oauth_provider import GarminOAuthProvider, _RateLimiter, _client_ip
+
+
+# Attempts allowed per client IP on the SDK's unauthenticated OAuth endpoints,
+# as (attempts, window in seconds). Each /register stores a client and each
+# /authorize a pending sign-in, so without a limit anyone could fill the /data
+# volume, which also holds every Garmin session. A real client registers once
+# and starts a sign-in only when the user connects, far below these.
+_OAUTH_ENDPOINT_LIMITS = {
+    "/register": (10, 3600),
+    "/authorize": (30, 300),
+}
+
+
+class _OAuthEndpointRateLimit:
+    """Pure-ASGI middleware that rate-limits /register and /authorize per IP."""
+
+    def __init__(self, app, limits=None):
+        self.app = app
+        self._limiters = {
+            path: _RateLimiter(max_attempts=attempts, window_seconds=window)
+            for path, (attempts, window) in (limits or _OAUTH_ENDPOINT_LIMITS).items()
+        }
+
+    async def __call__(self, scope, receive, send):
+        limiter = (
+            self._limiters.get(scope.get("path", "").rstrip("/") or "/")
+            if scope.get("type") == "http"
+            else None
+        )
+        if limiter is not None:
+            from starlette.requests import Request as _Request
+            from starlette.responses import JSONResponse
+
+            ip = _client_ip(_Request(scope))
+            if not limiter.allow(ip):
+                logger.warning("Rate-limited %s from %s", scope.get("path"), ip)
+                response = JSONResponse(
+                    {"error": "temporarily_unavailable",
+                     "error_description": "Too many requests. Try again later."},
+                    status_code=429,
+                )
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 from garmin_mcp.session_manager import SessionManager
 from garmin_mcp.client_resolver import (
     _ResolvingGarminProxy,
@@ -276,6 +320,12 @@ def main():
         session_manager=session_manager,
         allowed_emails=config.allowed_emails,
         import_secret=config.import_secret,
+        allowed_redirect_hosts=config.allowed_redirect_hosts,
+    )
+    hosts = sorted(oauth_provider.allowed_redirect_hosts)
+    print(
+        f"  Sign-in return hosts: {', '.join(hosts) or '(none)'} and this computer (loopback)",
+        file=sys.stdout,
     )
 
     # Pre-register clients that skip dynamic registration (e.g. Claude.ai,
@@ -399,7 +449,7 @@ def main():
     import uvicorn
 
     starlette_app = app.streamable_http_app()
-    wrapped = _SecurityHeadersMiddleware(starlette_app)
+    wrapped = _SecurityHeadersMiddleware(_OAuthEndpointRateLimit(starlette_app))
     uvicorn.run(
         wrapped,
         host=config.host,
