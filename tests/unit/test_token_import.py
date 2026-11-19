@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 from garmin_mcp.session_manager import SessionManager
 from garmin_mcp.oauth_provider import GarminOAuthProvider
+from tests.unit.oauth_helpers import pending_sign_in
 
 
 VALID_BLOB = json.dumps(
@@ -71,13 +72,15 @@ BROWSER_SECRET = "browser-import-s3cr3t"
 @pytest.fixture
 def provider(tmp_path):
     sm = SessionManager(str(tmp_path / "sessions"))
-    return GarminOAuthProvider(
+    p = GarminOAuthProvider(
         db_path=str(tmp_path / "test.db"),
         server_url="https://example.com",
         session_manager=sm,
         allowed_emails={"allowed@example.com"},
         import_secret=BROWSER_SECRET,
     )
+    pending_sign_in(p, "abc")
+    return p
 
 
 @pytest.mark.asyncio
@@ -156,6 +159,7 @@ async def test_login_callback_token_import_disabled_without_server_secret(tmp_pa
         allowed_emails={"allowed@example.com"},
         import_secret="",
     )
+    pending_sign_in(prov, "abc")
     request = _FakeRequest(
         {
             "state": "abc",
@@ -178,6 +182,7 @@ async def test_login_callback_token_import_rejects_non_allowlisted(provider):
             "email": "blocked@example.com",
             "password": "",
             "garmin_token": VALID_BLOB,
+            "import_secret": BROWSER_SECRET,
         }
     )
     response = await provider.handle_login_callback(request)

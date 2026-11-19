@@ -103,7 +103,31 @@ coverage.
     calls move to a library method when it sends the identical request (path,
     query, headers), checked by a real-client test. The fork keeps its own call
     where the library is weaker, and says why.
-- **Allowlist is fail-closed.** An empty/unset `GARMIN_ALLOWED_EMAILS` rejects every login.
+- **Allowlist is fail-closed and holds at every token use.** An empty/unset
+  `GARMIN_ALLOWED_EMAILS` rejects every login, and `load_access_token`,
+  `load_refresh_token` and `load_authorization_code` refuse a user whose email
+  is off the list (refused, not deleted, so restoring the email restores the
+  connection).
+- **Sign-ins return only to approved hosts.** Registration is open, so
+  `register_client` refuses, and `get_client` filters out of stored clients,
+  any redirect URI that is not loopback or https on
+  `GARMIN_ALLOWED_REDIRECT_HOSTS` (default `claude.ai,claude.com`). The sign-in
+  page names the requesting client and its return host. Without this, a
+  stranger's app could register its own address and a link to the genuine
+  sign-in page would hand it the account.
+- **The login handler checks the sign-in is live before anything else**
+  (`_pending_authorization`), so it never sends a password to Garmin for a
+  made-up state: otherwise it is a password oracle and a Garmin lockout lever.
+- **Token-import refusals precede the allowlist check**, so a wrong or missing
+  import secret reads the same for every email.
+- **Codes and refresh tokens are single use by the DELETE's rowcount**: the
+  exchange that deletes nothing raises `invalid_grant`.
+- **Unauthenticated OAuth storage is bounded.** `/register` and `/authorize`
+  are rate-limited per IP (`_OAuthEndpointRateLimit` in `remote.py`), expired
+  codes and tokens are purged at startup and on each `/authorize`, and stored
+  clients are capped at `MAX_REGISTERED_CLIENTS`, dropping the oldest unused.
+- **Saved reports fail closed** on the remote server: a caller with no user id
+  gets an error, never the stdio server's single store.
 - **Token import is fail-closed and secret-gated.** `GARMIN_IMPORT_SECRET` (constant-time
   compare) is required on both the login-page import and `POST /import-token`; unset disables import.
 - **No live-Garmin validation of imported tokens.** Validation is structural only — a live

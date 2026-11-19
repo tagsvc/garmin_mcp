@@ -5,6 +5,39 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Sign-in and OAuth hardening from a security review; ECG lists page themselves — 2026-11-19
+
+A full-file security review of the remote sign-in and OAuth code found eight
+issues, all in code older than the review; this fixes all eight.
+
+- **Sign-ins return only to approved hosts.** Client registration was open to
+  any redirect address and the sign-in page did not say who was asking, so a
+  link to the genuine sign-in page could hand the account to a stranger's app.
+  Registration now refuses, and stored clients are filtered to, loopback and
+  https on `GARMIN_ALLOWED_REDIRECT_HOSTS` (default `claude.ai,claude.com`).
+  The sign-in page names the app and the host it returns to.
+- **The allowlist holds at every token use**, not only at sign-in: an email
+  taken off `GARMIN_ALLOWED_EMAILS` loses its connections at their next
+  request. Tokens are refused, not deleted.
+- **The login handler refuses a dead sign-in before calling Garmin.** It used
+  to try any email and password against Garmin first, which told a right
+  password from a wrong one and counted each try against the account.
+- **Unauthenticated storage growth is bounded:** `/register` and `/authorize`
+  are rate-limited per IP, expired codes and tokens are purged, and stored
+  clients are capped at 200, dropping the oldest unused.
+- **Token-import refusals on the sign-in page come before the allowlist
+  check**, so they no longer reveal which emails are on it; a non-ASCII import
+  secret is refused instead of raising a server error.
+- **Authorization codes and refresh tokens are strictly single use**: of two
+  concurrent exchanges only one succeeds.
+- **Saved reports fail closed** on the remote server when the caller cannot be
+  identified, rather than falling back to one shared file.
+- **`get_ecg_recordings` pages back through the range itself.** Garmin answers
+  with the newest 20; the tool asks again ending on the oldest one's day until
+  a reply comes back short, so a 21-recording history comes back whole (checked
+  against a live account with 21). `may_have_more` now appears only when paging
+  cannot reach the start of the range.
+
 ## Remote logs are labelled by severity on Railway — 2026-11-19
 
 - **The remote server sends INFO and below to stdout and WARNING and above to

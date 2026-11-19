@@ -17,6 +17,8 @@ from garmin_mcp.oauth_provider import (
     GarminOAuthProvider,
 )
 
+from tests.unit.oauth_helpers import issued_code
+
 pytestmark = pytest.mark.unit
 
 DAY = 86400
@@ -24,9 +26,9 @@ CLIENT = SimpleNamespace(client_id="c1")
 
 
 def _provider(tmp_path):
-    return GarminOAuthProvider(
-        db_path=str(tmp_path / "t.db"), server_url="https://example.com"
-    )
+    p = GarminOAuthProvider(db_path=str(tmp_path / "t.db"), server_url="https://example.com")
+    issued_code(p)
+    return p
 
 
 def _latest_expiries(tmp_path):

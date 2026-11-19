@@ -29,6 +29,14 @@ class RemoteConfig:
         # Shared secret for the /import-token endpoint (programmatic token
         # refresh). Fail-closed: if unset/empty, the endpoint is disabled.
         self.import_secret = os.getenv("GARMIN_IMPORT_SECRET", "").strip()
+        # Hosts an OAuth client may send the user back to after sign-in, besides
+        # this computer (loopback), which is always allowed. Unset gives
+        # oauth_provider.DEFAULT_REDIRECT_HOSTS (claude.ai, claude.com); set,
+        # it replaces them, and set but empty leaves only loopback.
+        raw_hosts = os.getenv("GARMIN_ALLOWED_REDIRECT_HOSTS")
+        self.allowed_redirect_hosts = (
+            None if raw_hosts is None else frozenset(raw_hosts.split(","))
+        )
 
     @staticmethod
     def _parse_allowed_emails(value: str | None) -> frozenset[str]:

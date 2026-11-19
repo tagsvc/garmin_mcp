@@ -22,6 +22,8 @@ from garmin_mcp.times import gmt, offset_from_pair, profile_time_zone, put_times
 # Recordings in one list reply: garminconnect's default page size, which the
 # tool leaves as it is.
 ECG_PAGE_SIZE = 20
+# Most list replies one call reads while paging back through a long history.
+ECG_MAX_PAGES = 25
 
 # The garmin_client will be set by the main file
 garmin_client = None
@@ -171,6 +173,48 @@ def _curate_ecg_summary(summary: Dict[str, Any], zone: Optional[str]) -> Dict[st
     return {k: v for k, v in ecg.items() if v is not None}
 
 
+def _list_ecgs(client, start: str, end: str):
+    """Every ECG summary from start to end, newest first, and whether it is all.
+
+    Garmin answers with at most ECG_PAGE_SIZE recordings, the newest, and the
+    next page's token is not known from a live reply. So a full page is
+    followed by asking again with the range ending on the oldest recording's
+    day (the range is inclusive), dropping the recordings already held. A full
+    page that ends on the day already asked for cannot move back, and that, or
+    ECG_MAX_PAGES replies, ends the paging with the result marked incomplete.
+    """
+    entries: List[Dict[str, Any]] = []
+    seen: set = set()
+    errors: List[Any] = []
+    page_end = end
+    for _ in range(ECG_MAX_PAGES):
+        data = client.get_ecg_list(start=start, end=page_end)
+        content = data.get("content") if isinstance(data, dict) else None
+        page = [e for e in content or [] if isinstance(e, dict)]
+        if isinstance(data, dict) and data.get("transformErrors"):
+            errors.extend(data["transformErrors"])
+        for entry in page:
+            key = entry.get("detailId") or json.dumps(entry, sort_keys=True, default=str)
+            if key not in seen:
+                seen.add(key)
+                entries.append(entry)
+        if len(content or []) < ECG_PAGE_SIZE:
+            return entries, errors, True
+        oldest = _ecg_day(page[-1]) if page else None
+        if not oldest or oldest >= page_end or oldest < start:
+            return entries, errors, False
+        page_end = oldest
+    return entries, errors, False
+
+
+def _ecg_day(summary: Dict[str, Any]) -> Optional[str]:
+    """The local day (YYYY-MM-DD) Garmin files a recording under."""
+    local = summary.get("startTimeLocal")
+    if isinstance(local, str) and len(local) >= 10:
+        return local[:10]
+    return None
+
+
 def _not_found(exc: Exception) -> bool:
     return "404" in str(exc) or type(exc).__name__ == "GarminConnectNotFoundError"
 
@@ -253,8 +297,11 @@ def register_tools(app):
         ECG app version and the device and its firmware. start_time_gmt and
         start_time_local give when it was taken, local from the recording's own
         offset; local_time_zone appears only when the profile's zone had to be
-        used. Garmin returns at most 20 recordings per call; a full page sets
-        may_have_more, so narrow the range to see the rest. get_ecg returns one
+        used. Garmin returns at most 20 recordings per reply, newest first, so
+        the tool pages back through the range itself and returns every
+        recording in it. may_have_more appears only when it could not reach
+        the start of the range (more than 20 recordings on one day, or a very
+        long history); narrow the range to see the rest. get_ecg returns one
         recording with its waveform. An account without the ECG feature gets a
         "no ECG data" answer.
 
@@ -265,9 +312,7 @@ def register_tools(app):
         try:
             client = get_client(ctx)
             end = end_date or start_date
-            data = client.get_ecg_list(start=start_date, end=end)
-            content = data.get("content") if isinstance(data, dict) else None
-            entries = [e for e in content or [] if isinstance(e, dict)]
+            entries, errors, complete = _list_ecgs(client, start_date, end)
             if not entries:
                 return f"No ECG recordings between {start_date} and {end}."
             zone = profile_time_zone(client)
@@ -275,16 +320,13 @@ def register_tools(app):
                 "count": len(entries),
                 "recordings": [_curate_ecg_summary(e, zone) for e in entries],
             }
-            errors = data.get("transformErrors")
             if errors:
                 result["transform_errors"] = errors
-            if len(content or []) >= ECG_PAGE_SIZE:
-                # Garmin pages the list and the next page's token is not known
-                # from a live reply, so a full page is flagged, not followed.
+            if not complete:
                 result["may_have_more"] = True
                 result["note"] = (
-                    f"Garmin returned a full page of {ECG_PAGE_SIZE}; there may be more. "
-                    "Narrow the date range to see the rest."
+                    "Garmin's replies stop at 20 recordings and paging back did not reach "
+                    f"{start_date}; there may be more. Narrow the date range to see the rest."
                 )
             return json.dumps(result, indent=2)
         except Exception as e:

@@ -254,7 +254,8 @@ async def test_an_account_without_ecg_gets_a_plain_answer(app, client):
 
 
 @pytest.mark.asyncio
-async def test_a_full_page_of_ecgs_says_there_may_be_more(app, client):
+async def test_a_full_page_on_one_day_says_there_may_be_more(app, client):
+    """20 recordings on the range's last day: paging cannot move back past it."""
     client.get_ecg_list.return_value = {
         "content": [dict(ECG_SUMMARY, detailId=f"ecg-{n}") for n in range(health_snapshots.ECG_PAGE_SIZE)]
     }
@@ -263,6 +264,34 @@ async def test_a_full_page_of_ecgs_says_there_may_be_more(app, client):
 
     assert payload["count"] == health_snapshots.ECG_PAGE_SIZE
     assert payload["may_have_more"] is True
+
+
+def _ecg_on(day: str, n: int) -> dict:
+    return dict(ECG_SUMMARY, detailId=f"ecg-{day}-{n}", startTimeLocal=f"{day}T12:00:{n:02d}.0")
+
+
+@pytest.mark.asyncio
+async def test_a_long_ecg_history_is_paged_back_to_the_start(app, client):
+    """21 recordings: Garmin sends the newest 20, the tool asks again ending on
+    the oldest one's day and returns all 21 once, newest first."""
+    newest = [_ecg_on("2026-11-19", n) for n in range(6)] + [
+        _ecg_on(f"2025-{m:02d}-10", 0) for m in range(12, 0, -1)
+    ] + [_ecg_on("2024-10-25", 1), _ecg_on("2024-10-25", 0)]
+    oldest = [_ecg_on("2024-10-25", 1), _ecg_on("2024-10-25", 0), _ecg_on("2024-10-24", 0)]
+    assert len(newest) == health_snapshots.ECG_PAGE_SIZE
+
+    def _page(start, end):
+        return {"content": newest if end == "2026-11-19" else oldest}
+
+    client.get_ecg_list.side_effect = _page
+    payload = json.loads(await _call(app, "get_ecg_recordings",
+                                     {"start_date": "2020-01-01", "end_date": "2026-11-19"}))
+
+    assert payload["count"] == 21
+    assert "may_have_more" not in payload
+    assert payload["recordings"][-1]["ecg_id"] == "ecg-2024-10-24-0"
+    assert len({r["ecg_id"] for r in payload["recordings"]}) == 21
+    assert [c.kwargs["end"] for c in client.get_ecg_list.call_args_list] == ["2026-11-19", "2024-10-25"]
 
 
 @pytest.mark.asyncio

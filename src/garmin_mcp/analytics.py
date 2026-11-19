@@ -19,7 +19,7 @@ from typing import Any
 
 from mcp.server.fastmcp import Context
 
-from garmin_mcp.client_resolver import get_client, get_user_id
+from garmin_mcp.client_resolver import get_client, get_user_id, is_remote_mode
 from garmin_mcp.times import first_day_of_week, local_today, week_start
 from garmin_mcp.units import format_hours
 
@@ -848,8 +848,18 @@ def _report_store_path(ctx=None) -> Path:
     redeploy as the sessions do; the container's home directory does not. In
     stdio mode there is only one user, and the store is a file in the home
     directory. GARMIN_REPORTS_PATH overrides both.
+
+    Fails closed: on the remote server a caller who cannot be identified gets
+    an error, never the single store the stdio server uses, which every remote
+    user would then share.
     """
-    return _report_store_path_for(get_user_id(ctx))
+    user_id = get_user_id(ctx)
+    if user_id is None and is_remote_mode():
+        raise RuntimeError(
+            "Could not identify the signed-in user, and saved reports are kept per user. "
+            "Reconnect the connector and try again."
+        )
+    return _report_store_path_for(user_id)
 
 
 def _report_store_path_for(user_id: str | None) -> Path:
