@@ -5,6 +5,23 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Weekly tools say which week they mean; the remote server can withhold tools — 2026-11-19
+
+- **`get_weekly_steps` and `get_weekly_stress` give `week_end`** and say that
+  Garmin's weeks there are 7-day spans counted back from `end_date` (for
+  Thursday 2026-11-19 the latest runs Friday 2026-11-13 to Thursday
+  2026-11-19), checked against a live account.
+- **`get_weekly_intensity_minutes` gives `week_end` and marks the unfinished
+  week** (`partial`, `days_counted`): its weeks are calendar weeks, the ones
+  Garmin counts the weekly goal over (Monday to Sunday on the live account
+  checked), so the current week's total is not read against a full week's
+  goal.
+- **The remote server reads `GARMIN_DISABLED_TOOLS`**, the variable the stdio
+  server already reads: the tools it names are not offered, so their
+  descriptions cost no context (the women's health tools on an account they
+  do not apply to, say). A name that matches no tool is logged, not fatal, so
+  a typo cannot stop a deploy; `REMOTE_EXCLUDED_TOOLS` still fails closed.
+
 ## Pull requests merge themselves on green checks — 2026-11-19
 
 - **CLAUDE.md:** every PR a session opens gets auto-merge turned on, so it lands

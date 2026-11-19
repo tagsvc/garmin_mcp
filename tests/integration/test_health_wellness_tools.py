@@ -1823,3 +1823,36 @@ async def test_stress_summary_counts_a_reading_of_zero_as_rest(app_with_health_w
     data = json.loads(result[0][0].text)
     assert data["data_points_count"] == 3
     assert data["rest_percent"] == 66.7
+
+
+@pytest.mark.asyncio
+async def test_weekly_steps_name_each_spans_last_day(app_with_health_wellness, mock_garmin_client):
+    """Garmin's weekly steps are 7-day spans counted back from end_date."""
+    mock_garmin_client.get_weekly_steps.return_value = [
+        {"calendarDate": "2026-11-13", "values": {"totalSteps": 70000}},
+    ]
+
+    result = await app_with_health_wellness.call_tool(
+        "get_weekly_steps", {"end_date": "2026-11-19", "weeks": 1}
+    )
+
+    week = json.loads(result[0][0].text)["weekly_data"][0]
+    assert (week["week_start"], week["week_end"]) == ("2026-11-13", "2026-11-19")
+
+
+@pytest.mark.asyncio
+async def test_the_unfinished_intensity_week_is_marked_partial(app_with_health_wellness, mock_garmin_client):
+    """Intensity minutes come in calendar weeks; Thursday's week has 4 days in."""
+    mock_garmin_client.get_weekly_intensity_minutes.return_value = [
+        {"calendarDate": "2026-11-09", "weeklyGoal": 400, "moderateValue": 200, "vigorousValue": 100},
+        {"calendarDate": "2026-11-16", "weeklyGoal": 400, "moderateValue": 60, "vigorousValue": 20},
+    ]
+
+    result = await app_with_health_wellness.call_tool(
+        "get_weekly_intensity_minutes", {"end_date": "2026-11-19", "weeks": 2}
+    )
+
+    current, last = json.loads(result[0][0].text)["weekly_data"]
+    assert (current["week_start"], current["week_end"]) == ("2026-11-16", "2026-11-22")
+    assert current["partial"] is True and current["days_counted"] == 4
+    assert "partial" not in last and last["week_end"] == "2026-11-15"

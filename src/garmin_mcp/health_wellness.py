@@ -1059,6 +1059,15 @@ def _label_body_composition(payload: Any, unit_system: Optional[str] = None) -> 
             entry["measuredAtLocal"] = labelled["measured_at_local"]
     return payload
 
+def _week_end(week_start: Any) -> Optional[str]:
+    """The last day of the 7-day week starting on week_start (YYYY-MM-DD)."""
+    try:
+        start = datetime.date.fromisoformat(str(week_start)[:10])
+    except (TypeError, ValueError):
+        return None
+    return (start + datetime.timedelta(days=6)).isoformat()
+
+
 def register_tools(app):
     """Register all health and wellness tools with the MCP server app"""
 
@@ -2401,6 +2410,9 @@ def register_tools(app):
         """Get weekly step data aggregates
 
         Returns weekly step totals for the specified number of weeks ending at end_date.
+        Garmin's "weeks" here are 7-day spans counted back from end_date, not
+        calendar weeks: for end_date Thursday 2026-11-19 the latest runs from
+        Friday 2026-11-13 (week_start) to Thursday 2026-11-19 (week_end).
 
         Distances in meters get *_miles (statute) or *_km (metric) companions.
 
@@ -2420,6 +2432,7 @@ def register_tools(app):
                 values = week.get("values", {})
                 week_entry = {
                     "week_start": week.get("calendarDate"),
+                    "week_end": _week_end(week.get("calendarDate")),
                     "total_steps": values.get("totalSteps"),
                     "average_steps": values.get("averageSteps"),
                     "total_distance_meters": values.get("totalDistance"),
@@ -2453,6 +2466,9 @@ def register_tools(app):
         """Get weekly stress data aggregates
 
         Returns weekly stress values for the specified number of weeks ending at end_date.
+        Garmin's "weeks" here are 7-day spans counted back from end_date, not
+        calendar weeks: for end_date Thursday 2026-11-19 the latest runs from
+        Friday 2026-11-13 (week_start) to Thursday 2026-11-19 (week_end).
 
         Args:
             end_date: End date in YYYY-MM-DD format
@@ -2469,6 +2485,7 @@ def register_tools(app):
             for week in weekly_data:
                 week_entry = {
                     "week_start": week.get("calendarDate"),
+                    "week_end": _week_end(week.get("calendarDate")),
                     "stress_value": week.get("value"),
                 }
                 # Remove None values
@@ -2500,6 +2517,12 @@ def register_tools(app):
         figure to compare against weekly_goal; moderate_minutes and
         vigorous_minutes are the raw, unweighted minutes.
 
+        Unlike weekly steps and stress, these are calendar weeks, the weeks
+        Garmin Connect counts the weekly goal over (week_start to week_end).
+        The week holding end_date is usually unfinished: it is marked
+        partial, with days_counted, so its total is not read against a full
+        week's goal.
+
         Args:
             end_date: End date in YYYY-MM-DD format
             weeks: Number of weeks to fetch (default 4, max 52)
@@ -2519,8 +2542,10 @@ def register_tools(app):
             # Curate the weekly intensity data (API returns a list)
             curated_weeks = []
             for week in weekly_data:
+                week_end = _week_end(week.get("calendarDate"))
                 week_entry = {
                     "week_start": week.get("calendarDate"),
+                    "week_end": week_end,
                     "weekly_goal": week.get("weeklyGoal"),
                     "moderate_minutes": week.get("moderateValue"),
                     "vigorous_minutes": week.get("vigorousValue"),
@@ -2529,6 +2554,12 @@ def register_tools(app):
                 moderate = week.get("moderateValue") or 0
                 vigorous = week.get("vigorousValue") or 0
                 week_entry["total_minutes"] = moderate + 2 * vigorous
+                if week_end is not None and week_end > end_date:
+                    week_entry["partial"] = True
+                    week_entry["days_counted"] = (
+                        datetime.date.fromisoformat(end_date)
+                        - datetime.date.fromisoformat(week["calendarDate"])
+                    ).days + 1
 
                 # Remove None values
                 week_entry = {k: v for k, v in week_entry.items() if v is not None}

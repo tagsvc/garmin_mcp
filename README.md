@@ -151,6 +151,7 @@ Read by `src/garmin_mcp/config.py` and `remote.py`:
 | `GARMIN_MCP_CALL_TIMEOUT` | `90` | Seconds before a stalled Garmin request is abandoned with a retry-able error; `0` disables the bound. |
 | `GARMIN_REPORTS_PATH` | `garmin_mcp_reports.json` beside the sessions directory (`/data`) | Saved analytics reports, one file per user beside this path, so they survive redeploys with the sessions. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` shows why garminconnect could not load or refresh a session. |
+| `GARMIN_DISABLED_TOOLS` | *(none)* | Comma-separated tools the server withholds, e.g. the women's health tools on an account they do not apply to: `get_menstrual_data_for_date,get_menstrual_calendar_data,get_pregnancy_summary`. A withheld tool is not offered at all, so its description costs no context. A name that matches no tool is logged and ignored. |
 
 ### Signing in
 
@@ -602,8 +603,8 @@ must match the activity's recorded active sets.
 
 By default `garmin-mcp` registers ~183 tools, a lot of context for a model to
 carry in every session. Three optional variables narrow that. They apply to
-`garmin-mcp` (stdio and its HTTP transports) only; the remote server always
-serves its full set.
+`garmin-mcp` (stdio and its HTTP transports); the remote server reads
+`GARMIN_DISABLED_TOOLS` only (see Configuration).
 
 | Variable | Effect |
 |---|---|
