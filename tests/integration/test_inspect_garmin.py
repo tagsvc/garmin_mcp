@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 from mcp.server.fastmcp import FastMCP
 
-from garmin_mcp import _GarminProxy, payload_recording, profile_settings, remote
+from garmin_mcp import _GarminProxy, diagnostics, payload_recording, profile_settings, remote
 from garmin_mcp.client_resolver import _ResolvingGarminProxy, get_client, set_global_client
 
 D = "2026-10-30"
@@ -240,3 +240,44 @@ def test_the_recording_wrapper_is_never_a_settings_cache_key():
     profile_settings.profile_settings(garmin)
 
     garmin.get_userprofile_settings.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_too_many_find_matches_are_summarised_as_valid_json(app, garmin):
+    """find can pick keys whose values are whole series; the result is still
+    JSON, with oversized values replaced by their size."""
+    garmin.connectapi.return_value = {
+        f"sleepSeries{n}": [{"level": i} for i in range(400)] for n in range(20)
+    }
+
+    data = await _inspect(app, endpoint="/wellness-service/wellness/dailySleepData/x", find="sleep")
+
+    matches = data["garmin_replies"][0]["matches"]
+    assert matches[0]["value"]["truncated"] is True
+    assert matches[0]["path"] == "sleepSeries0"
+    assert "narrow them with find" in data["note"]
+
+
+@pytest.mark.asyncio
+async def test_find_lists_at_most_the_match_limit(app, garmin):
+    """The limit holds within one object, not only across nested ones."""
+    garmin.connectapi.return_value = {f"k{n}": n for n in range(5000)}
+
+    data = await _inspect(app, endpoint="/x-service/x", fields=[f"k{n}" for n in range(5000)])
+
+    entry = data["garmin_replies"][0]
+    assert len(entry["matches"]) + entry.get("matches_not_shown", 0) == diagnostics.MAX_MATCHES
+
+
+def test_a_result_that_cannot_fit_lists_each_call_by_size():
+    payload = {
+        "tool": "get_stats",
+        "garmin_replies": [
+            {"call": f"get_stats_{n}", "reply": {"steps": "x" * 4000}} for n in range(20)
+        ],
+    }
+
+    data = json.loads(diagnostics._capped(payload))
+
+    assert all("reply" not in entry and entry["size_chars"] > 0 for entry in data["garmin_replies"])
+    assert "Too much to return" in data["note"]

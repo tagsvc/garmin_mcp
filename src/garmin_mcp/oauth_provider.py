@@ -166,6 +166,43 @@ class _PendingMfa:
         return time.time() - self.created_at > _MFA_TTL
 
 
+def _email_key(email: str | None) -> str:
+    """A Garmin email as users are stored and matched: trimmed, lowercased the
+    way the allowlist compares (Python's ``str.lower``, Unicode included)."""
+    return (email or "").strip().lower()
+
+
+def _merge_case_variant_users(conn) -> list[tuple[str, str]]:
+    """Make each Garmin email one user, stored as ``_email_key`` gives it.
+
+    Users whose emails differ only by case or surrounding spaces are one
+    account. The oldest of them is kept; the others' authorization codes,
+    access tokens and refresh tokens move to it, so a claude.ai connection
+    signed in under any of them keeps working, and their rows are deleted.
+    Returns (kept id, merged id) pairs; the caller merges what is stored
+    outside the database (the Garmin session, saved reports). Idempotent.
+    """
+    rows = conn.execute(
+        "SELECT id, garmin_email FROM users ORDER BY created_at, rowid"
+    ).fetchall()
+    groups: dict[str, list[str]] = {}
+    for row in rows:
+        groups.setdefault(_email_key(row["garmin_email"]), []).append(row["id"])
+
+    merged: list[tuple[str, str]] = []
+    for key, ids in groups.items():
+        keep_id, others = ids[0], ids[1:]
+        for other in others:
+            for table in ("auth_codes", "access_tokens", "refresh_tokens"):
+                conn.execute(
+                    f"UPDATE {table} SET user_id = ? WHERE user_id = ?", (keep_id, other)
+                )
+            conn.execute("DELETE FROM users WHERE id = ?", (other,))
+            merged.append((keep_id, other))
+        conn.execute("UPDATE users SET garmin_email = ? WHERE id = ?", (key, keep_id))
+    return merged
+
+
 class GarminOAuthProvider(
     OAuthAuthorizationServerProvider[AuthorizationCode, RefreshToken, AccessToken]
 ):
@@ -227,7 +264,9 @@ class GarminOAuthProvider(
             return JSONResponse({"error": "Too many requests."}, status_code=429)
 
         provided = request.headers.get("X-Import-Secret", "")
-        if not hmac.compare_digest(provided, self.import_secret):
+        # Compared as bytes: compare_digest refuses str holding non-ASCII
+        # characters, which a header can carry.
+        if not hmac.compare_digest(provided.encode("utf-8"), self.import_secret.encode("utf-8")):
             logger.warning("Rejected /import-token with bad or missing secret")
             return JSONResponse({"error": "Unauthorized."}, status_code=401)
 
@@ -353,9 +392,18 @@ class GarminOAuthProvider(
                             (_hash_token(tok), tok),
                         )
 
+            merged = _merge_case_variant_users(conn)
             conn.commit()
         finally:
             conn.close()
+
+        for keep_id, merged_id in merged:
+            logger.info("Merged user %s into %s: same Garmin email", merged_id, keep_id)
+            if self.session_manager:
+                self.session_manager.merge_sessions(keep_id, merged_id)
+            from garmin_mcp.analytics import merge_saved_reports
+
+            merge_saved_reports(keep_id, merged_id)
 
     # ─── User helpers ─────────────────────────────────────────────────
 
@@ -365,16 +413,14 @@ class GarminOAuthProvider(
         The allowlist ignores case, so the user must too: otherwise the same
         account signed in as "Me@x.com" and imported as "me@x.com" becomes two
         users, and an import lands on the one the claude.ai connection does not
-        use. A row stored in another case is still found; where case variants
-        already exist, the oldest is the account's user.
+        use. Emails are stored as ``_email_key`` gives them, which ``_init_db``
+        applies to every stored row, so an exact match finds the user.
         """
-        email = (garmin_email or "").strip()
+        email = _email_key(garmin_email)
         conn = self._get_conn()
         try:
             row = conn.execute(
-                "SELECT id FROM users WHERE lower(garmin_email) = ? "
-                "ORDER BY created_at, rowid LIMIT 1",
-                (email.lower(),),
+                "SELECT id FROM users WHERE garmin_email = ?", (email,)
             ).fetchone()
             if row:
                 return row["id"]
@@ -382,7 +428,7 @@ class GarminOAuthProvider(
             user_id = secrets.token_hex(16)
             conn.execute(
                 "INSERT INTO users (id, garmin_email) VALUES (?, ?)",
-                (user_id, email.lower()),
+                (user_id, email),
             )
             conn.commit()
             return user_id

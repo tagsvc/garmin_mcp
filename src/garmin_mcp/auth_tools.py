@@ -27,6 +27,7 @@ from garmin_mcp.token_utils import (
     get_token_info,
     get_token_path,
     resolve_path,
+    symlink_in_token_path,
     without_token_env,
 )
 
@@ -142,6 +143,25 @@ def register_tools(app):
                 indent=2,
             )
 
+        # garminconnect refuses to save tokens through a symlink, so a linked
+        # path is refused here, before the login and any one-time code are
+        # spent on tokens that could not be kept.
+        link = symlink_in_token_path(path)
+        if link:
+            return json.dumps(
+                {
+                    "status": "failed",
+                    "message": (
+                        f"The token path goes through a symlink ({link}), and "
+                        "garminconnect refuses symlinked token paths. Point token_path "
+                        f"or GARMINTOKENS at the real directory: {os.path.realpath(path)}"
+                    ),
+                    "email": login_email,
+                    "token_path": path,
+                },
+                indent=2,
+            )
+
         try:
             # Exchange the credentials on the client and save the tokens before
             # anything loads the profile. Garmin.login loads it before it
@@ -229,13 +249,27 @@ def _export_base64(token_json: str, path: str) -> str | None:
 
     Other garminconnect tools read it, and the remote server's token import
     accepts it; this server loads only the token directory, so a failure is a
-    warning, not a failed login.
+    warning, not a failed login. Like garminconnect with its own token files,
+    it never writes through a symlink: a planted link would send the tokens
+    wherever it points.
     """
+    link = symlink_in_token_path(path)
+    if link:
+        return (
+            f"The optional base64 copy at '{path}' was not written: the path goes "
+            f"through a symlink ({link})."
+        )
     try:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as token_file:
-            # Restrict the file before any token is written to it.
-            os.chmod(path, 0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        with os.fdopen(descriptor, "w") as token_file:
+            # An existing file keeps its mode through O_CREAT; restrict it
+            # before any token is written to it.
+            if hasattr(os, "fchmod"):
+                os.fchmod(token_file.fileno(), 0o600)
+            else:
+                os.chmod(path, 0o600)
             token_file.write(base64.b64encode(token_json.encode()).decode())
     except OSError as e:
         return f"The optional base64 copy at '{path}' could not be written: {e}"

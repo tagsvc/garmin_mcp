@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import math
 import os
 from collections.abc import Callable
@@ -22,6 +23,8 @@ from garmin_mcp.client_resolver import get_client, get_user_id
 from garmin_mcp.times import local_today
 from garmin_mcp.units import format_hours
 
+
+logger = logging.getLogger(__name__)
 
 garmin_client = None
 
@@ -690,8 +693,12 @@ def _report_store_path(ctx=None) -> Path:
     stdio mode there is only one user, and the store is a file in the home
     directory. GARMIN_REPORTS_PATH overrides both.
     """
+    return _report_store_path_for(get_user_id(ctx))
+
+
+def _report_store_path_for(user_id: str | None) -> Path:
+    """The saved-report store of one user (None: the stdio server's)."""
     configured = os.getenv("GARMIN_REPORTS_PATH")
-    user_id = get_user_id(ctx)
     if configured:
         base = Path(os.path.expanduser(configured))
     elif user_id:
@@ -704,6 +711,27 @@ def _report_store_path(ctx=None) -> Path:
         return base
     # Server-generated hex id, so it is safe as a path component.
     return base.with_name(f"{base.stem}.{user_id}{base.suffix}")
+
+
+def merge_saved_reports(keep_id: str, merged_id: str) -> None:
+    """Fold one remote user's saved reports into another's, for users being
+    merged. A report name both hold keeps keep_id's definition; merged_id's
+    store is removed. A store that cannot be read is left in place."""
+    source = _report_store_path_for(merged_id)
+    if not source.exists():
+        return
+    target = _report_store_path_for(keep_id)
+    try:
+        incoming = json.loads(source.read_text())
+        existing = json.loads(target.read_text()) if target.exists() else {}
+    except (OSError, ValueError):
+        logger.warning("Could not merge saved reports %s into %s", source, target, exc_info=True)
+        return
+    if not isinstance(incoming, dict) or not isinstance(existing, dict):
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({**incoming, **existing}, indent=2, sort_keys=True))
+    source.unlink()
 
 
 def _load_saved_reports(ctx=None) -> dict[str, dict[str, Any]]:

@@ -364,6 +364,18 @@ coverage.
 - **Per-user state is scoped by `user_id` in remote mode.** The analytics
   saved-report store is per-user; a shared file lets one authenticated user read
   or overwrite another's definitions.
+- **One user per Garmin email.** Emails are stored trimmed and lowercased with
+  Python's `str.lower`, as the allowlist compares them, and looked up exactly.
+  At startup `_merge_case_variant_users` folds users whose emails differ only
+  by case into the oldest: their tokens move to it, `SessionManager.merge_sessions`
+  keeps the newer Garmin session, and `analytics.merge_saved_reports` combines
+  saved reports. Pinned by `tests/unit/test_token_import.py`.
+- **Session work is locked per user.** `SessionManager` holds a user's own lock
+  across a restore (a live Garmin login), a session write or a removal, and its
+  shared lock only around the cache, so one user's slow restore never blocks
+  another's calls. Replacing or removing a session first stops the cached
+  client saving token refreshes (`_stop_token_writes`), so it cannot write the
+  old tokens back. Pinned by `tests/unit/test_session_manager.py`.
 - **The browser login path returns ONE generic error** (`_GENERIC_LOGIN_ERROR`)
   for both "not allowlisted" and "bad credentials" — distinct messages let an
   attacker enumerate allowlist membership by differencing. Log the specific
