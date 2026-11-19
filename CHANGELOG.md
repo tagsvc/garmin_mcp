@@ -5,6 +5,16 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Remote logs are labelled by severity on Railway — 2026-11-19
+
+- **The remote server sends INFO and below to stdout and WARNING and above to
+  stderr.** Everything went to stderr before, Python logging's and uvicorn's
+  default, and Railway labels every stderr line an error, so each startup line
+  and each request line showed as an error. The startup banner moves to stdout;
+  the configuration error and the missing-allowlist warning stay on stderr.
+  uvicorn runs without its own log config, so its lines follow the same split.
+  The stdio server is unchanged: its stdout carries the MCP protocol.
+
 ## Weekly tools say which week they mean; the remote server can withhold tools — 2026-11-19
 
 - **`get_weekly_steps` and `get_weekly_stress` give `week_end`** and say that
