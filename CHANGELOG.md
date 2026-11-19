@@ -5,6 +5,33 @@ All notable changes **this fork** makes relative to its upstream base,
 invariants behind these and the upstream-sync procedure. The authoritative diff is
 `git diff upstream/main...main` once the upstream remote is wired.
 
+## Analytics: today is unfinished; weeks follow Garmin's first day — 2026-11-19
+
+- **Today's still-accumulating metrics wait until the day is over.** Steps,
+  active calories, average stress, activity duration, recovery pressure and
+  resting heart rate (which Garmin revises through the day) were counted for
+  today as if the day were complete: at 8 AM, 900 steps against a typical
+  9,000 was flagged as an anomaly every morning, and pulled the 7-day steps
+  average down by about 1,160. They are now left out of baselines,
+  anomalies, correlations, averages and custom reports until the date rolls
+  over in the profile's time zone. Overnight metrics (sleep score and
+  duration, overnight HRV, Training Readiness, Body Battery high) are final
+  once the athlete wakes and count for today. `get_health_baselines` judges
+  an accumulating metric on its last full day (`latest_date`) and shows
+  today's value as `today_so_far`; the tools say so in `today_partial`.
+- **The weekly review gives three views of the week.** Beside the rolling 7
+  days against the 7 before (`comparisons`, now dated in `rolling_7_days`),
+  `garmin_week` gives this week so far against the same days of the week
+  before (like for like: a Wednesday is never three days against seven) and
+  the last full week against the one before it, by the profile's first day
+  of the week.
+- **Weeks follow Garmin Connect's "First Day of the Week"** (Monday,
+  Saturday or Sunday, from the profile's `firstDayOfWeek`; Monday when it
+  cannot be read). `run_custom_health_report` groups weeks by it and labels
+  each by its first date (`2026-11-16`) instead of an ISO week
+  (`2026-W47`); the Garmin Coach request sends it in place of a fixed
+  `monday`.
+
 ## Review of the rest of the code: twenty-two fixes — 2026-11-19
 
 A review of every source file the sign-in review did not cover found

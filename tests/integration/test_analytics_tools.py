@@ -243,3 +243,102 @@ def test_the_weekly_review_takes_calendar_weeks_across_a_gap():
     steps = review["comparisons"]["steps"]
     assert steps["current_7d_avg"] == 1000
     assert steps["previous_7d_avg"] == 9000
+
+
+# --- today's unfinished day and Garmin's week ------------------------------------
+
+def _days(first: str, count: int, **values):
+    start = dt.date.fromisoformat(first)
+    return [
+        _row((start + dt.timedelta(days=n)).isoformat(), **values) for n in range(count)
+    ]
+
+
+def test_todays_steps_are_judged_on_yesterday_with_today_so_far():
+    rows = _days("2026-10-20", 30, steps=9000, sleep_score=80)
+    rows[-1].update(steps=900, sleep_score=40, partial_day=True)
+
+    payload = analytics._baseline_payload(rows, baseline_window=28)
+
+    steps = payload["metrics"]["steps"]
+    assert steps["latest"] == 9000 and steps["latest_date"] == rows[-2]["date"]
+    assert steps["today_so_far"] == 900
+    # Overnight metrics are final once the athlete wakes: today counts.
+    sleep = payload["metrics"]["sleep_score"]
+    assert sleep["latest"] == 40 and "latest_date" not in sleep
+    assert payload["today_partial"]["date"] == rows[-1]["date"]
+
+
+def test_a_morning_step_count_is_not_an_anomaly():
+    rows = _days("2026-10-20", 30, steps=9000, sleep_score=80)
+    for n, row in enumerate(rows):
+        row["steps"] += (n % 3) * 500
+        row["sleep_score"] += n % 3
+    rows[-1].update(steps=900, sleep_score=40, partial_day=True)
+
+    flagged = {(a["date"], a["metric"]) for a in analytics._anomalies(rows, 21, 1.5)}
+
+    assert (rows[-1]["date"], "steps") not in flagged
+    assert (rows[-1]["date"], "sleep_score") in flagged
+
+
+def test_todays_steps_stay_out_of_the_weekly_averages():
+    rows = _days("2026-10-20", 30, steps=9000)
+    rows[-1].update(steps=900, partial_day=True)
+
+    review = analytics._weekly_review(rows)
+
+    assert review["comparisons"]["steps"]["current_7d_avg"] == 9000
+    assert review["today_partial"]["still_accumulating"]
+
+
+@pytest.mark.parametrize(
+    "first_day, this_week, last_week",
+    [
+        ("monday", ("2026-11-16", "2026-11-19"), ("2026-11-09", "2026-11-15")),
+        ("sunday", ("2026-11-15", "2026-11-19"), ("2026-11-08", "2026-11-14")),
+        ("saturday", ("2026-11-14", "2026-11-19"), ("2026-11-07", "2026-11-13")),
+    ],
+)
+def test_the_garmin_week_follows_the_first_day_of_the_week(first_day, this_week, last_week):
+    """Thursday 2026-11-19: this week so far against the same days a week
+    earlier, and the last full week."""
+    rows = _days("2026-10-16", 35, steps=9000)
+
+    weeks = analytics._weekly_review(rows, first_day=first_day)["garmin_week"]
+
+    so_far = weeks["this_week_so_far"]
+    assert (so_far["current"]["start"], so_far["current"]["end"]) == this_week
+    earlier = [
+        (dt.date.fromisoformat(d) - dt.timedelta(days=7)).isoformat() for d in this_week
+    ]
+    assert (so_far["compared_with"]["start"], so_far["compared_with"]["end"]) == tuple(earlier)
+    full = weeks["last_full_week"]
+    assert (full["current"]["start"], full["current"]["end"]) == last_week
+    assert full["current"]["days"] == 7
+    assert weeks["first_day_of_week"] == first_day
+
+
+def test_custom_report_weeks_start_on_the_profiles_first_day():
+    rows = _days("2026-11-14", 6, steps=1000)  # Saturday to Thursday
+    definition = {"metrics": ["steps"], "group_by": "week", "aggregation": "sum", "days": 6}
+
+    sunday = analytics._custom_report(rows, definition, False, first_day="sunday")
+    monday = analytics._custom_report(rows, definition, False, first_day="monday")
+
+    assert [(r["group"], r["days"]) for r in sunday["rows"]] == [("2026-11-08", 1), ("2026-11-15", 5)]
+    assert [(r["group"], r["days"]) for r in monday["rows"]] == [("2026-11-09", 2), ("2026-11-16", 4)]
+    assert sunday["definition"]["first_day_of_week"] == "sunday"
+
+
+def test_daily_rows_mark_today_partial(monkeypatch):
+    monkeypatch.setattr(analytics, "local_today", lambda _client: dt.date(2026, 11, 19))
+    client = Mock()
+    client.get_stats = Mock(return_value={"totalSteps": 900})
+    client.get_sleep_data = Mock(return_value={})
+    client.get_training_readiness = Mock(return_value=[])
+    client.get_activities_by_date = Mock(return_value=[])
+
+    rows = analytics._daily_rows(client, end_date=None, days=3)
+
+    assert [row.get("partial_day", False) for row in rows] == [False, False, True]

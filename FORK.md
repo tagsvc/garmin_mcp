@@ -376,6 +376,17 @@ coverage.
   baseline. A day with no activity is zero on every activity metric when the
   activity list was fetched, unknown when it was not. Pinned by
   `tests/integration/test_analytics_tools.py`.
+- **Today's still-accumulating metrics are partial.** `analytics._daily_rows`
+  marks today's row (`partial_day`); `PARTIAL_DAY_METRICS` (steps, active
+  calories, resting heart rate, average stress, activity duration, recovery
+  pressure) on it are shown but never counted (`_counted`) until the day is
+  over. Overnight metrics count for today. Pinned by
+  `tests/integration/test_analytics_tools.py`.
+- **Weeks follow the profile's first day of the week.** `times.first_day_of_week`
+  reads `firstDayOfWeek` (monday, saturday or sunday; Monday if unreadable)
+  for the custom report's weeks, the weekly review's `garmin_week` and the
+  Garmin Coach request. Do not reintroduce ISO weeks or a fixed `monday`.
+  Pinned by `tests/unit/test_times.py` and the analytics and workouts tests.
 - **A runtime login reaches every tool.** On the stdio server every module's
   `garmin_client` and the resolver's global are one `_GarminProxy` over
   `_PendingGarminClient`; `login_to_garmin` activates its client there

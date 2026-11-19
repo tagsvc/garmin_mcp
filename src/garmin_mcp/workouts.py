@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import Context
 from garmin_mcp.client_resolver import get_client
+from garmin_mcp.times import first_day_of_week
 from garmin_mcp.units import account_unit_system, add_account_units, parse_pace
 
 logger = logging.getLogger(__name__)
@@ -907,10 +908,13 @@ def _is_already_scheduled(workout_id: int, calendar_date: str) -> bool:
 def _get_garmin_coach_workouts(calendar_date: str) -> str:
     """Return curated workouts from the active Garmin Coach/training plan."""
     _validate_date(calendar_date, "calendar_date")
+    # The plan's weeks as Garmin Connect shows them: from the profile's first
+    # day of the week (monday, saturday or sunday), Monday if it is unknown.
+    first_day = first_day_of_week(garmin_client)
     query = {
         "query": (
             f'query{{trainingPlanScalar(calendarDate:"{calendar_date}", '
-            f'lang:"en-US", firstDayOfWeek:"monday")}}'
+            f'lang:"en-US", firstDayOfWeek:"{first_day}")}}'
         )
     }
     result = garmin_client.query_garmin_graphql(query)

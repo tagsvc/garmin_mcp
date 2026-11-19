@@ -20,7 +20,7 @@ from typing import Any
 from mcp.server.fastmcp import Context
 
 from garmin_mcp.client_resolver import get_client, get_user_id
-from garmin_mcp.times import local_today
+from garmin_mcp.times import first_day_of_week, local_today, week_start
 from garmin_mcp.units import format_hours
 
 
@@ -54,6 +54,13 @@ def register_tools(app):
     ) -> str:
         """Compare current health metrics against personal rolling baselines.
 
+        Each metric's latest value is judged against the days before it. Today
+        is unfinished: steps, active calories, resting heart rate, average
+        stress, activity duration and recovery pressure keep changing all day,
+        so for those the latest is the last full day (latest_date) and today's
+        value is today_so_far; overnight metrics (sleep, HRV, readiness, Body
+        Battery high) count for today. today_partial names the day.
+
         Values in decimal hours (sleep_hours: 6.37 is 6 h 22 min) also get h:mm
         text (latest_hm, baseline_avg_hm, prior_avg_hm).
 
@@ -82,6 +89,10 @@ def register_tools(app):
         z_threshold: float = 1.5,
     ) -> str:
         """Find unusual days compared with the user's own recent baseline.
+
+        Today's still-accumulating metrics (steps, active calories, resting
+        heart rate, average stress, activity duration, recovery pressure) are
+        not judged until the day is over; its overnight metrics are.
 
         An hours metric also gets value_hm and baseline_avg_hm (h:mm text).
 
@@ -148,17 +159,29 @@ def register_tools(app):
     async def get_weekly_health_review(ctx: Context, end_date: str | None = None) -> str:
         """Create a compact weekly review from Garmin history.
 
-        The review compares the last 7 days against the prior 7 days, includes
-        unusual days, and highlights the strongest delayed metric relationships.
+        Three views of the week, each naming its dates:
+        - comparisons (rolling_7_days): the 7 days ending on the latest day
+          with data against the 7 before; always two full spans.
+        - garmin_week.this_week_so_far: the current week by the profile's
+          first day of the week (Garmin Connect's setting), against the same
+          days of the week before, like for like.
+        - garmin_week.last_full_week: the last complete week against the one
+          before it.
+        Averages are per day. Today's still-accumulating metrics (steps,
+        active calories, resting heart rate, average stress, activity
+        duration, recovery pressure) are left out until the day is over
+        (today_partial); its overnight metrics count. It also lists unusual
+        days and the strongest delayed metric relationships.
 
         Args:
             end_date: Last date of the week in YYYY-MM-DD format. Defaults to today.
         """
         try:
-            rows = _daily_rows(get_client(ctx), end_date=end_date, days=35)
+            client = get_client(ctx)
+            rows = _daily_rows(client, end_date=end_date, days=35)
             if len(rows) < 7:
                 return "Not enough health data found for a weekly review"
-            review = _weekly_review(rows)
+            review = _weekly_review(rows, first_day=first_day_of_week(client))
             return json.dumps(review, indent=2)
         except Exception as e:
             return f"Error building weekly health review: {str(e)}"
@@ -206,8 +229,11 @@ def register_tools(app):
             end_date: Last date to include in YYYY-MM-DD format. Defaults to today.
             days: Number of days to fetch, capped at 180.
             metrics: Comma-separated metric keys. Use list_health_report_metrics.
-            group_by: One of date, week, or month.
-            aggregation: One of avg, sum, min, max, or latest.
+            group_by: One of date, week, or month. Weeks start on the profile's
+                first day of the week (Garmin Connect's setting) and are
+                labelled by their first date.
+            aggregation: One of avg, sum, min, max, or latest. Today's
+                still-accumulating metrics are left out until the day is over.
             saved_report_name: Optional saved report name to run instead of arguments.
             include_daily_rows: Include compact daily rows used for the report.
         """
@@ -221,12 +247,18 @@ def register_tools(app):
                 days=days,
                 end_date=end_date,
             )
+            client = get_client(ctx)
             rows = _daily_rows(
-                get_client(ctx),
+                client,
                 end_date=definition.get("end_date"),
                 days=int(definition["days"]),
             )
-            report = _custom_report(rows, definition, include_daily_rows=include_daily_rows)
+            report = _custom_report(
+                rows,
+                definition,
+                include_daily_rows=include_daily_rows,
+                first_day=first_day_of_week(client),
+            )
             return json.dumps(report, indent=2)
         except Exception as e:
             return f"Error running custom health report: {str(e)}"
@@ -295,7 +327,8 @@ def _daily_rows(client: Any, end_date: str | None, days: int) -> list[dict[str, 
     safe_days = min(max(1, days), MAX_DAYS)
     # FORK: the profile zone's today, not the server's date -- UTC on Railway,
     # so tomorrow from 8 PM in New York, a day with no data yet.
-    end = _parse_date(end_date) if end_date else local_today(client)
+    today = local_today(client)
+    end = _parse_date(end_date) if end_date else today
     start = end - dt.timedelta(days=safe_days - 1)
     activities_by_date = _activity_totals(client, start, end)
     # A day with no activity is a rest day, zero on every activity metric, when
@@ -312,7 +345,10 @@ def _daily_rows(client: Any, end_date: str | None, days: int) -> list[dict[str, 
         sleep = _safe_call(lambda: client.get_sleep_data(date_text), default={})
         readiness = _safe_call(lambda: client.get_training_readiness(date_text), default=[])
         activity = (activities_by_date or {}).get(date_text, no_activity)
-        rows.append(_normalize_day(date_text, stats, sleep, readiness, activity))
+        row = _normalize_day(date_text, stats, sleep, readiness, activity)
+        if current == today:
+            row["partial_day"] = True
+        rows.append(row)
 
     return [row for row in rows if _has_signal(row)]
 
@@ -408,33 +444,34 @@ def _hm_key(metric: str) -> str:
 
 
 def _baseline_payload(rows: list[dict[str, Any]], baseline_window: int) -> dict[str, Any]:
-    """The latest day against the window of days before it.
+    """Each metric's latest counted value against the window of days before it.
 
-    The latest day is left out of the baseline it is compared with, as in
+    The judged day is left out of the baseline it is compared with, as in
     _anomalies: inside it, an outlier pulls the mean toward itself and widens
     the spread, so its own z-score reads smaller than it is. Windows are
     calendar days, so a day with no data shortens the sample, not the span.
+    A metric still accumulating today is judged on its last full day, with
+    today's value beside it as today_so_far.
     """
     latest = rows[-1]
-    latest_day = _parse_date(latest["date"])
     window = min(max(7, baseline_window), MAX_DAYS)
-    baseline_rows = _rows_between(
-        rows, latest_day - dt.timedelta(days=window), latest_day - dt.timedelta(days=1)
-    )
-    prior_rows = _rows_between(
-        rows,
-        latest_day - dt.timedelta(days=window * 2),
-        latest_day - dt.timedelta(days=window + 1),
-    )
     metrics: dict[str, dict[str, Any]] = {}
 
     for field, metadata in ANALYTIC_METRICS.items():
+        judged = next((row for row in reversed(rows) if _counted(row, field) is not None), latest)
+        day = _parse_date(judged["date"])
+        baseline_rows = _rows_between(
+            rows, day - dt.timedelta(days=window), day - dt.timedelta(days=1)
+        )
+        prior_rows = _rows_between(
+            rows, day - dt.timedelta(days=window * 2), day - dt.timedelta(days=window + 1)
+        )
         baseline_values = _values(baseline_rows, field)
-        latest_value = _number(latest.get(field))
+        latest_value = _counted(judged, field)
         prior_avg = _average(_values(prior_rows, field))
         baseline_avg = _average(baseline_values)
         baseline_std = _stddev(baseline_values)
-        metrics[field] = {
+        entry: dict[str, Any] = {
             "label": metadata["label"],
             "unit": metadata["unit"],
             "latest": _round(latest_value),
@@ -449,14 +486,23 @@ def _baseline_payload(rows: list[dict[str, Any]], baseline_window: int) -> dict[
             "direction": metadata["direction"],
             "sample_days": len(baseline_values),
         }
-        _add_hm(metrics[field], metadata["unit"], ("latest", "baseline_avg", "prior_avg"))
+        if judged["date"] != latest["date"]:
+            entry["latest_date"] = judged["date"]
+        so_far = _number(latest.get(field)) if latest.get("partial_day") else None
+        if so_far is not None and field in PARTIAL_DAY_METRICS:
+            entry["today_so_far"] = _round(so_far)
+        _add_hm(entry, metadata["unit"], ("latest", "baseline_avg", "prior_avg", "today_so_far"))
+        metrics[field] = entry
 
-    return {
+    payload: dict[str, Any] = {
         "window": _window(rows),
         "baseline_window_days": window,
         "latest_date": latest["date"],
         "metrics": metrics,
     }
+    if latest.get("partial_day"):
+        payload["today_partial"] = _partial_note(latest)
+    return payload
 
 
 def _anomalies(
@@ -470,7 +516,7 @@ def _anomalies(
         if len(history) < 7:
             continue
         for field, metadata in ANALYTIC_METRICS.items():
-            value = _number(row.get(field))
+            value = _counted(row, field)
             values = _values(history, field)
             avg = _average(values)
             std = _stddev(values)
@@ -512,8 +558,8 @@ def _lagged_correlations(rows: list[dict[str, Any]], max_lag_days: int) -> list[
                     later = by_date.get(later_date)
                     if later is None:
                         continue
-                    left_value = _number(row.get(left))
-                    right_value = _number(later.get(right))
+                    left_value = _counted(row, left)
+                    right_value = _counted(later, right)
                     if left_value is not None and right_value is not None:
                         pairs.append((left_value, right_value))
                 correlation = _pearson(pairs)
@@ -538,7 +584,7 @@ def _lagged_correlations(rows: list[dict[str, Any]], max_lag_days: int) -> list[
     return sorted(output, key=lambda item: abs(float(item["correlation"])), reverse=True)
 
 
-def _weekly_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _weekly_review(rows: list[dict[str, Any]], first_day: str = "monday") -> dict[str, Any]:
     # The seven calendar days ending on the latest day with data, and the
     # seven before them; a day with no data shortens a week, not shifts it.
     last = _parse_date(rows[-1]["date"])
@@ -564,13 +610,83 @@ def _weekly_review(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if delta is not None and abs(delta) > _material_delta(field):
             notes.append(_comparison_note(field, delta))
 
-    return {
+    review: dict[str, Any] = {
         "window": {"start": current[0]["date"], "end": current[-1]["date"], "days": len(current)},
+        "rolling_7_days": {
+            "current": _span(last - dt.timedelta(days=6), last),
+            "previous": _span(last - dt.timedelta(days=13), last - dt.timedelta(days=7)),
+        },
         "summary_notes": notes[:8],
         "comparisons": comparisons,
+        "garmin_week": _garmin_weeks(rows, last, first_day),
         "latest_baselines": baseline["metrics"],
         "notable_anomalies": anomalies,
         "lagged_relationships": correlations,
+    }
+    if rows[-1].get("partial_day"):
+        review["today_partial"] = _partial_note(rows[-1])
+    return review
+
+
+def _garmin_weeks(rows: list[dict[str, Any]], last: dt.date, first_day: str) -> dict[str, Any]:
+    """The week by Garmin's first day of the week: this week so far against the
+    same days of the week before (like for like, so a Wednesday is never three
+    days against seven), and the last full week against the one before it."""
+    start = week_start(last, first_day)
+    week = dt.timedelta(days=7)
+    return {
+        "first_day_of_week": first_day,
+        "this_week_so_far": _week_comparison(rows, (start, last), (start - week, last - week)),
+        "last_full_week": _week_comparison(
+            rows,
+            (start - week, start - dt.timedelta(days=1)),
+            (start - 2 * week, start - week - dt.timedelta(days=1)),
+        ),
+    }
+
+
+def _week_comparison(
+    rows: list[dict[str, Any]],
+    current: tuple[dt.date, dt.date],
+    previous: tuple[dt.date, dt.date],
+) -> dict[str, Any]:
+    current_rows = _rows_between(rows, *current)
+    previous_rows = _rows_between(rows, *previous)
+    comparisons: dict[str, dict[str, Any]] = {}
+    for field, metadata in ANALYTIC_METRICS.items():
+        current_avg = _average(_values(current_rows, field))
+        previous_avg = _average(_values(previous_rows, field))
+        delta = (
+            current_avg - previous_avg
+            if current_avg is not None and previous_avg is not None
+            else None
+        )
+        comparisons[field] = {
+            "label": metadata["label"],
+            "unit": metadata["unit"],
+            "current_avg": _round(current_avg),
+            "previous_avg": _round(previous_avg),
+            "delta": _round(delta),
+        }
+    return {
+        "current": _span(*current),
+        "compared_with": _span(*previous),
+        "comparisons": comparisons,
+    }
+
+
+def _span(first: dt.date, last: dt.date) -> dict[str, Any]:
+    return {"start": first.isoformat(), "end": last.isoformat(), "days": (last - first).days + 1}
+
+
+def _partial_note(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "date": row["date"],
+        "still_accumulating": sorted(PARTIAL_DAY_METRICS),
+        "note": (
+            "Today is not over: these metrics are shown so far but left out of "
+            "averages, baselines and anomaly checks until it is."
+        ),
     }
 
 
@@ -601,14 +717,17 @@ def _report_definition(
 
 
 def _custom_report(
-    rows: list[dict[str, Any]], definition: dict[str, Any], include_daily_rows: bool
+    rows: list[dict[str, Any]],
+    definition: dict[str, Any],
+    include_daily_rows: bool,
+    first_day: str = "monday",
 ) -> dict[str, Any]:
     metrics = _parse_metrics(",".join(definition["metrics"]))
     group_by = _parse_group(str(definition["group_by"]))
     aggregation = _parse_aggregation(str(definition["aggregation"]))
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
-        groups.setdefault(_report_group_key(row["date"], group_by), []).append(row)
+        groups.setdefault(_report_group_key(row["date"], group_by, first_day), []).append(row)
 
     report_rows: list[dict[str, Any]] = []
     for group, group_rows in sorted(groups.items()):
@@ -628,6 +747,7 @@ def _custom_report(
             "aggregation": aggregation,
             "days": int(definition["days"]),
             "end_date": definition.get("end_date"),
+            **({"first_day_of_week": first_day} if group_by == "week" else {}),
         },
         "window": _window(rows),
         "columns": ["group", "days", *metrics],
@@ -648,6 +768,8 @@ def _custom_report(
         result["daily_rows"] = []
         for row in rows:
             daily = {"date": row["date"], **{metric: row.get(metric) for metric in metrics}}
+            if row.get("partial_day"):
+                daily["partial_day"] = True
             for metric in metrics:
                 value = _number(daily.get(metric))
                 if ANALYTIC_METRICS[metric]["unit"] == "h" and value is not None:
@@ -656,13 +778,14 @@ def _custom_report(
     return result
 
 
-def _report_group_key(date_text: str, group_by: str) -> str:
+def _report_group_key(date_text: str, group_by: str, first_day: str = "monday") -> str:
+    """A row's group: its month, its week (labelled by the week's first date,
+    the week starting on the profile's first day of the week), or its date."""
     current = _parse_date(date_text)
     if group_by == "month":
         return current.strftime("%Y-%m")
     if group_by == "week":
-        year, week, _ = current.isocalendar()
-        return f"{year}-W{week:02d}"
+        return week_start(current, first_day).isoformat()
     return date_text
 
 
@@ -896,7 +1019,31 @@ _ACTIVITY_FIELDS = frozenset(
 
 
 def _values(rows: list[dict[str, Any]], field: str) -> list[float]:
-    return [value for value in (_number(row.get(field)) for row in rows) if value is not None]
+    return [value for value in (_counted(row, field) for row in rows) if value is not None]
+
+
+# Metrics that keep changing through the day: steps, calories, stress and
+# activity add up, and Garmin revises resting heart rate as the day goes on.
+# Until the day is over their values are partial. Overnight metrics (sleep,
+# HRV, readiness, Body Battery high) are final once the athlete wakes.
+PARTIAL_DAY_METRICS = frozenset(
+    (
+        "steps",
+        "active_calories",
+        "resting_hr",
+        "stress_avg",
+        "activity_duration_hours",
+        "recovery_pressure",
+    )
+)
+
+
+def _counted(row: dict[str, Any], field: str) -> float | None:
+    """A row's value for statistics: None for a metric still accumulating on
+    today's unfinished day, which would read as a sharp drop."""
+    if row.get("partial_day") and field in PARTIAL_DAY_METRICS:
+        return None
+    return _number(row.get(field))
 
 
 def _average(values: list[float]) -> float | None:
